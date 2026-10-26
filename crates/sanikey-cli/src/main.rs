@@ -2,7 +2,7 @@
 
 use std::process::ExitCode;
 
-use sanikey_core::version;
+use sanikey_core::{operation::OperationOutcome, project_info, version};
 
 const HELP: &str = "Uso: sanikey [--version] [info]\n\nComandi disponibili:\n  info       Mostra le informazioni essenziali del progetto\n";
 
@@ -25,10 +25,11 @@ fn execute(args: &[String]) -> Result<String, String> {
         [] => Ok(HELP.to_owned()),
         [flag] if flag == "--help" || flag == "-h" => Ok(HELP.to_owned()),
         [flag] if flag == "--version" || flag == "-V" => Ok(format!("sanikey {}\n", version())),
-        [command] if command == "info" => Ok(format!(
-            "progetto=sanikey\npackage=sanikey\ncli=sanikey\nversione={}\n",
-            version()
-        )),
+        [command] if command == "info" => match project_info().outcome {
+            OperationOutcome::Succeeded(output) => Ok(output),
+            OperationOutcome::Failed(error) => Err(error.message().to_owned()),
+            OperationOutcome::Cancelled => Err("operazione annullata".to_owned()),
+        },
         [command] => Err(format!("comando non supportato: {command}")),
         [command, ..] if command == "info" => {
             Err("il comando info non accetta argomenti".to_owned())

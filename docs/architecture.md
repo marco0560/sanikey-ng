@@ -1,9 +1,10 @@
 # Architettura prevista
 
 Stato: piano approvato; il workspace P03.01 contiene i crate iniziali
-`sanikey-core`, `sanikey-cli` e `xtask`. Al momento il core espone solo la
-versione e la CLI implementa informazioni/versione. Le pipeline SaniKey e la
-GUI restano da implementare; il crate desktop attende G1.
+`sanikey-core`, `sanikey-cli` e `xtask`. P03.02 aggiunge al core errori
+categorizzati, eventi tipizzati e annullamento cooperativo; la CLI implementa
+informazioni/versione. Le pipeline SaniKey e la GUI restano da implementare;
+il crate desktop attende G1.
 
 ## Componenti
 
@@ -27,6 +28,11 @@ GUI e CLI chiamano gli stessi servizi. L'avanzamento è costituito da eventi
 tipizzati; il testo italiano è una rappresentazione per l'utente.
 Le operazioni lunghe devono mantenere reattiva la GUI e dichiarare i propri
 punti sicuri di annullamento e ripresa.
+
+Il core mantiene separati i codici macchina dei fallimenti dai messaggi
+italiani. Ogni operazione emette un solo evento terminale dopo gli eventi di
+avanzamento; l'annullamento cooperativo viene osservato ai punti sicuri
+dichiarati dall'operazione.
 
 ## Portabilità
 
