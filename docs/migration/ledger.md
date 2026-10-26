@@ -27,6 +27,7 @@ Stato GUI: toolkit non scelto.
 | P03.04 | completata | 2026-10-26; installazione CLI release fuori checkout, `PATH` vuoto senza Git/Python; info/versione exit 0, comando sconosciuto exit 2; ELF 474.392 byte con linkage dinamico Linux registrato; commit `4b25bc0`; [ricevuta](verification/2026-10-26-cli-minimum-linux.md) |
 | P04.01 | completata | 2026-10-26; PyMuPDF baseline e `lopdf 0.40.0` concordano sulla fixture PDF digitale; OCRmyPDF su fixture solo immagine restituisce il testo atteso; gate e limiti Linux registrati; commit `e8b1db8`; [ricevuta](verification/2026-10-26-pdf-ocr-feasibility.md) |
 | P04.02 | completata | 2026-10-26; 12 test baseline e XLSX separato superati; conversioni Office e prototipi Calamine/ZIP/7z su fixture sintetiche; gate Rust e pubblicabilità exit 0; commit `d49d05b`; [ricevuta](verification/2026-10-26-office-container-feasibility.md) |
+| P04.03 | completata | 2026-10-26; suite baseline DICOM 20/20; baseline e DICOM-rs decodificano tre sintassi sintetiche; media DICOMDIR e preservazione byte verificate; gate completo superato; scrittura DICOMDIR Rust non ancora prototipata; commit `ccc4a20`; [ricevuta](verification/2026-10-26-dicom-codec-feasibility.md) |
 
 Le schede non registrate sopra sono da_eseguire; l'indice completo è in
 [tasks/README.md](tasks/README.md).
@@ -63,7 +64,7 @@ Leggere [START-HERE.md](START-HERE.md).
 La preparazione è conclusa; P03.02 ha completato il modello iniziale delle
 operazioni Rust con commit `1ed6545`.
 
-Riprendere da [P04.03](tasks/P04.03-verificare-dicom-e-codec.md).
+Riprendere da [P04.04](tasks/P04.04-verificare-identificazione-dei-volumi.md).
 P02.03 dipende dal gate introdotto da P03.03.
 Successivamente rispettare il grafo: P03 precede il confronto Rust P02.03.
 
