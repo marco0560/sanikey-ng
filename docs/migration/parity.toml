@@ -1,6 +1,7 @@
 schema_version = 1
 baseline_commit = "fdad1d93e56496cc6cb9933b3089729175d5b5b3"
-inventory_complete = false
+inventory_complete = true
+inventory_document = "contract-inventory.md"
 status_values = ["pending", "implemented", "verified", "blocked"]
 rule = "verified requires identified tests and actual evidence; deviations require approval"
 

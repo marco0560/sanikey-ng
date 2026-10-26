@@ -17,6 +17,7 @@ Stato Rust: non implementato. Stato GUI: toolkit non scelto.
 | P01.02 | completata | Manifest e ricevuta confrontati con lo SHA reale |
 | P00.03 | completata | Repository pubblico creato; primo commit pubblicato e SHA remoto verificato |
 | P01.03 | completata | 2026-10-26; checkout isolato sul commit fissato, sync locked e gate exit 0; fetch remoto diretto dello SHA riuscito; commit `cb5d088`; [ricevuta](verification/2026-10-26-python-clean-checkout.md) |
+| P02.01 | completata | 2026-10-26; inventario di 20 capability, CLI, formati, persistenza, default, errori e ADR; TOML/link/diff check superati; nessuna ambiguità materiale; [ricevuta](verification/2026-10-26-contract-inventory.md) |
 
 Tutte le altre schede dell'[indice](tasks/README.md) sono da_eseguire.
 La matrice di parità è iniziale e interamente pending.
@@ -52,10 +53,8 @@ Leggere [START-HERE.md](START-HERE.md).
 La preparazione è conclusa. Nessun processo di implementazione è stato avviato.
 Il manutentore può aprire ora la sessione Luna High.
 
-Riprendere da [P02.01](tasks/P02.01-inventariare-i-contratti-e-i-test-esistenti.md)
-come prossima attività; P01.03 è qualificata e il suo checkout di riferimento
-è disponibile localmente in `local-data/reference/sanikey` nel repository
-Python.
+Riprendere da [P02.02](tasks/P02.02-preparare-il-corpus-sintetico-iniziale.md)
+come prossima attività; P01.03 e P02.01 sono completate.
 Successivamente rispettare il grafo: P03 precede il confronto Rust P02.03.
 
 A ogni scheda aggiungere data, commit, comandi ed esiti effettivi, eventuali
