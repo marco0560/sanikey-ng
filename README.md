@@ -9,8 +9,7 @@ Windows, Linux e macOS.
 Il repository contiene il workspace Rust iniziale: `sanikey-core`, la CLI
 minima e `xtask`. La CLI supporta informazioni e versione; il core modella
 errori ed eventi delle operazioni. P03.03 ha aggiunto `cargo xtask check` e
-la CI per Linux, Windows e macOS; il gate locale è passato, mentre gli esiti
-dei runner ospitati sono ancora da verificare.
+la CI per Linux, Windows e macOS; gate locale e tre runner ospitati superati.
 Il generatore e la GUI non sono ancora implementati. SaniKey Python resta il
 generatore operativo.
 

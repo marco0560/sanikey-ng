@@ -20,6 +20,6 @@ componenti clippy/rustfmt e Python 3.13.
 - `cargo xtask check`: exit 0 su Linux; 9 unit test e 1 doctest superati,
   build, Clippy, rustdoc e smoke test CLI superati.
 - `git diff --check`: exit 0.
-- I runner hosted Linux/Windows/macOS non sono stati ancora eseguiti; questa
-  ricevuta non dichiara qualifica multipiattaforma. Registrare i run nel ledger
-  dopo la loro conclusione.
+- Run GitHub Actions [40404493580](https://github.com/marco0560/sanikey-ng/actions/runs/40404493580),
+  commit `6a671e1d674b77a779770d2d947e720a743f480a`: `ubuntu-latest`,
+  `windows-latest` e `macos-latest` completati con successo.

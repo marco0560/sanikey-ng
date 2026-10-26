@@ -6,10 +6,10 @@ La preparazione ha committato tutte le modifiche Python nel riferimento
 `fdad1d93e56496cc6cb9933b3089729175d5b5b3`, con gate superato.
 Ha predisposto repository e documentazione per il piano approvato.
 Il workspace Rust include CLI info/versione, il modello P03.02 per errori,
-eventi e annullamento cooperativo, e il gate P03.03 superato su Linux. La CI
-Windows/macOS è configurata ma i runner ospitati non sono ancora verificati;
-pipeline di generazione, GUI e comparatori restano da implementare. Il corpus
-sintetico P02.02 è pronto con expected fissati alla baseline.
+eventi e annullamento cooperativo, e il gate P03.03 superato localmente e sui
+runner hosted Linux, Windows e macOS. Pipeline di generazione, GUI e
+comparatori restano da implementare. Il corpus sintetico P02.02 è pronto con
+expected fissati alla baseline.
 
 Il [ledger](ledger.md) riporta lo stato effettivo della pubblicazione.
 La prossima scheda è quella indicata nel [ledger](ledger.md). P01.03 ha
