@@ -1,0 +1,225 @@
+schema_version = 1
+baseline_commit = "fdad1d93e56496cc6cb9933b3089729175d5b5b3"
+inventory_complete = false
+status_values = ["pending", "implemented", "verified", "blocked"]
+rule = "verified requires identified tests and actual evidence; deviations require approval"
+
+[[capability]]
+id = "configuration"
+description = "Configurazione e profili"
+phase = "P05"
+status = "pending"
+baseline_source = "src/sanikey/config.py"
+baseline_test = "tests/test_config.py"
+rust_tests = []
+evidence = []
+approved_deviations = []
+
+[[capability]]
+id = "metadata"
+description = "Metadati curati e isolamento"
+phase = "P05"
+status = "pending"
+baseline_source = "src/sanikey/metadata.py"
+baseline_test = "tests/test_metadata.py"
+rust_tests = []
+evidence = []
+approved_deviations = []
+
+[[capability]]
+id = "privacy"
+description = "Privacy e protezione delle fonti"
+phase = "P05"
+status = "pending"
+baseline_source = "src/sanikey/privacy.py"
+baseline_test = "scripts/privacy_guard.py"
+rust_tests = []
+evidence = []
+approved_deviations = []
+
+[[capability]]
+id = "inventory"
+description = "Inventario digest e filtri"
+phase = "P06"
+status = "pending"
+baseline_source = "src/sanikey/documents.py"
+baseline_test = "tests/test_documents.py"
+rust_tests = []
+evidence = []
+approved_deviations = []
+
+[[capability]]
+id = "pdf"
+description = "PDF digitale e OCR"
+phase = "P07"
+status = "pending"
+baseline_source = "src/sanikey/documents.py"
+baseline_test = "tests/test_documents.py"
+rust_tests = []
+evidence = []
+approved_deviations = []
+
+[[capability]]
+id = "office"
+description = "Conversioni consultabili"
+phase = "P07"
+status = "pending"
+baseline_source = "src/sanikey/rendering.py"
+baseline_test = "tests/test_rendering.py"
+rust_tests = []
+evidence = []
+approved_deviations = []
+
+[[capability]]
+id = "containers"
+description = "Container e staging"
+phase = "P07"
+status = "pending"
+baseline_source = "src/sanikey/containers.py"
+baseline_test = "tests/test_containers.py"
+rust_tests = []
+evidence = []
+approved_deviations = []
+
+[[capability]]
+id = "dicom"
+description = "Studi media viewer e anteprime"
+phase = "P07"
+status = "pending"
+baseline_source = "src/sanikey/dicom.py"
+baseline_test = "tests/test_dicom.py"
+rust_tests = []
+evidence = []
+approved_deviations = []
+
+[[capability]]
+id = "observations"
+description = "Import osservazioni"
+phase = "P08"
+status = "pending"
+baseline_source = "src/sanikey/observation_imports.py"
+baseline_test = "tests/test_observation_imports.py"
+rust_tests = []
+evidence = []
+approved_deviations = []
+
+[[capability]]
+id = "parameters"
+description = "Regole slice e report"
+phase = "P08"
+status = "pending"
+baseline_source = "src/sanikey/parameter_rules.py"
+baseline_test = "tests/test_parameter_rules.py"
+rust_tests = []
+evidence = []
+approved_deviations = []
+
+[[capability]]
+id = "vital_signs"
+description = "Segni vitali e merge"
+phase = "P08"
+status = "pending"
+baseline_source = "src/sanikey/vital_signs.py"
+baseline_test = "tests/test_vital_signs.py"
+rust_tests = []
+evidence = []
+approved_deviations = []
+
+[[capability]]
+id = "aifa"
+description = "Riferimenti FI e RCP"
+phase = "P08"
+status = "pending"
+baseline_source = "src/sanikey/leaflets.py"
+baseline_test = "tests/test_leaflets.py"
+rust_tests = []
+evidence = []
+approved_deviations = []
+
+[[capability]]
+id = "sqlite"
+description = "SQLite e FTS5"
+phase = "P09"
+status = "pending"
+baseline_source = "src/sanikey/database.py"
+baseline_test = "tests/test_database.py"
+rust_tests = []
+evidence = []
+approved_deviations = []
+
+[[capability]]
+id = "exports"
+description = "Export JSON e JavaScript"
+phase = "P09"
+status = "pending"
+baseline_source = "src/sanikey/exports.py"
+baseline_test = "tests/test_exports.py"
+rust_tests = []
+evidence = []
+approved_deviations = []
+
+[[capability]]
+id = "frontend"
+description = "Consultazione statica offline"
+phase = "P09"
+status = "pending"
+baseline_source = "src/sanikey/frontend.py"
+baseline_test = "tests/test_frontend.py"
+rust_tests = []
+evidence = []
+approved_deviations = []
+
+[[capability]]
+id = "build"
+description = "Build cache e multipaziente"
+phase = "P09"
+status = "pending"
+baseline_source = "src/sanikey/build.py"
+baseline_test = "tests/test_build.py"
+rust_tests = []
+evidence = []
+approved_deviations = []
+
+[[capability]]
+id = "usb"
+description = "Export e validazione USB"
+phase = "P10"
+status = "pending"
+baseline_source = "src/sanikey/usb.py"
+baseline_test = "tests/test_usb.py"
+rust_tests = []
+evidence = []
+approved_deviations = []
+
+[[capability]]
+id = "cli"
+description = "CLI e contratti macchina"
+phase = "P03-P10"
+status = "pending"
+baseline_source = "src/sanikey/cli.py"
+baseline_test = "tests/test_cli.py"
+rust_tests = []
+evidence = []
+approved_deviations = []
+
+[[capability]]
+id = "desktop"
+description = "GUI del generatore"
+phase = "P11"
+status = "pending"
+baseline_source = ""
+baseline_test = ""
+rust_tests = []
+evidence = []
+approved_deviations = []
+
+[[capability]]
+id = "packaging"
+description = "Pacchetti multipiattaforma"
+phase = "P12"
+status = "pending"
+baseline_source = ""
+baseline_test = ""
+rust_tests = []
+evidence = []
+approved_deviations = []

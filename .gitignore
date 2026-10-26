@@ -1,0 +1,15 @@
+/target/
+/dist/
+/site/
+/local-data/
+/config/
+/exports/
+/logs/
+/.artifacts/
+.codira/
+.env
+.env.*
+!.env.example
+.DS_Store
+Thumbs.db
+*.swp

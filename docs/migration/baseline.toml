@@ -1,0 +1,30 @@
+schema_version = 1
+source_repository = "https://github.com/marco0560/sanikey"
+source_commit = "fdad1d93e56496cc6cb9933b3089729175d5b5b3"
+parent_commit = "175e00cabbb7043f9b0ff97b1abe5534b60ddfc9"
+selection = "preliminary_commit_including_all_preexisting_modified_files"
+source_files_changed = 12
+source_worktree_clean_after_commit = true
+source_uv_lock_sha256 = "3622e89334e0f3a7f26a869cee1f30384485678c3a9fa51e45d152a160515f40"
+source_remote_availability = "not_verified_not_pushed_by_bootstrap"
+clean_checkout_qualification = "pending_P01.03"
+receipt = "docs/migration/verification/2026-10-26-python-baseline.md"
+
+[validation]
+date = "2026-10-26"
+platform = "linux"
+python = "3.13.13"
+uv = "0.13.4"
+node = "26.12.1"
+rsync = "3.5.1"
+pandoc = "3.11"
+command = "uv run python scripts/validate_repo.py"
+exit_code = 0
+passed = 359
+skipped = 1
+coverage_percent_rounded = 92
+docs_command = "NO_MKDOCS_2_WARNING=1 uv run mkdocs build --strict"
+docs_exit_code = 0
+commit_hooks_passed = true
+physical_usb_verified = false
+cross_platform_python_qualified = false

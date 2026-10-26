@@ -1,0 +1,60 @@
+# Avvio di una sessione Luna High
+
+## Stato da cui ripartire
+
+La preparazione ha committato tutte le modifiche Python nel riferimento
+`fdad1d93e56496cc6cb9933b3089729175d5b5b3`, con gate superato.
+Ha predisposto repository e documentazione per il piano approvato.
+Non sono ancora implementati Rust, GUI, corpus o comparatori.
+
+Il [ledger](ledger.md) riporta lo stato effettivo della pubblicazione.
+La prossima scheda è [P01.03](tasks/P01.03-qualificare-un-checkout-isolato-del-campione.md):
+qualificare il campione in un checkout pulito. Lo SHA Python è locale e la
+disponibilità remota va verificata. Non eseguire push del Python senza
+autorizzazione specifica; non cambiare baseline per aggirare quel limite.
+
+## Prerequisiti della sessione
+
+- Aprire il cwd sanikey-ng, verificare istruzioni applicabili e stato Git.
+- Selezionare Luna High per l'esecuzione desiderata dal manutentore.
+- Individuare il checkout SaniKey Python locale senza registrare percorsi
+  personali in Git. Usare una configurazione locale ignorata o un parametro.
+- Leggere piano, ledger, baseline e scheda prima di usare strumenti.
+- Verificare Cargo, rustc, strumenti di documentazione e rete quando servono.
+  Non installare una toolchain diversa senza leggere la scheda P03.
+- Usare le credenziali solo attraverso gli ambienti SOPS previsti dal
+  contratto globale; non leggere o stampare i valori decrittati.
+
+## Prompt da incollare
+
+```text
+Lavora nel repository sanikey-ng come esecutore del piano già approvato.
+Leggi AGENTS.md, docs/migration/plan.md, docs/migration/ledger.md,
+docs/migration/baseline.toml e CONTRIBUTING.md.
+
+Verifica lo stato reale del repository prima di riprendere.
+La baseline Python è fdad1d93e56496cc6cb9933b3089729175d5b5b3:
+include tutte le modifiche che erano pendenti ed è già stata committata.
+Non creare un altro commit di congelamento e non sostituirla con upstream.
+
+Riprendi dalla prossima scheda indicata nel ledger, inizialmente P01.03.
+Esegui una scheda alla volta con test pertinenti, documentazione, registro
+delle evidenze e commit atomico. Mantieni separati esito del processo,
+parità funzionale e prove sui sistemi o supporti reali.
+Per ogni API o dipendenza consulta le fonti ufficiali e Context7.
+Non presumere capacità Codira Rust senza verificarle.
+
+Prosegui autonomamente nelle attività approvate e indipendenti.
+Fermati alle decisioni G1–G4 e ai cambiamenti materiali del contratto.
+Non eseguire push o release del Python senza autorizzazione specifica.
+Non pubblicare dati clinici, configurazioni private, log o percorsi personali.
+Aggiorna il ledger e lascia la prossima scheda esatta a ogni interruzione.
+```
+
+## Recupero
+
+Se un controllo fallisce, conservare comando, exit status ed evidenza
+nell'area durevole prevista. Determinare se il problema riguarda ambiente
+oppure prodotto prima di cambiare configurazioni o codice.
+Se il contesto si esaurisce, riprendere dal ledger e dallo stato Git;
+non riavviare il progetto e non ripetere commit già conclusi.
