@@ -68,7 +68,7 @@ status = "pending"
 baseline_source = "src/sanikey/rendering.py"
 baseline_test = "tests/test_rendering.py"
 rust_tests = []
-evidence = []
+evidence = ["verification/2026-10-26-office-container-feasibility.md"]
 approved_deviations = []
 
 [[capability]]
@@ -79,7 +79,7 @@ status = "pending"
 baseline_source = "src/sanikey/containers.py"
 baseline_test = "tests/test_containers.py"
 rust_tests = []
-evidence = []
+evidence = ["verification/2026-10-26-office-container-feasibility.md"]
 approved_deviations = []
 
 [[capability]]
