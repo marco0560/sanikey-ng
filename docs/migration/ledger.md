@@ -15,7 +15,7 @@ Stato Rust: non implementato. Stato GUI: toolkit non scelto.
 | P00.01 | completata | Destinazione locale disponibile; GitHub 404 e account marco0560 verificati |
 | P00.02 | completata | 53 schede; TOML, link locali, grafo e invarianti verificati |
 | P01.02 | completata | Manifest e ricevuta confrontati con lo SHA reale |
-| P00.03 | in_corso | Git inizializzato; commit e pubblicazione in preparazione |
+| P00.03 | completata | Repository pubblico creato; primo commit pubblicato e SHA remoto verificato |
 | P01.03 | da_eseguire | Qualificazione da checkout isolato e verifica remoto |
 
 Tutte le altre schede dell'[indice](tasks/README.md) sono da_eseguire.
@@ -49,10 +49,27 @@ riferimento Python necessita di autorizzazione specifica prima della CI remota.
 ## Prossima sessione
 
 Leggere [START-HERE.md](START-HERE.md).
+La preparazione è conclusa. Nessun processo di implementazione è stato avviato.
+Il manutentore può aprire ora la sessione Luna High.
+
 Riprendere da [P01.03](tasks/P01.03-qualificare-un-checkout-isolato-del-campione.md)
-dopo la conclusione P00.03 annotata qui.
+come prima attività della nuova sessione.
 Successivamente rispettare il grafo: P03 precede il confronto Rust P02.03.
 
 A ogni scheda aggiungere data, commit, comandi ed esiti effettivi, eventuali
 skip con motivazione, evidenze, blocchi e successiva attività.
 Non modificare retroattivamente questa cronologia per nascondere tentativi falliti.
+
+## Consegna della preparazione
+
+- Repository pubblico: https://github.com/marco0560/sanikey-ng.
+- Primo commit: `9eeafcc4ff3d31271cae3bf72bc1d4d773d23bfd`.
+- Pubblicazione iniziale su main verificata con lettura della ref GitHub.
+- 73 file di bootstrap; 53 schede; 20 capacità con parità ancora pending.
+- Controlli documentali e git diff --cached --check: superati.
+- SaniKey Python: commit preliminare presente e working tree pulito.
+- Implementazione Rust, GUI, corpus e comparatori: non avviati.
+- Il toolkit rimane da scegliere in G1.
+- Ripresa prevista: P01.03. Non ripetere P01.01.
+- Dopo il commit di questa consegna, verificare allineamento main/remoto
+  e fermare la sessione preparatoria, come richiesto dal manutentore.

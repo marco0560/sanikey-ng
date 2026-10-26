@@ -27,3 +27,11 @@ Queste verifiche riguardano documentazione e preparazione.
 Non dimostrano implementazione Rust, parità del prodotto o disponibilità
 remota del commit Python. La ricevuta Python è
 [2026-10-26-python-baseline.md](2026-10-26-python-baseline.md).
+
+## Pubblicazione iniziale
+
+Repository pubblico creato: https://github.com/marco0560/sanikey-ng.
+Il primo commit `9eeafcc4ff3d31271cae3bf72bc1d4d773d23bfd`
+è stato pubblicato su main; la ref remota è stata letta e confrontata.
+Il successivo commit documentale registra questa consegna.
+Nessuna push è stata effettuata sul repository Python.
