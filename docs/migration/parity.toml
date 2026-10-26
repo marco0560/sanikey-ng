@@ -90,7 +90,7 @@ status = "pending"
 baseline_source = "src/sanikey/dicom.py"
 baseline_test = "tests/test_dicom.py"
 rust_tests = []
-evidence = []
+evidence = ["verification/2026-10-26-dicom-codec-feasibility.md"]
 approved_deviations = []
 
 [[capability]]
