@@ -6,8 +6,8 @@ selection = "preliminary_commit_including_all_preexisting_modified_files"
 source_files_changed = 12
 source_worktree_clean_after_commit = true
 source_uv_lock_sha256 = "3622e89334e0f3a7f26a869cee1f30384485678c3a9fa51e45d152a160515f40"
-source_remote_availability = "not_verified_not_pushed_by_bootstrap"
-clean_checkout_qualification = "pending_P01.03"
+source_remote_availability = "exact_commit_fetch_verified_2026-10-26"
+clean_checkout_qualification = "qualified_P01.03_2026-10-26"
 receipt = "docs/migration/verification/2026-10-26-python-baseline.md"
 
 [validation]

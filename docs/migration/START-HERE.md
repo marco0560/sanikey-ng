@@ -8,10 +8,9 @@ Ha predisposto repository e documentazione per il piano approvato.
 Non sono ancora implementati Rust, GUI, corpus o comparatori.
 
 Il [ledger](ledger.md) riporta lo stato effettivo della pubblicazione.
-La prossima scheda è [P01.03](tasks/P01.03-qualificare-un-checkout-isolato-del-campione.md):
-qualificare il campione in un checkout pulito. Lo SHA Python è locale e la
-disponibilità remota va verificata. Non eseguire push del Python senza
-autorizzazione specifica; non cambiare baseline per aggirare quel limite.
+La prossima scheda è quella indicata nel [ledger](ledger.md). P01.03 ha
+qualificato il campione in un checkout pulito e ha verificato il fetch remoto
+dello SHA fissato; non è stata eseguita una push del Python.
 
 ## Prerequisiti della sessione
 
@@ -37,7 +36,7 @@ La baseline Python è fdad1d93e56496cc6cb9933b3089729175d5b5b3:
 include tutte le modifiche che erano pendenti ed è già stata committata.
 Non creare un altro commit di congelamento e non sostituirla con upstream.
 
-Riprendi dalla prossima scheda indicata nel ledger, inizialmente P01.03.
+Riprendi dalla prossima scheda indicata nel ledger.
 Esegui una scheda alla volta con test pertinenti, documentazione, registro
 delle evidenze e commit atomico. Mantieni separati esito del processo,
 parità funzionale e prove sui sistemi o supporti reali.
