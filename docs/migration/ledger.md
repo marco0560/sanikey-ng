@@ -28,6 +28,7 @@ Stato GUI: toolkit non scelto.
 | P04.01 | completata | 2026-10-26; PyMuPDF baseline e `lopdf 0.40.0` concordano sulla fixture PDF digitale; OCRmyPDF su fixture solo immagine restituisce il testo atteso; gate e limiti Linux registrati; commit `e8b1db8`; [ricevuta](verification/2026-10-26-pdf-ocr-feasibility.md) |
 | P04.02 | completata | 2026-10-26; 12 test baseline e XLSX separato superati; conversioni Office e prototipi Calamine/ZIP/7z su fixture sintetiche; gate Rust e pubblicabilità exit 0; commit `d49d05b`; [ricevuta](verification/2026-10-26-office-container-feasibility.md) |
 | P04.03 | completata | 2026-10-26; suite baseline DICOM 20/20; baseline e DICOM-rs decodificano tre sintassi sintetiche; media DICOMDIR e preservazione byte verificate; gate completo superato; scrittura DICOMDIR Rust non ancora prototipata; commit `ccc4a20`; [ricevuta](verification/2026-10-26-dicom-codec-feasibility.md) |
+| P04.04 | completata con limiti | 2026-10-26; suite USB baseline 20 passed, 1 skipped; lettura Linux di mount, filesystem e spazio su directory `.Temp`; Win/macOS documentati ma non provati; semantica `usb_uuid` da chiarire prima del porting multiOS; commit `32a5e45`; [ricevuta](verification/2026-10-26-volume-identity-feasibility.md) |
 
 Le schede non registrate sopra sono da_eseguire; l'indice completo è in
 [tasks/README.md](tasks/README.md).
@@ -54,7 +55,7 @@ autorizzazione specifica.
 | Checkpoint | Stato |
 | --- | --- |
 | G1 — toolkit GUI | In attesa del confronto P04 e del manutentore |
-| G2 — cambiamenti materiali | Nessuna deroga richiesta o approvata |
+| G2 — cambiamenti materiali | Da chiarire prima del porting USB multiOS: distinguere UUID filesystem da ID deploy (`usb_uuid`); nessuna modifica applicata; [P04.04](verification/2026-10-26-volume-identity-feasibility.md) |
 | G3 — transizione operativa | Non raggiunto |
 | G4 — phase-out Python | Non raggiunto |
 
@@ -64,7 +65,7 @@ Leggere [START-HERE.md](START-HERE.md).
 La preparazione è conclusa; P03.02 ha completato il modello iniziale delle
 operazioni Rust con commit `1ed6545`.
 
-Riprendere da [P04.04](tasks/P04.04-verificare-identificazione-dei-volumi.md).
+Riprendere da [P04.05](tasks/P04.05-selezionare-due-toolkit-per-il-confronto.md).
 P02.03 dipende dal gate introdotto da P03.03.
 Successivamente rispettare il grafo: P03 precede il confronto Rust P02.03.
 
