@@ -29,6 +29,7 @@ Stato GUI: toolkit non scelto.
 | P04.02 | completata | 2026-10-26; 12 test baseline e XLSX separato superati; conversioni Office e prototipi Calamine/ZIP/7z su fixture sintetiche; gate Rust e pubblicabilità exit 0; commit `d49d05b`; [ricevuta](verification/2026-10-26-office-container-feasibility.md) |
 | P04.03 | completata | 2026-10-26; suite baseline DICOM 20/20; baseline e DICOM-rs decodificano tre sintassi sintetiche; media DICOMDIR e preservazione byte verificate; gate completo superato; scrittura DICOMDIR Rust non ancora prototipata; commit `ccc4a20`; [ricevuta](verification/2026-10-26-dicom-codec-feasibility.md) |
 | P04.04 | completata con limiti | 2026-10-26; suite USB baseline 20 passed, 1 skipped; lettura Linux di mount, filesystem e spazio su directory `.Temp`; Win/macOS documentati ma non provati; semantica `usb_uuid` da chiarire prima del porting multiOS; commit `32a5e45`; [ricevuta](verification/2026-10-26-volume-identity-feasibility.md) |
+| P04.05 | completata | 2026-10-26; candidati fissati a egui/eframe 0.37.0 e Slint 1.18.1; protocollo identico per P04.06; desktop resta pending e G1 non deciso; gate `cargo xtask check` superato; commit `02b2fc1`; [ricevuta](verification/2026-10-26-gui-toolkit-candidates.md) |
 
 Le schede non registrate sopra sono da_eseguire; l'indice completo è in
 [tasks/README.md](tasks/README.md).
@@ -65,7 +66,7 @@ Leggere [START-HERE.md](START-HERE.md).
 La preparazione è conclusa; P03.02 ha completato il modello iniziale delle
 operazioni Rust con commit `1ed6545`.
 
-Riprendere da [P04.05](tasks/P04.05-selezionare-due-toolkit-per-il-confronto.md).
+Riprendere da [P04.06](tasks/P04.06-realizzare-i-prototipi-e-presentare-g1.md).
 P02.03 dipende dal gate introdotto da P03.03.
 Successivamente rispettare il grafo: P03 precede il confronto Rust P02.03.
 
