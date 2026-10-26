@@ -211,7 +211,7 @@ status = "pending"
 baseline_source = ""
 baseline_test = ""
 rust_tests = []
-evidence = []
+evidence = ["verification/2026-10-26-gui-toolkit-candidates.md"]
 approved_deviations = []
 
 [[capability]]
