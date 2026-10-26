@@ -7,8 +7,8 @@ La sessione di bootstrap si è fermata dopo repository e documentazione;
 l'implementazione approvata è ripresa in seguito con P03.01.
 
 Baseline Python: `fdad1d93e56496cc6cb9933b3089729175d5b5b3`.
-Stato Rust: workspace P03.02 con CLI info/versione e modello eventi/annullamento;
-pipeline non implementata.
+Stato Rust: workspace P03.03; gate locale superato e CI multipiattaforma
+configurata, run hosted pendenti; pipeline non implementata.
 Stato GUI: toolkit non scelto.
 
 | Scheda | Stato | Evidenza |
@@ -23,6 +23,7 @@ Stato GUI: toolkit non scelto.
 | P02.02 | completata | 2026-10-26; 17 fixture sintetici con hash, 11 generatori/adattatori referenziati con hash; baseline positiva e due negativi eseguiti; expected normalizzati; commit `b1bf5c0`; [ricevuta](verification/2026-10-26-synthetic-corpus.md) |
 | P03.01 | completata | 2026-10-26; workspace di tre crate, toolchain 1.98.1, CLI info/versione, xtask e doctest; build, Clippy, rustdoc, unit test e doctest superati; commit `597bdf7`; [ricevuta](verification/2026-10-26-rust-foundation.md) |
 | P03.02 | completata | 2026-10-26; errori codificati, eventi ordinati, progresso e annullamento cooperativo; info passa dal runner; 9 unit test, doctest, Clippy e rustdoc superati; commit `1ed6545`; [ricevuta](verification/2026-10-26-operation-contract.md) |
+| P03.03 | in corso | 2026-10-26; `cargo xtask check` superato su Linux; CI configurata per Linux/Windows/macOS; run hosted pendenti; [ricevuta](verification/2026-10-26-rust-gate-ci.md) |
 
 Le schede non registrate sopra sono da_eseguire; l'indice completo è in
 [tasks/README.md](tasks/README.md).
@@ -59,8 +60,9 @@ Leggere [START-HERE.md](START-HERE.md).
 La preparazione è conclusa; P03.02 ha completato il modello iniziale delle
 operazioni Rust con commit `1ed6545`.
 
-Riprendere da [P03.03](tasks/P03.03-implementare-il-gate-e-la-ci-multipiattaforma.md)
-come prossima attività eseguibile. P02.03 dipende dal gate introdotto da P03.03.
+Completare i run hosted Linux/Windows/macOS di
+[P03.03](tasks/P03.03-implementare-il-gate-e-la-ci-multipiattaforma.md), poi
+riprendere da P03.04. P02.03 dipende dal gate introdotto da P03.03.
 Successivamente rispettare il grafo: P03 precede il confronto Rust P02.03.
 
 A ogni scheda aggiungere data, commit, comandi ed esiti effettivi, eventuali

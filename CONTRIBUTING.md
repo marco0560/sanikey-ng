@@ -2,10 +2,12 @@
 
 ## Stato dell'ambiente
 
-P03.01 ha introdotto workspace Cargo, `Cargo.lock`, toolchain fissata in
-`rust-toolchain.toml` e `cargo xtask verify-toolchain`. Il gate completo
-`cargo xtask check` sarà implementato in P03.03. L'esecutore previsto delle
-schede di implementazione è GPT-6-Luna High.
+P03.03 implementa `cargo xtask check` e il workflow CI per Linux, Windows e
+macOS. `rust-toolchain.toml` fissa la toolchain. Il controllo documentale usa
+Python 3.13 e la sola libreria standard; Python non è richiesto dal generatore
+installato. Gli esiti hosted multipiattaforma restano pending finché i runner
+remoti non sono eseguiti. L'esecutore previsto delle schede di implementazione
+è GPT-6-Luna High.
 
 ## Ciclo di una scheda
 
@@ -38,23 +40,19 @@ Il comando `cargo xtask check` dovrà eseguire, con la toolchain fissata:
 
 - formattazione in modalità controllo;
 - Clippy su workspace e target concordati, con warning bloccanti;
+- build dei target workspace e smoke test CLI per `info` e `--version`;
 - test dei target e test degli esempi rustdoc in passaggi distinti;
 - generazione rustdoc con warning bloccanti;
-- controlli documentali, dei contratti e dei contenuti pubblicabili.
+- link Markdown locali, sintassi TOML della migrazione e percorsi pubblicabili.
 
 I comandi Cargo dovranno usare Cargo.lock senza aggiornamenti impliciti.
 Le combinazioni di feature saranno elencate e verificate singolarmente:
 non assumere che tutte le feature di backend siano combinabili.
 
-Prima della chiusura di P03.03, i controlli di base sono riproducibili con:
+Il gate completo si esegue dalla radice del repository con:
 
 ```bash
-cargo xtask verify-toolchain
-cargo fmt --all -- --check
-cargo test --workspace --locked
-cargo test --doc --workspace --locked
-cargo clippy --workspace --all-targets --locked -- -D warnings
-RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --locked
+cargo xtask check
 ```
 
 Riferimenti:
