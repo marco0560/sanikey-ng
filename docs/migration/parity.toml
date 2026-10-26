@@ -189,7 +189,7 @@ status = "pending"
 baseline_source = "src/sanikey/usb.py"
 baseline_test = "tests/test_usb.py"
 rust_tests = []
-evidence = []
+evidence = ["verification/2026-10-26-volume-identity-feasibility.md"]
 approved_deviations = []
 
 [[capability]]
