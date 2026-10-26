@@ -3,11 +3,12 @@
 ## Stato della preparazione
 
 Data: 2026-10-26. Il piano è approvato con la modifica preliminare P01.
-La sessione preparatoria deve fermarsi dopo repository e documentazione.
-Il manutentore aprirà una nuova sessione Luna High per l'implementazione.
+La sessione di bootstrap si è fermata dopo repository e documentazione;
+l'implementazione approvata è ripresa in seguito con P03.01.
 
 Baseline Python: `fdad1d93e56496cc6cb9933b3089729175d5b5b3`.
-Stato Rust: non implementato. Stato GUI: toolkit non scelto.
+Stato Rust: workspace P03.01 con CLI info/versione; pipeline non implementata.
+Stato GUI: toolkit non scelto.
 
 | Scheda | Stato | Evidenza |
 | --- | --- | --- |
@@ -19,6 +20,7 @@ Stato Rust: non implementato. Stato GUI: toolkit non scelto.
 | P01.03 | completata | 2026-10-26; checkout isolato sul commit fissato, sync locked e gate exit 0; fetch remoto diretto dello SHA riuscito; commit `cb5d088`; [ricevuta](verification/2026-10-26-python-clean-checkout.md) |
 | P02.01 | completata | 2026-10-26; inventario di 20 capability, CLI, formati, persistenza, default, errori e ADR; TOML/link/diff check superati; nessuna ambiguità materiale; commit `d70e743`; [ricevuta](verification/2026-10-26-contract-inventory.md) |
 | P02.02 | completata | 2026-10-26; 17 fixture sintetici con hash, 11 generatori/adattatori referenziati con hash; baseline positiva e due negativi eseguiti; expected normalizzati; commit `b1bf5c0`; [ricevuta](verification/2026-10-26-synthetic-corpus.md) |
+| P03.01 | completata | 2026-10-26; workspace di tre crate, toolchain 1.98.1, CLI info/versione, xtask e doctest; build, Clippy, rustdoc, unit test e doctest superati; [ricevuta](verification/2026-10-26-rust-foundation.md) |
 
 Tutte le altre schede dell'[indice](tasks/README.md) sono da_eseguire.
 La matrice di parità è iniziale e interamente pending.
@@ -51,10 +53,9 @@ autorizzazione specifica.
 ## Prossima sessione
 
 Leggere [START-HERE.md](START-HERE.md).
-La preparazione è conclusa. Nessun processo di implementazione è stato avviato.
-Il manutentore può aprire ora la sessione Luna High.
+La preparazione è conclusa e P03.01 ha avviato l'implementazione Rust.
 
-Riprendere da [P03.01](tasks/P03.01-creare-workspace-e-toolchain-rust.md)
+Riprendere da [P03.02](tasks/P03.02-definire-errori-ed-eventi-delle-operazioni.md)
 come prossima attività eseguibile. P02.03 dipende dal gate introdotto da P03.03.
 Successivamente rispettare il grafo: P03 precede il confronto Rust P02.03.
 
@@ -70,7 +71,9 @@ Non modificare retroattivamente questa cronologia per nascondere tentativi falli
 - 73 file di bootstrap; 53 schede; 20 capacità con parità ancora pending.
 - Controlli documentali e git diff --cached --check: superati.
 - SaniKey Python: commit preliminare presente e working tree pulito.
-- Implementazione Rust, GUI, corpus e comparatori: non avviati.
+- Al bootstrap Rust, corpus e comparatori non erano avviati; P03.01 ha creato
+  il workspace minimo e P02.02 ha fissato il corpus. GUI e comparatori restano
+  da realizzare.
 - Il toolkit rimane da scegliere in G1.
 - Ripresa iniziale prevista: P01.03; completata il 2026-10-26. La scheda
   successiva è P02.01, come registrato sopra.

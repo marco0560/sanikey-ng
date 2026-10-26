@@ -6,16 +6,18 @@ Windows, Linux e macOS.
 
 ## Stato
 
-Il repository contiene la pianificazione approvata e la documentazione
-iniziale. Il porting Rust e la GUI non sono ancora implementati.
-SaniKey Python resta il generatore operativo.
+Il repository contiene il workspace Rust iniziale: `sanikey-core`, la CLI
+minima e `xtask`. La CLI supporta informazioni e versione; il generatore,
+la GUI e il gate completo non sono ancora implementati. SaniKey Python resta
+il generatore operativo.
 
 Il campione di controllo è il commit Python
 `fdad1d93e56496cc6cb9933b3089729175d5b5b3`, creato includendo tutti i dodici file
 precedentemente modificati. La validazione locale del campione ha superato
 359 test con un test saltato e copertura complessiva del 92%.
-La qualificazione da checkout pulito e la recuperabilità remota del commit
-sono attività distinte ancora da verificare.
+P01.03 ha qualificato un checkout pulito Linux e ha verificato il fetch remoto
+dello SHA. P02.01 ha inventariato il contratto e P02.02 ha fissato il corpus
+sintetico; nessuna capability Rust della matrice di parità è ancora verificata.
 
 ## Riprendere il lavoro
 
@@ -33,6 +35,8 @@ consultare [il piano approvato](docs/migration/plan.md) e
 - [Decisioni architetturali](docs/decisions/README.md).
 - [Identità della baseline](docs/migration/baseline.toml).
 - [Matrice iniziale della parità](docs/migration/parity.toml).
+- [Inventario del contratto](docs/migration/contract-inventory.md).
+- [Corpus sintetico e expected](docs/migration/corpus/README.md).
 - [Indice delle schede](docs/migration/tasks/README.md).
 
 La GUI serve alla preparazione dell'archivio e della chiavetta.

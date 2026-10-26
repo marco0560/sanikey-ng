@@ -2,9 +2,10 @@
 
 ## Stato dell'ambiente
 
-Al bootstrap non ci sono Cargo.toml, sorgenti Rust o un gate eseguibile Rust.
-P03 introdurrà workspace, toolchain fissata, Cargo.lock e comandi verificati.
-L'esecutore previsto delle schede di implementazione è GPT-6-Luna High.
+P03.01 ha introdotto workspace Cargo, `Cargo.lock`, toolchain fissata in
+`rust-toolchain.toml` e `cargo xtask verify-toolchain`. Il gate completo
+`cargo xtask check` sarà implementato in P03.03. L'esecutore previsto delle
+schede di implementazione è GPT-6-Luna High.
 
 ## Ciclo di una scheda
 
@@ -44,6 +45,17 @@ Il comando `cargo xtask check` dovrà eseguire, con la toolchain fissata:
 I comandi Cargo dovranno usare Cargo.lock senza aggiornamenti impliciti.
 Le combinazioni di feature saranno elencate e verificate singolarmente:
 non assumere che tutte le feature di backend siano combinabili.
+
+Prima della chiusura di P03.03, i controlli di base sono riproducibili con:
+
+```bash
+cargo xtask verify-toolchain
+cargo fmt --all -- --check
+cargo test --workspace --locked
+cargo test --doc --workspace --locked
+cargo clippy --workspace --all-targets --locked -- -D warnings
+RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --locked
+```
 
 Riferimenti:
 [Cargo test](https://doc.rust-lang.org/cargo/commands/cargo-test.html) e

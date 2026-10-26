@@ -1,6 +1,9 @@
 # Architettura prevista
 
-Stato: proposta approvata nel piano; i componenti Rust non sono implementati.
+Stato: piano approvato; il workspace P03.01 contiene i crate iniziali
+`sanikey-core`, `sanikey-cli` e `xtask`. Al momento il core espone solo la
+versione e la CLI implementa informazioni/versione. Le pipeline SaniKey e la
+GUI restano da implementare; il crate desktop attende G1.
 
 ## Componenti
 
