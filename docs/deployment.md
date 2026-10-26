@@ -4,7 +4,8 @@
 
 Pacchetti separati per Windows, Linux e macOS, costruiti e provati su ciascuna
 piattaforma. OS minimi e architetture saranno fissati con le prove P04 e P12.
-Nessun pacchetto è già disponibile.
+P03.04 ha provato la sola CLI minima su Linux in un'installazione temporanea;
+nessun pacchetto di prodotto è disponibile.
 
 ## Classificazione delle dipendenze
 
