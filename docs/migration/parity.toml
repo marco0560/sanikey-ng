@@ -57,7 +57,7 @@ status = "pending"
 baseline_source = "src/sanikey/documents.py"
 baseline_test = "tests/test_documents.py"
 rust_tests = []
-evidence = []
+evidence = ["verification/2026-10-26-pdf-ocr-feasibility.md"]
 approved_deviations = []
 
 [[capability]]
