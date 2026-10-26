@@ -7,8 +7,8 @@ La sessione di bootstrap si è fermata dopo repository e documentazione;
 l'implementazione approvata è ripresa in seguito con P03.01.
 
 Baseline Python: `fdad1d93e56496cc6cb9933b3089729175d5b5b3`.
-Stato Rust: P03.03 completata; gate locale e CI hosted Linux/Windows/macOS
-superati; pipeline non implementata.
+Stato Rust: P03.04 completata; gate e CI hosted Linux/Windows/macOS superati;
+prova CLI minima limitata a Linux; pipeline non implementata.
 Stato GUI: toolkit non scelto.
 
 | Scheda | Stato | Evidenza |
@@ -24,7 +24,7 @@ Stato GUI: toolkit non scelto.
 | P03.01 | completata | 2026-10-26; workspace di tre crate, toolchain 1.98.1, CLI info/versione, xtask e doctest; build, Clippy, rustdoc, unit test e doctest superati; commit `597bdf7`; [ricevuta](verification/2026-10-26-rust-foundation.md) |
 | P03.02 | completata | 2026-10-26; errori codificati, eventi ordinati, progresso e annullamento cooperativo; info passa dal runner; 9 unit test, doctest, Clippy e rustdoc superati; commit `1ed6545`; [ricevuta](verification/2026-10-26-operation-contract.md) |
 | P03.03 | completata | 2026-10-26; `cargo xtask check` exit 0; run 40404493580 completato su Ubuntu/Windows/macOS; commit `6a671e1`; [ricevuta](verification/2026-10-26-rust-gate-ci.md) |
-| P03.04 | completata | 2026-10-26; installazione CLI release fuori checkout, `PATH` vuoto senza Git/Python; info/versione exit 0, comando sconosciuto exit 2; ELF 474.392 byte con linkage dinamico Linux registrato; [ricevuta](verification/2026-10-26-cli-minimum-linux.md) |
+| P03.04 | completata | 2026-10-26; installazione CLI release fuori checkout, `PATH` vuoto senza Git/Python; info/versione exit 0, comando sconosciuto exit 2; ELF 474.392 byte con linkage dinamico Linux registrato; commit `4b25bc0`; [ricevuta](verification/2026-10-26-cli-minimum-linux.md) |
 
 Le schede non registrate sopra sono da_eseguire; l'indice completo è in
 [tasks/README.md](tasks/README.md).
