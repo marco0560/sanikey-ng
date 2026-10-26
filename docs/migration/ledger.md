@@ -18,7 +18,7 @@ Stato Rust: non implementato. Stato GUI: toolkit non scelto.
 | P00.03 | completata | Repository pubblico creato; primo commit pubblicato e SHA remoto verificato |
 | P01.03 | completata | 2026-10-26; checkout isolato sul commit fissato, sync locked e gate exit 0; fetch remoto diretto dello SHA riuscito; commit `cb5d088`; [ricevuta](verification/2026-10-26-python-clean-checkout.md) |
 | P02.01 | completata | 2026-10-26; inventario di 20 capability, CLI, formati, persistenza, default, errori e ADR; TOML/link/diff check superati; nessuna ambiguità materiale; commit `d70e743`; [ricevuta](verification/2026-10-26-contract-inventory.md) |
-| P02.02 | completata | 2026-10-26; 17 fixture sintetici con hash, 11 generatori/adattatori referenziati con hash; baseline positiva e due negativi eseguiti; expected normalizzati; [ricevuta](verification/2026-10-26-synthetic-corpus.md) |
+| P02.02 | completata | 2026-10-26; 17 fixture sintetici con hash, 11 generatori/adattatori referenziati con hash; baseline positiva e due negativi eseguiti; expected normalizzati; commit `b1bf5c0`; [ricevuta](verification/2026-10-26-synthetic-corpus.md) |
 
 Tutte le altre schede dell'[indice](tasks/README.md) sono da_eseguire.
 La matrice di parità è iniziale e interamente pending.
