@@ -1,0 +1,11 @@
+[package]
+name = "sanikey-prototype-gui-protocol"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.98"
+publish = false
+
+[workspace]
+
+[dependencies]
+sanikey-core = { path = "../../crates/sanikey-core" }
