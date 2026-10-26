@@ -18,6 +18,7 @@ Stato Rust: non implementato. Stato GUI: toolkit non scelto.
 | P00.03 | completata | Repository pubblico creato; primo commit pubblicato e SHA remoto verificato |
 | P01.03 | completata | 2026-10-26; checkout isolato sul commit fissato, sync locked e gate exit 0; fetch remoto diretto dello SHA riuscito; commit `cb5d088`; [ricevuta](verification/2026-10-26-python-clean-checkout.md) |
 | P02.01 | completata | 2026-10-26; inventario di 20 capability, CLI, formati, persistenza, default, errori e ADR; TOML/link/diff check superati; nessuna ambiguità materiale; commit `d70e743`; [ricevuta](verification/2026-10-26-contract-inventory.md) |
+| P02.02 | completata | 2026-10-26; 17 fixture sintetici con hash, 11 generatori/adattatori referenziati con hash; baseline positiva e due negativi eseguiti; expected normalizzati; [ricevuta](verification/2026-10-26-synthetic-corpus.md) |
 
 Tutte le altre schede dell'[indice](tasks/README.md) sono da_eseguire.
 La matrice di parità è iniziale e interamente pending.
@@ -53,8 +54,8 @@ Leggere [START-HERE.md](START-HERE.md).
 La preparazione è conclusa. Nessun processo di implementazione è stato avviato.
 Il manutentore può aprire ora la sessione Luna High.
 
-Riprendere da [P02.02](tasks/P02.02-preparare-il-corpus-sintetico-iniziale.md)
-come prossima attività; P01.03 e P02.01 sono completate.
+Riprendere da [P03.01](tasks/P03.01-creare-workspace-e-toolchain-rust.md)
+come prossima attività eseguibile. P02.03 dipende dal gate introdotto da P03.03.
 Successivamente rispettare il grafo: P03 precede il confronto Rust P02.03.
 
 A ogni scheda aggiungere data, commit, comandi ed esiti effettivi, eventuali

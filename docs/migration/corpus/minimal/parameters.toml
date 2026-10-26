@@ -1,0 +1,16 @@
+[discovery]
+min_occurrences = 2
+min_distinct_documents = 2
+min_distinct_dates = 1
+
+[parameters.emoglobina]
+display_name = "Emoglobina"
+term = "emoglobina"
+version = 1
+value_type = "qualified-scalar"
+number_formats = ["integer", "decimal-comma", "decimal-point"]
+unit_policy = "required"
+enabled = false
+units = ["g/dL", "g/l"]
+canonical_unit = "g/dL"
+document_categories = ["laboratory"]

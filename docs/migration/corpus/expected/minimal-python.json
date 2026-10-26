@@ -1,0 +1,82 @@
+{
+  "baseline_commit": "fdad1d93e56496cc6cb9933b3089729175d5b5b3",
+  "corpus_version": "1",
+  "positive": {
+    "validate_config_exit": 0,
+    "import_observations_exit": 0,
+    "imported_series": 1,
+    "imported_points": [
+      {
+        "id": "peso-2026-01-02-1-1-2",
+        "series_id": "peso",
+        "date": "2026-01-02",
+        "value": 70.0,
+        "unit": "kg",
+        "source_type": "spreadsheet",
+        "source_reference": "laboratory/peso-sintetico.csv"
+      }
+    ],
+    "build": {
+      "mode": "full",
+      "patient_id": "patient-a",
+      "documents": 2,
+      "duplicates": 1,
+      "derived_documents": 0,
+      "dicom_instances": 0,
+      "total_records": 2,
+      "warning_count": 2,
+      "warning_kinds": [
+        "duplicate-content",
+        "unsupported-text-extraction:csv"
+      ]
+    },
+    "sqlite_counts": {
+      "documents": 2,
+      "observation_series": 1,
+      "observation_points": 1,
+      "problems": 1,
+      "medications": 1,
+      "therapies": 1,
+      "procedures": 1,
+      "observations": 1,
+      "timeline_events": 1
+    },
+    "frontend_summary": {
+      "patient_id": "patient-a",
+      "document_count": 1,
+      "observation_count": 1,
+      "problem_count": 1,
+      "procedure_count": 1,
+      "therapy_count": 1
+    },
+    "exported_documents": [
+      {
+        "id": "f1c69fd460ac2e3f88c30c5fca12ea77adb1a06660d053dafcf2e19f642934f7",
+        "path": "duplicate/20260102 Copia sintetica.txt",
+        "title": "Copia sintetica",
+        "category": "duplicate",
+        "kind": "text",
+        "date": "2026-01-02",
+        "tags": []
+      }
+    ]
+  },
+  "negative": {
+    "missing_config_version": {
+      "exit": 1,
+      "diagnostic": "[global].config_version e' obbligatorio"
+    },
+    "invalid_observation_date": {
+      "exit": 1,
+      "diagnostic": "data osservazione non valida: giorno-sconosciuto"
+    }
+  },
+  "normalization": {
+    "omitted_fields": [
+      "generated_at",
+      "absolute_paths",
+      "machine_specific_filesystem_metadata"
+    ],
+    "warning_paths_replaced_by": "warning_kinds"
+  }
+}

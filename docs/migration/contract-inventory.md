@@ -109,8 +109,9 @@ e non costituiscono nuovi requisiti autonomi nel contratto prodotto.
   rsync quando disponibile, verifica integrità e destinazione, e non formatta
   supporti.
 
-La tabella capability di `parity.toml` copre questi requisiti raggruppati; in
-P02.02 il corpus sintetico e gli expected preciseranno formati e casi limite.
+La tabella capability di `parity.toml` copre questi requisiti raggruppati; il
+[corpus sintetico](corpus/README.md) fissa input e expected iniziali per date,
+unità, duplicati, provenienza ed errori.
 Gli artefatti d’esempio presenti nei test non attestano prove su dati reali,
 supporti USB fisici o sistemi Windows/macOS.
 I test del frontend verificano gli artefatti e i riferimenti generati; non

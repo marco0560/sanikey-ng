@@ -1,0 +1,186 @@
+schema_version = 1
+corpus_version = "1"
+baseline_commit = "fdad1d93e56496cc6cb9933b3089729175d5b5b3"
+encoding = "UTF-8"
+line_endings = "LF"
+generator = "static synthetic fixtures; negative TOML/CSV files hand-authored"
+expected_output = "expected/minimal-python.json"
+
+[[fixture]]
+path = "config/accounts.toml"
+format = "TOML"
+sha256 = "f68ba8cd8fd0c312d35f133b2b33be453d1bf14807c52c97d3a565bd8d12edd2"
+case = "positive configuration; one enabled synthetic patient"
+
+[[fixture]]
+path = "minimal/patient-a/documents/laboratory/20260102 Referto Sintetico.txt"
+format = "UTF-8 text"
+sha256 = "f1c69fd460ac2e3f88c30c5fca12ea77adb1a06660d053dafcf2e19f642934f7"
+case = "positive dated text document"
+
+[[fixture]]
+path = "minimal/patient-a/documents/duplicate/20260102 Copia sintetica.txt"
+format = "UTF-8 text"
+sha256 = "f1c69fd460ac2e3f88c30c5fca12ea77adb1a06660d053dafcf2e19f642934f7"
+case = "positive exact duplicate of dated document"
+
+[[fixture]]
+path = "minimal/patient-a/documents/laboratory/peso-sintetico.csv"
+format = "CSV UTF-8"
+sha256 = "44310ca2b3502659a16103dc7a592f86159f403e4219108fa6daad6742586f6d"
+case = "positive observation source; 2026-01-02, 70.0 kg"
+
+[[fixture]]
+path = "minimal/patient-a/metadata/observation_imports.toml"
+format = "TOML"
+sha256 = "6a971c1152538184f48307fb6e34ff67cd938010cd98f6f6f8cdac695d8b0a4d"
+case = "positive explicit CSV-to-series mapping"
+
+[[fixture]]
+path = "minimal/patient-a/metadata/clinical_summary.toml"
+format = "TOML"
+sha256 = "ef3f6d903e0bd6f94c40be45b9c8aafe6373c0ed1ef40bde89d75b571b6a1cff"
+case = "positive curated synthetic summary"
+
+[[fixture]]
+path = "minimal/patient-a/metadata/document_tags.toml"
+format = "TOML"
+sha256 = "02b6e349fbe6c4b97906135a4de241900d158a1165c6184b76701071b236f96c"
+case = "positive curated tags"
+
+[[fixture]]
+path = "minimal/patient-a/metadata/medication_leaflets.toml"
+format = "TOML"
+sha256 = "f05019e2eae6315e4229ef3de87edf85d7ede5405d388adb8b368689898d8b97"
+case = "positive explicit non-AIFA status"
+
+[[fixture]]
+path = "minimal/patient-a/metadata/medications.toml"
+format = "TOML"
+sha256 = "d1856448085996c78654759d08a6a3fa649f9d6fa8dabed431bbf4f879cf8638"
+case = "positive synthetic medication"
+
+[[fixture]]
+path = "minimal/patient-a/metadata/observations.toml"
+format = "TOML"
+sha256 = "303ed7f17296332fa765988d3f1c874f5f7399bb3777b41140873c4f5d7e76b8"
+case = "positive curated annotation with date"
+
+[[fixture]]
+path = "minimal/patient-a/metadata/problems.toml"
+format = "TOML"
+sha256 = "caecf2fe4e492de82f8d33f0df858902a360813477f5945004b106ea80aea8e3"
+case = "positive synthetic clinical problem"
+
+[[fixture]]
+path = "minimal/patient-a/metadata/procedures.toml"
+format = "TOML"
+sha256 = "a26b0abbaa707a61a67e79f90e6d1c4ff14f386b8a0cc5154bb5f115fcf5ad38"
+case = "positive synthetic procedure with date"
+
+[[fixture]]
+path = "minimal/patient-a/metadata/therapies.toml"
+format = "TOML"
+sha256 = "73ae486e273c359c455e316aa850f5259363a05414184006a1821fb49611c306"
+case = "positive synthetic therapy linked to medication"
+
+[[fixture]]
+path = "minimal/patient-a/metadata/timeline_events.toml"
+format = "TOML"
+sha256 = "4f86ed298a164ecb771c2b4c662bcbc1325942057b674cad607187d826eb1311"
+case = "positive synthetic event with procedure reference"
+
+[[fixture]]
+path = "minimal/parameters.toml"
+format = "TOML"
+sha256 = "84b1affe169bedb4316ca9d8e6bd8404c1597d23bcdf93e7cdd8eac598a8572c"
+case = "positive disabled parameter rule template"
+
+[[fixture]]
+path = "negative/config-missing-version.toml"
+format = "TOML"
+sha256 = "f6cdb90676a20e8e5f643baa3080b0d0cf3ad6e4222c8fe9210f5928dbdcb949"
+case = "negative; expected validate-config exit 1"
+
+[[fixture]]
+path = "negative/peso-data-nonvalida.csv"
+format = "CSV UTF-8"
+sha256 = "ec966ffbb3676817c57826f4e6d1a448ddb6e2087100bdf7bd68112d18ea76ef"
+case = "negative invalid observation date; expected import exit 1"
+
+[[adapter_fixture]]
+source = "tests/test_documents.py"
+source_sha256 = "5e5747d914ebf8b9d63b7a5adb81e7ce0d7f91edd50e0b591fe7c65900020d4f"
+test = "test_extract_text_reads_synthetic_pdf_with_pymupdf"
+format = "PDF"
+expectation = "extract text from generated digital PDF"
+
+[[adapter_fixture]]
+source = "tests/test_documents.py"
+source_sha256 = "5e5747d914ebf8b9d63b7a5adb81e7ce0d7f91edd50e0b591fe7c65900020d4f"
+test = "test_extract_text_reads_image_only_pdf_with_ocrmypdf"
+format = "PDF with synthetic image-only page"
+expectation = "OCR path runs or reports provider failure explicitly"
+
+[[adapter_fixture]]
+source = "tests/test_documents.py"
+source_sha256 = "5e5747d914ebf8b9d63b7a5adb81e7ce0d7f91edd50e0b591fe7c65900020d4f"
+test = "test_extract_text_reads_docx_documents"
+format = "DOCX"
+expectation = "synthetic document text extracted"
+
+[[adapter_fixture]]
+source = "tests/test_documents.py"
+source_sha256 = "5e5747d914ebf8b9d63b7a5adb81e7ce0d7f91edd50e0b591fe7c65900020d4f"
+test = "test_extract_text_reads_xlsx_workbooks"
+format = "XLSX"
+expectation = "synthetic sheet text extracted"
+
+[[adapter_fixture]]
+source = "tests/test_containers.py"
+source_sha256 = "2762ca6a58b83acabea9b4bd4498032188322518f334b35a0143a50352638fd2"
+test = "test_stage_container_documents_extracts_7z_archive"
+format = "7z"
+expectation = "members stay under staging"
+
+[[adapter_fixture]]
+source = "tests/test_containers.py"
+source_sha256 = "2762ca6a58b83acabea9b4bd4498032188322518f334b35a0143a50352638fd2"
+test = "test_stage_container_documents_extracts_tar_xz_archive"
+format = "TAR.XZ"
+expectation = "members stay under staging"
+
+[[adapter_fixture]]
+source = "tests/test_containers.py"
+source_sha256 = "2762ca6a58b83acabea9b4bd4498032188322518f334b35a0143a50352638fd2"
+test = "test_stage_container_documents_warns_for_invalid_rar"
+format = "RAR"
+expectation = "invalid synthetic archive produces warning"
+
+[[adapter_fixture]]
+source = "tests/test_dicom.py"
+source_sha256 = "36691125e15cdb89eb75277877b953128c4677af0f0c78f3c187b4ef26428b6f"
+test = "test_catalog_dicom_studies_groups_files_by_study_instance_uid"
+format = "DICOM"
+expectation = "synthetic instances group by StudyInstanceUID"
+
+[[adapter_fixture]]
+source = "tests/test_dicom.py"
+source_sha256 = "36691125e15cdb89eb75277877b953128c4677af0f0c78f3c187b4ef26428b6f"
+test = "test_catalog_dicom_studies_reads_study_records_from_dicomdir"
+format = "DICOMDIR"
+expectation = "synthetic DICOMDIR produces study records"
+
+[[adapter_fixture]]
+source = "tests/test_usb.py"
+source_sha256 = "c58c02430d9666b5b25d0fd6edb83c45afcd1e808bd6caf8ea0a4f9d0c738fe8"
+test = "test_validate_usb_rejects_tampered_checksum"
+format = "synthetic USB directory"
+expectation = "tampered checksum fails validation"
+
+[[adapter_fixture]]
+source = "tests/test_usb.py"
+source_sha256 = "c58c02430d9666b5b25d0fd6edb83c45afcd1e808bd6caf8ea0a4f9d0c738fe8"
+test = "test_rsync_interruption_stops_child_and_reports_retry"
+format = "synthetic interrupted copy"
+expectation = "interruption never reports successful export"

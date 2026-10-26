@@ -1,0 +1,8 @@
+[[therapy]]
+id = "terapia-sintetica"
+medication_id = "farmaco-sintetico"
+start_date = "2026-01-01"
+dosage = "1 compressa"
+role = "terapia di esempio"
+schedule = ["mattino"]
+instructions = "Dopo colazione"

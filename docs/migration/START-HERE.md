@@ -5,7 +5,8 @@
 La preparazione ha committato tutte le modifiche Python nel riferimento
 `fdad1d93e56496cc6cb9933b3089729175d5b5b3`, con gate superato.
 Ha predisposto repository e documentazione per il piano approvato.
-Non sono ancora implementati Rust, GUI, corpus o comparatori.
+Non sono ancora implementati Rust, GUI o comparatori. Il corpus sintetico P02.02
+è stato preparato e i relativi expected sono fissati alla baseline.
 
 Il [ledger](ledger.md) riporta lo stato effettivo della pubblicazione.
 La prossima scheda è quella indicata nel [ledger](ledger.md). P01.03 ha

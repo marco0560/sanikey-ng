@@ -1,0 +1,3 @@
+Referto di laboratorio sintetico per documentazione e test.
+
+Questo file non contiene dati reali di pazienti.

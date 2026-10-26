@@ -1,0 +1,6 @@
+[[person]]
+id = "patient-a"
+display_name = "Paziente sintetico A"
+source_documents = "../minimal/patient-a/documents"
+metadata_directory = "../minimal/patient-a/metadata"
+local_build = "../../../../.artifacts/migration/p02-02-build/patient-a"

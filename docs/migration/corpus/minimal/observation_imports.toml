@@ -1,0 +1,13 @@
+[[series]]
+id = "peso"
+name = "Peso"
+value_type = "numeric"
+unit = "kg"
+
+[[source]]
+path = "laboratory/peso-sintetico.csv"
+series_id = "peso"
+
+[source.columns]
+date = "Data"
+numeric_value = "Peso"

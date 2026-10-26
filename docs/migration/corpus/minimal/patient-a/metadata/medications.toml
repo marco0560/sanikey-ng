@@ -1,0 +1,6 @@
+[[medication]]
+id = "farmaco-sintetico"
+name = "Farmaco sintetico 10 mg"
+active_ingredient = "Principio sintetico"
+form = "compresse"
+strength_per_unit = "10 mg"
