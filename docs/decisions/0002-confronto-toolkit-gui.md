@@ -1,7 +1,7 @@
 # ADR-0002: decisione G1 sul toolkit GUI
 
-- Stato: proposta per G1; approvazione del manutentore in attesa.
-- Data: 2026-10-26.
+- Stato: accettata dal manutentore (G1).
+- Proposta: 2026-10-26; approvazione: 2026-10-27.
 - Evidenza: [confronto P04.06](../migration/verification/2026-10-26-gui-toolkit-prototypes.md).
 
 ## Contesto
@@ -36,12 +36,11 @@ tre OS. Tauri è rimasto fuori da questa coppia perché
 introduce WebView e frontend web, una superficie di packaging e accessibilità
 diversa dal confronto tra adattatori GUI Rust nativi.
 
-## Proposta di decisione
+## Decisione
 
-Confermare uno dei candidati per il crate desktop di prodotto oppure chiedere
-un'integrazione circoscritta delle prove mancanti prima della scelta. Non
-aggiungere il toolkit selezionato al workspace del prodotto finché G1 non è
-approvato. I prototipi restano strumenti di confronto.
+Approvato egui/eframe 0.37.0 come toolkit GUI per il generatore. Slint 1.18.1
+resta solo il secondo prototipo di confronto. Il manutentore ha approvato la
+strada egui/eframe il 2026-10-27.
 
 ## Conseguenze e verifiche necessarie
 

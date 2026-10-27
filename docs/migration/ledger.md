@@ -9,7 +9,8 @@ l'implementazione approvata è ripresa in seguito con P03.01.
 Baseline Python: `fdad1d93e56496cc6cb9933b3089729175d5b5b3`.
 Stato Rust: P03.04 completata; gate e CI hosted Linux/Windows/macOS superati;
 prova CLI minima limitata a Linux; pipeline non implementata.
-Stato GUI: toolkit non scelto.
+Stato GUI: G1 approvato il 2026-10-27 per egui/eframe 0.37.0; crate desktop
+di prodotto non ancora introdotto.
 
 | Scheda | Stato | Evidenza |
 | --- | --- | --- |
@@ -30,7 +31,7 @@ Stato GUI: toolkit non scelto.
 | P04.03 | completata | 2026-10-26; suite baseline DICOM 20/20; baseline e DICOM-rs decodificano tre sintassi sintetiche; media DICOMDIR e preservazione byte verificate; gate completo superato; scrittura DICOMDIR Rust non ancora prototipata; commit `ccc4a20`; [ricevuta](verification/2026-10-26-dicom-codec-feasibility.md) |
 | P04.04 | completata con limiti | 2026-10-26; suite USB baseline 20 passed, 1 skipped; lettura Linux di mount, filesystem e spazio su directory `.Temp`; Win/macOS documentati ma non provati; semantica `usb_uuid` da chiarire prima del porting multiOS; commit `32a5e45`; [ricevuta](verification/2026-10-26-volume-identity-feasibility.md) |
 | P04.05 | completata | 2026-10-26; candidati fissati a egui/eframe 0.37.0 e Slint 1.18.1; protocollo identico per P04.06; desktop resta pending e G1 non deciso; gate `cargo xtask check` superato; commit `02b2fc1`; [ricevuta](verification/2026-10-26-gui-toolkit-candidates.md) |
-| P04.06 | confronto completato; G1 in attesa | 2026-10-26; prototipi egui e Slint con eventi sintetici condivisi; check, test, Clippy e build release superati su Linux; binari 29.263.024/30.923.256 byte e grafo normale 366/443 nodi; gate `cargo xtask check` superato; accessibilità manuale, DPI, dialoghi e Windows/macOS non provati; commit `96ddfab`; [ricevuta](verification/2026-10-26-gui-toolkit-prototypes.md), [ADR proposta](../decisions/0002-confronto-toolkit-gui.md) |
+| P04.06 | completata; G1 approvato | 2026-10-26; prototipi egui e Slint con eventi sintetici condivisi; check, test, Clippy e build release superati su Linux; binari 29.263.024/30.923.256 byte e grafo normale 366/443 nodi; gate `cargo xtask check` superato; accessibilità manuale, DPI, dialoghi e Windows/macOS non provati; commit `96ddfab`; approvazione egui/eframe 0.37.0 il 2026-10-27; [ricevuta](verification/2026-10-26-gui-toolkit-prototypes.md), [ADR](../decisions/0002-confronto-toolkit-gui.md) |
 
 Le schede non registrate sopra sono da_eseguire; l'indice completo è in
 [tasks/README.md](tasks/README.md).
@@ -56,18 +57,17 @@ autorizzazione specifica.
 
 | Checkpoint | Stato |
 | --- | --- |
-| G1 — toolkit GUI | Confronto P04.05/P04.06 pronto; scelta del manutentore in attesa; [ADR proposta](../decisions/0002-confronto-toolkit-gui.md) |
+| G1 — toolkit GUI | Approvato il 2026-10-27: egui/eframe 0.37.0; [ADR](../decisions/0002-confronto-toolkit-gui.md) |
 | G2 — cambiamenti materiali | Da chiarire prima del porting USB multiOS: distinguere UUID filesystem da ID deploy (`usb_uuid`); nessuna modifica applicata; [P04.04](verification/2026-10-26-volume-identity-feasibility.md) |
 | G3 — transizione operativa | Non raggiunto |
 | G4 — phase-out Python | Non raggiunto |
 
 ## Prossima sessione
 
-Leggere [START-HERE.md](START-HERE.md). P04.06 ha presentato G1; attendere la
-scelta del manutentore prima di introdurre il toolkit nel workspace prodotto.
-Dopo la decisione, riprendere con [P02.03](tasks/P02.03-costruire-il-confronto-e-provarne-la-sensibilita.md),
-che dipende da P02.02 e P03.03. L'implementazione della GUI di prodotto resta
-subordinata all'approvazione G1.
+Leggere [START-HERE.md](START-HERE.md). G1 approvato per egui/eframe 0.37.0;
+la prossima scheda è [P02.03](tasks/P02.03-costruire-il-confronto-e-provarne-la-sensibilita.md),
+dipendente da P02.02 e P03.03. Il crate desktop di prodotto resta pianificato
+per P11.
 
 A ogni scheda aggiungere data, commit, comandi ed esiti effettivi, eventuali
 skip con motivazione, evidenze, blocchi e successiva attività.
