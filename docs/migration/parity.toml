@@ -213,8 +213,17 @@ phase = "P07"
 status = "pending"
 baseline_source = "src/sanikey/dicom.py"
 baseline_test = "tests/test_dicom.py"
-rust_tests = []
-evidence = ["verification/2026-10-26-dicom-codec-feasibility.md"]
+rust_tests = [
+  "dicom::tests::catalog_groups_instances_by_uid_and_keeps_sorted_provenance",
+  "dicom::tests::catalog_keeps_distinct_and_uid_less_instances_as_separate_records",
+  "dicom::tests::catalog_reads_dicomdir_and_prefers_instances_when_coalescing_uid",
+  "dicom::tests::catalog_preserves_staged_container_provenance",
+  "dicom::tests::catalog_reports_damaged_dicom_without_discarding_its_provenance",
+]
+evidence = [
+  "verification/2026-10-26-dicom-codec-feasibility.md",
+  "verification/2026-10-28-dicom-catalog.md",
+]
 approved_deviations = []
 
 [[capability]]

@@ -4,6 +4,7 @@
 
 pub mod config;
 pub mod containers;
+pub mod dicom;
 pub mod inventory;
 pub mod metadata;
 mod office;
