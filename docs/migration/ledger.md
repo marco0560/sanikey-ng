@@ -7,9 +7,9 @@ La sessione di bootstrap si è fermata dopo repository e documentazione;
 l'implementazione approvata è ripresa in seguito con P03.01.
 
 Baseline Python: `fdad1d93e56496cc6cb9933b3089729175d5b5b3`.
-Stato Rust: P07.03 completata; pipeline di consultazione per TXT, PDF,
-Markdown, HTML e JPEG/PNG implementata e verificata su Linux. Il browser e
-Windows/macOS non sono qualificati; P07.04 è la prossima scheda.
+Stato Rust: P07.04 completata; consultazione TXT/PDF/HTML/immagini e
+conversione Office implementate e verificate su Linux. La parità Office e
+Windows/macOS non sono qualificate; P07.05 è la prossima scheda.
 Stato GUI: G1 approvato il 2026-10-27 per egui/eframe 0.37.0; crate desktop
 di prodotto non ancora introdotto.
 
@@ -43,6 +43,7 @@ di prodotto non ancora introdotto.
 | P07.01 | completata; parità PDF pending | 2026-10-28; estrazione PDF digitale con `lopdf 0.40.0`, warning e intervalli Unicode per pagina; testo verificato in JSON, FTS5 e HTML, copie originali identiche; PDF malformato e senza testo verificati senza OCR; `cargo xtask check`, hook e tre workspace GUI superati su Linux; OCR e qualifica multipiattaforma restano pending; commit `c2b2f2f`; [ricevuta](verification/2026-10-28-pdf-digital.md) |
 | P07.02 | completata; parità PDF pending | 2026-10-28; OCR PDF via PDFium e Tesseract, soglia baseline, forzatura su scansioni e glossario; OCR sintetico, fallback digitale, errori e provenienza verificati; `cargo xtask check` exit 0; pre-commit superato con 73 test core e i tre workspace GUI; Windows/macOS e distribuzione nativa pending; commit `a4e15a5`; [ricevuta](verification/2026-10-28-pdf-ocr.md) |
 | P07.03 | completata; parità frontend/export pending | 2026-10-28; consultazione PDF, TXT, Markdown, HTML, JPEG e PNG; copie byte-identiche e href verificati; immagini con testo/warning vuoti e test passato con PDFium/Tesseract non disponibili; `cargo xtask check` exit 0 dopo correzione fmt; hook pre-commit superato (74 core, 8 xtask, 1 protocollo GUI; test egui/Slint e formattazione superati); browser e Windows/macOS non qualificati; commit `a82e47c`; [ricevuta](verification/2026-10-28-simple-consultation.md) |
+| P07.04 | completata; parità Office pending | 2026-10-28; Pandoc per DOCX/ODT/RTF, LibreOffice per DOC e fogli; originali conservati/linkati, PDF derivati verificati; conversione reale RTF e DOCX, warning DOCX corrotto, assenza convertitore e timeout verificati; `cargo xtask check` exit 0 (82 core, 1 ignored, 8 xtask, 3 CLI, doctest); hook superati (82 core, 1 ignored, 8 xtask, 3 CLI, GUI); XLSB/XLSM, browser e Windows/macOS pending; commit `e2e9586`; [ricevuta](verification/2026-10-28-office-conversion.md) |
 
 Le schede non registrate sopra sono da eseguire; l'indice completo è in
 [tasks/README.md](tasks/README.md). La parità per capability è mantenuta in
@@ -77,10 +78,10 @@ autorizzazione specifica.
 ## Prossima sessione
 
 Leggere [START-HERE.md](START-HERE.md). G1 approvato per egui/eframe 0.37.0;
-la prossima scheda è [P07.04](tasks/P07.04-portare-conversioni-office.md).
-Le pipeline PDF e consultazione semplice sono implementate e verificate su
-Linux; parità funzionale completa, browser e confezionamento multipiattaforma
-restano da verificare. Il crate desktop di prodotto resta pianificato per P11.
+la prossima scheda è [P07.05](tasks/P07.05-portare-container-e-staging.md).
+Le pipeline PDF e Office sono implementate e verificate su Linux, ma la parità
+Office completa, il browser e il confezionamento multipiattaforma restano da
+verificare. Il crate desktop di prodotto resta pianificato per P11.
 
 A ogni scheda aggiungere data, commit, comandi ed esiti effettivi, eventuali
 skip con motivazione, evidenze, blocchi e successiva attività.
