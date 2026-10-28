@@ -82,8 +82,11 @@ fn resolves_synonyms_conversions_and_stable_rule_digest() {
     );
     assert_eq!(rule.units, ["g/dL", "g/l"]);
     assert_eq!(rule.canonical_unit.as_deref(), Some("g/dL"));
+    assert_eq!(rule.minimum.expect("minimum").to_string(), "1");
+    assert_eq!(rule.maximum.expect("maximum").to_string(), "30");
     assert_eq!(rule.conversions.len(), 1);
-    assert_eq!(rule.conversions[0].multiplier, 0.1);
+    assert_eq!(rule.conversions[0].multiplier.to_string(), "0.1");
+    assert_eq!(rule.conversions[0].offset.to_string(), "0");
     assert_eq!(
         rule.digest,
         "853a7bf9d62194da2160729940688641fcc07336bf81b22463a9c5e02afef49a"

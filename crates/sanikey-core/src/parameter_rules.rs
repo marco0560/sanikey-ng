@@ -3,6 +3,7 @@
 use crate::config::SearchDictionary;
 use crate::operation::{ErrorCode, OperationError};
 use crate::parameter_slices::{DiscoverySettings, normalize_label};
+use rust_decimal::Decimal;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -61,9 +62,9 @@ pub struct UnitConversion {
     /// Unità prodotta dalla conversione.
     pub to_unit: String,
     /// Moltiplicatore configurato.
-    pub multiplier: f64,
+    pub multiplier: Decimal,
     /// Termine additivo configurato.
-    pub offset: f64,
+    pub offset: Decimal,
     /// Versione dichiarata della conversione.
     pub version: i64,
 }
@@ -96,9 +97,9 @@ pub struct ParameterRule {
     /// Unità da assumere solo con politica esplicita.
     pub assumed_unit: Option<String>,
     /// Limite minimo inclusivo.
-    pub minimum: Option<f64>,
+    pub minimum: Option<Decimal>,
     /// Limite massimo inclusivo.
-    pub maximum: Option<f64>,
+    pub maximum: Option<Decimal>,
     /// Categorie documento ammesse dopo normalizzazione.
     pub document_categories: Vec<String>,
     /// Frammenti richiesti sulla riga originale.
@@ -442,8 +443,9 @@ fn parse_conversions(
         conversions.push(UnitConversion {
             from_unit: normalize_unit(&string(table.get("from_unit"), path, "from_unit")?),
             to_unit: normalize_unit(&string(table.get("to_unit"), path, "to_unit")?),
-            multiplier: decimal(table.get("multiplier"), path, "multiplier")?.unwrap_or(0.0),
-            offset: decimal(table.get("offset"), path, "offset")?.unwrap_or(0.0),
+            multiplier: decimal(table.get("multiplier"), path, "multiplier")?
+                .unwrap_or(Decimal::ZERO),
+            offset: decimal(table.get("offset"), path, "offset")?.unwrap_or(Decimal::ZERO),
             version: positive(table, "version", None, path)?,
         });
     }
@@ -556,21 +558,35 @@ fn normalized_strings(
         .collect())
 }
 
-fn decimal(value: Option<&Value>, path: &Path, key: &str) -> Result<Option<f64>, OperationError> {
+fn decimal(
+    value: Option<&Value>,
+    path: &Path,
+    key: &str,
+) -> Result<Option<Decimal>, OperationError> {
     let Some(value) = value else {
         return Ok(None);
     };
-    let number = value
-        .as_integer()
-        .map(|number| number as f64)
-        .or_else(|| value.as_float())
-        .filter(|number| number.is_finite())
-        .ok_or_else(|| {
+    let number = if let Some(integer) = value.as_integer() {
+        Decimal::from(integer)
+    } else if let Some(float) = value.as_float().filter(|number| number.is_finite()) {
+        let text = float.to_string();
+        let parsed = if text.contains('e') || text.contains('E') {
+            Decimal::from_scientific(&text)
+        } else {
+            Decimal::from_str_exact(&text)
+        };
+        parsed.map_err(|_| {
             config_error(format!(
-                "{} campo {key} deve essere numerico e finito",
+                "{} campo {key} supera la precisione decimale supportata",
                 path.display()
             ))
-        })?;
+        })?
+    } else {
+        return Err(config_error(format!(
+            "{} campo {key} deve essere numerico e finito",
+            path.display()
+        )));
+    };
     Ok(Some(number))
 }
 
@@ -623,12 +639,8 @@ fn digest_rule(rule: &ParameterRule) -> String {
     format!("{:x}", Sha256::digest(canonical))
 }
 
-fn canonical_number(value: f64) -> String {
-    if value.fract() == 0.0 {
-        format!("{value:.0}")
-    } else {
-        value.to_string()
-    }
+fn canonical_number(value: Decimal) -> String {
+    value.to_string()
 }
 
 fn config_error(message: impl Into<String>) -> OperationError {
