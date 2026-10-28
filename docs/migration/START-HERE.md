@@ -9,8 +9,10 @@ Il workspace Rust include CLI info/versione, gate CI, comparatori e pipeline
 di consultazione per TXT, PDF, Markdown, HTML, immagini JPEG/PNG e conversioni
 Office. P07.05 ha portato container e staging con fixture sintetiche Linux;
 la capability è implementata ma IMG/ISO reali, alcuni codec e Windows/macOS
-restano pending. Anche parità Office e browser restano pending. La prossima
-scheda è P08.01, importazioni di osservazioni. P07.06 ha portato catalogazione
+restano pending. Anche parità Office e browser restano pending. P08.01 ha
+portato le importazioni di osservazioni con fixture sintetiche Linux; fogli
+non qualificati, Windows/macOS e integrazione frontend/database restano pending.
+P07.06 ha portato catalogazione
 DICOM e P07.07 media, viewer HTML offline e anteprime sintetiche non
 diagnostiche. La capability DICOM resta pending per generazione DICOMDIR senza
 indice sorgente, integrazione frontend e qualifiche mancanti. Il prodotto GUI
@@ -18,7 +20,7 @@ indice sorgente, integrazione frontend e qualifiche mancanti. Il prodotto GUI
 Il corpus sintetico P02.02 è pronto con expected fissati alla baseline.
 
 Il [ledger](ledger.md) riporta lo stato effettivo della pubblicazione.
-La prossima scheda è quella indicata nel [ledger](ledger.md): P08.01.
+La prossima scheda è quella indicata nel [ledger](ledger.md): P08.02.
 P01.03 ha qualificato il campione in un checkout pulito e ha verificato il
 fetch remoto dello SHA fissato; non è stata eseguita una push del Python.
 

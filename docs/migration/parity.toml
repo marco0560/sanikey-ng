@@ -237,11 +237,20 @@ approved_deviations = []
 id = "observations"
 description = "Import osservazioni"
 phase = "P08"
-status = "pending"
+status = "implemented"
 baseline_source = "src/sanikey/observation_imports.py"
 baseline_test = "tests/test_observation_imports.py"
-rust_tests = []
-evidence = []
+rust_tests = [
+  "observation_imports::tests::imports_normalized_points_without_overwriting_curated_metadata",
+  "observation_imports::tests::duplicate_warning_can_be_disabled",
+  "observation_imports::tests::stale_source_changes_are_rejected",
+  "observation_imports::tests::supports_dirty_headers_fill_down_and_notes",
+  "observation_imports::tests::supports_multiple_extracts_and_approximate_year_dates",
+  "observation_imports::tests::parses_compound_blood_pressure_values",
+  "observation_imports::tests::normalizes_repeating_matrix_with_month_rollover",
+  "observation_imports::tests::supports_xlsx_spreadsheets",
+]
+evidence = ["verification/2026-10-28-observation-imports.md"]
 approved_deviations = []
 
 [[capability]]

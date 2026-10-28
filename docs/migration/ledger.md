@@ -7,11 +7,12 @@ La sessione di bootstrap si è fermata dopo repository e documentazione;
 l'implementazione approvata è ripresa in seguito con P03.01.
 
 Baseline Python: `fdad1d93e56496cc6cb9933b3089729175d5b5b3`.
-Stato Rust: P07.07 completata; staging contenitori, catalogazione DICOM,
-media e anteprime implementati e verificati con fixture sintetiche Linux. Le
+Stato Rust: P08.01 completata; importazioni osservazioni implementate e
+verificate con fixture sintetiche Linux. Staging contenitori, catalogazione DICOM,
+media e anteprime sono implementati e verificati con fixture sintetiche Linux. Le
 capability containers e DICOM restano pending per media mancanti/non standard,
 integrazione frontend e qualifica di codec, viewer e Windows/macOS. La prossima
-scheda è P08.01.
+scheda è P08.02.
 Stato GUI: G1 approvato il 2026-10-27 per egui/eframe 0.37.0; crate desktop
 di prodotto non ancora introdotto.
 
@@ -49,6 +50,7 @@ di prodotto non ancora introdotto.
 | P07.05 | completata; parità containers pending | 2026-10-28; staging confinato, manifest v1, filtri, ricorsione e deduplica; ZIP Stored/DEFLATE/BZIP2/LZMA, 7z, RAR e TAR.XZ provati; fixture `.iso` con payload 7z per il flusso disco, ISO/IMG reali pending; baseline `tests/test_containers.py` 20/20; `cargo xtask check` exit 0 (96 core, 1 ignored, 8 xtask, 3 CLI, doctest); pre-commit e GUI superati dopo aggiornamento offline dei lockfile isolati; Codira index SIGSEGV; commit `13ac794`, lockfile GUI `a8d287c`; [ricevuta](verification/2026-10-28-container-staging.md) |
 | P07.06 | completata; parità DICOM pending | 2026-10-28; baseline `tests/test_dicom.py` 20/20; catalogo Rust raggruppa UID, legge DICOMDIR, coalesca record e conserva provenienza staged/danneggiata; 5 test DICOM, `cargo xtask check` exit 0 (101 core, 1 ignored, 8 xtask, 3 CLI, doctest, pubblicabilità, rustdoc); pre-commit e tre GUI superati; Codira index SIGSEGV; commit `418baa3`; [ricevuta](verification/2026-10-28-dicom-catalog.md) |
 | P07.07 | completata; parità DICOM pending | 2026-10-28; baseline DICOM 20/20; media conserva istanze byte-identiche, DICOMDIR valido e viewer HTML relativo senza launcher nativi; anteprima 2×2 decodificata, errore isolato e originali integri; 11 test DICOM, `cargo xtask check` exit 0 (107 core, 1 ignored, 8 xtask, 3 CLI, 2 doctest, pubblicabilità 221 file, rustdoc); Codira index SIGSEGV; pre-commit e tre GUI superati; commit `7d24597`; [ricevuta](verification/2026-10-28-dicom-media.md) |
+| P08.01 | completata; parità osservazioni pending | 2026-10-28; baseline fissata 7/7; Rust 8 test inclusi CSV, XLSX sintetico, layout matrice, estrazioni multiple, staleness e protezione metadati curati; `cargo xtask check` exit 0 (115 core, 1 ignored, 8 xtask, 3 CLI, 2 doctest); hook pre-commit superato con i tre prototipi GUI; lockfile GUI aggiornati per le nuove dipendenze core; commit funzionale `bda9293`; [ricevuta](verification/2026-10-28-observation-imports.md) |
 
 Le schede non registrate sopra sono da eseguire; l'indice completo è in
 [tasks/README.md](tasks/README.md). La parità per capability è mantenuta in
@@ -83,13 +85,16 @@ autorizzazione specifica.
 ## Prossima sessione
 
 Leggere [START-HERE.md](START-HERE.md). G1 approvato per egui/eframe 0.37.0;
-la prossima scheda è [P08.01](tasks/P08.01-portare-importazioni-di-osservazioni.md).
+la prossima scheda è [P08.02](tasks/P08.02-portare-parametri-slice-e-segni-vitali.md).
 Le pipeline PDF e Office sono implementate e verificate su Linux, ma la parità
 Office completa, la parità containers completa, il browser e il
 confezionamento multipiattaforma restano da verificare. Il crate desktop di
 prodotto resta pianificato per P11. P07.06 ha portato la catalogazione DICOM;
 P07.07 ha portato media, viewer HTML statici e anteprime non diagnostiche. La
 capability DICOM rimane pending per i limiti indicati nella ricevuta.
+P08.01 ha portato l'importazione di osservazioni tabellari; la capability
+resta pending per fogli di calcolo non qualificati, sistemi operativi non
+provati e integrazione frontend/database.
 
 A ogni scheda aggiungere data, commit, comandi ed esiti effettivi, eventuali
 skip con motivazione, evidenze, blocchi e successiva attività.
