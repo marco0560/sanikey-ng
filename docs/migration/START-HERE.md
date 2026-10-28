@@ -25,8 +25,8 @@ generica e i principali layout tabellari annotati/impilati; P08.02c carica e
 valida le regole curate; P08.02d applica le regole ai candidati e produce
 decisioni esplicite; P08.02e applica politiche delle unità e conversioni
 esplicite, materializzando punti e serie; P08.02f genera report candidati e
-export statici. Il prossimo passo P08.02g genera i report diagnostici degli
-esiti accettati/rifiutati; seguiranno segni vitali e merge.
+export statici; P08.02g genera i report diagnostici di accettazioni e rifiuti.
+Il prossimo passo P08.02h porta segni vitali e merge.
 P01.03 ha qualificato il campione in un checkout pulito e ha verificato il
 fetch remoto dello SHA fissato; non è stata eseguita una push del Python.
 
