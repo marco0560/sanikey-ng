@@ -7,6 +7,7 @@ use crate::config::PersonConfig;
 use crate::inventory::scan_documents;
 use crate::metadata::{DocumentRecord, load_curated_metadata};
 use crate::operation::{ErrorCode, OperationError};
+use crate::pdf::{TextPageSpan, extract_pdf_text};
 use rusqlite::{Connection, params};
 use serde_json::{Value, json};
 use std::fs;
@@ -44,14 +45,28 @@ pub struct TxtPipelineResult {
     pub frontend: PathBuf,
 }
 
+/// Legge i PDF digitali e li rende consultabili senza eseguire OCR.
+///
+/// I documenti originali vengono copiati invariati; testo, warning e
+/// provenienza delle pagine sono esportati in JSON e SQLite.
+pub fn build_pdf_pipeline(person: &PersonConfig) -> Result<TxtPipelineResult, OperationError> {
+    build_pipeline(person, is_pdf, read_pdf_document, "Archivio PDF")
+}
+
 #[derive(Clone, Debug, PartialEq)]
 struct TxtDocument {
     record: DocumentRecord,
     relative_path: String,
     href: String,
     text: String,
+    warnings: Vec<String>,
+    page_spans: Vec<TextPageSpan>,
     tags: Vec<String>,
 }
+
+type ConfiguredTags = indexmap::IndexMap<String, Vec<String>>;
+type DocumentReader =
+    fn(&PersonConfig, DocumentRecord, &ConfiguredTags) -> Result<TxtDocument, OperationError>;
 
 /// Legge i documenti `.txt`, crea l'indice SQLite e genera export e pagina HTML.
 ///
@@ -65,11 +80,20 @@ struct TxtDocument {
 /// Restituisce un errore di configurazione se la scansione, la lettura, il
 /// database o la scrittura di un artefatto non riesce.
 pub fn build_txt_pipeline(person: &PersonConfig) -> Result<TxtPipelineResult, OperationError> {
+    build_pipeline(person, is_plain_text, read_document, "Archivio TXT")
+}
+
+fn build_pipeline(
+    person: &PersonConfig,
+    include: fn(&DocumentRecord) -> bool,
+    read: DocumentReader,
+    heading: &str,
+) -> Result<TxtPipelineResult, OperationError> {
     let inventory = scan_documents(person)?;
     let metadata = load_curated_metadata(&person.metadata_directory)?;
     let mut documents = Vec::new();
-    for record in inventory.into_iter().filter(is_plain_text) {
-        documents.push(read_document(person, record, &metadata.document_tags)?);
+    for record in inventory.into_iter().filter(include) {
+        documents.push(read(person, record, &metadata.document_tags)?);
     }
 
     let database = person
@@ -85,7 +109,7 @@ pub fn build_txt_pipeline(person: &PersonConfig) -> Result<TxtPipelineResult, Op
 
     build_database(&database, &documents, &person.id)?;
     export_documents(&data, person, &documents)?;
-    build_frontend(&frontend, person, &documents)?;
+    build_frontend(&frontend, person, &documents, heading)?;
 
     Ok(TxtPipelineResult {
         documents: documents.len(),
@@ -93,6 +117,14 @@ pub fn build_txt_pipeline(person: &PersonConfig) -> Result<TxtPipelineResult, Op
         data,
         frontend,
     })
+}
+
+fn is_pdf(record: &DocumentRecord) -> bool {
+    record.kind == "pdf"
+        && record
+            .path
+            .extension()
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("pdf"))
 }
 
 fn is_plain_text(record: &DocumentRecord) -> bool {
@@ -106,7 +138,7 @@ fn is_plain_text(record: &DocumentRecord) -> bool {
 fn read_document(
     person: &PersonConfig,
     record: DocumentRecord,
-    configured_tags: &indexmap::IndexMap<String, Vec<String>>,
+    configured_tags: &ConfiguredTags,
 ) -> Result<TxtDocument, OperationError> {
     let bytes = fs::read(&record.path).map_err(|cause| {
         filesystem_error("impossibile leggere il documento TXT", &record.path, cause)
@@ -132,6 +164,37 @@ fn read_document(
         relative_path,
         href,
         text,
+        warnings: Vec::new(),
+        page_spans: Vec::new(),
+        tags,
+    })
+}
+
+fn read_pdf_document(
+    person: &PersonConfig,
+    record: DocumentRecord,
+    configured_tags: &ConfiguredTags,
+) -> Result<TxtDocument, OperationError> {
+    let extracted = extract_pdf_text(&record);
+    let relative_path = relative_document_path(person, &record.path)?;
+    let href = format!("../documents/{}", encode_url_path(&relative_path));
+    let tags = configured_tags
+        .iter()
+        .find(|(key, _)| {
+            let normalized = key.replace('\\', "/");
+            relative_path.ends_with(&normalized)
+                || Path::new(&relative_path)
+                    .file_name()
+                    .is_some_and(|name| name.to_string_lossy() == normalized)
+        })
+        .map_or_else(|| record.tags.clone(), |(_, tags)| tags.clone());
+    Ok(TxtDocument {
+        record,
+        relative_path,
+        href,
+        text: extracted.text,
+        warnings: extracted.warnings,
+        page_spans: extracted.page_spans,
         tags,
     })
 }
@@ -187,6 +250,14 @@ fn build_database(
                      text TEXT NOT NULL,
                      FOREIGN KEY (document_id) REFERENCES documents(id)
                  );
+                 CREATE TABLE document_page_spans (
+                     document_id TEXT NOT NULL,
+                     page_number INTEGER NOT NULL,
+                     character_start INTEGER NOT NULL,
+                     character_end INTEGER NOT NULL,
+                     PRIMARY KEY (document_id, page_number),
+                     FOREIGN KEY (document_id) REFERENCES documents(id)
+                 );
                  CREATE VIRTUAL TABLE document_fts USING fts5(
                      title, category, tags, text
                  );",
@@ -227,6 +298,36 @@ fn build_database(
                     )
                     .map_err(|cause| {
                         database_error("impossibile salvare il testo TXT", path, cause)
+                    })?;
+            }
+            for span in &document.page_spans {
+                let page_number = i64::try_from(span.page_number).map_err(|cause| {
+                    integer_range_error("numero pagina fuori intervallo SQLite", path, cause)
+                })?;
+                let character_start = i64::try_from(span.character_start).map_err(|cause| {
+                    integer_range_error("offset pagina fuori intervallo SQLite", path, cause)
+                })?;
+                let character_end = i64::try_from(span.character_end).map_err(|cause| {
+                    integer_range_error("offset pagina fuori intervallo SQLite", path, cause)
+                })?;
+                transaction
+                    .execute(
+                        "INSERT INTO document_page_spans(
+                             document_id, page_number, character_start, character_end
+                         ) VALUES (?1, ?2, ?3, ?4)",
+                        params![
+                            document.record.document_id,
+                            page_number,
+                            character_start,
+                            character_end,
+                        ],
+                    )
+                    .map_err(|cause| {
+                        database_error(
+                            "impossibile salvare la provenienza delle pagine",
+                            path,
+                            cause,
+                        )
                     })?;
             }
             transaction
@@ -330,6 +431,12 @@ fn export_documents(
                 "sha256": document.record.sha256,
                 "tags": document.tags,
                 "text": document.text,
+                "warnings": document.warnings,
+                "page_spans": document.page_spans.iter().map(|span| json!({
+                    "page_number": span.page_number,
+                    "character_start": span.character_start,
+                    "character_end": span.character_end,
+                })).collect::<Vec<_>>(),
             })
         })
         .collect();
@@ -353,6 +460,7 @@ fn build_frontend(
     path: &Path,
     person: &PersonConfig,
     documents: &[TxtDocument],
+    heading: &str,
 ) -> Result<(), OperationError> {
     let document_root = path
         .parent()
@@ -368,8 +476,9 @@ fn build_frontend(
         )
     })?;
     let mut html = format!(
-        "<!doctype html>\n<html lang=\"it\">\n<head>\n<meta charset=\"utf-8\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n<title>SaniKey - {}</title>\n</head>\n<body>\n<main>\n<h1>Archivio TXT — {}</h1>\n<ul>\n",
+        "<!doctype html>\n<html lang=\"it\">\n<head>\n<meta charset=\"utf-8\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n<title>SaniKey - {}</title>\n</head>\n<body>\n<main>\n<h1>{} — {}</h1>\n<ul>\n",
         escape_html(&person.display_name),
+        escape_html(heading),
         escape_html(&person.display_name)
     );
     for document in documents {
@@ -477,6 +586,17 @@ fn filesystem_error(context: &str, path: &Path, cause: std::io::Error) -> Operat
 }
 
 fn database_error(context: &str, path: &Path, cause: rusqlite::Error) -> OperationError {
+    OperationError::new(
+        ErrorCode::Configuration,
+        format!("{context} {}: {cause}", path.display()),
+    )
+}
+
+fn integer_range_error(
+    context: &str,
+    path: &Path,
+    cause: std::num::TryFromIntError,
+) -> OperationError {
     OperationError::new(
         ErrorCode::Configuration,
         format!("{context} {}: {cause}", path.display()),

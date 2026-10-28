@@ -6,6 +6,7 @@ pub mod config;
 pub mod inventory;
 pub mod metadata;
 pub mod operation;
+pub mod pdf;
 pub mod privacy;
 pub mod simulated_export;
 pub mod txt_pipeline;

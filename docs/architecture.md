@@ -35,8 +35,11 @@ nell'ordine dei percorsi.
 
 `sanikey-core::txt_pipeline` compone inventario, lettura UTF-8 tollerante dei
 soli file `.txt`, SQLite con FTS5, JSON e pagina HTML offline con copie e link
-relativi verificabili. È un sottoinsieme sintetico: Markdown, CSV, PDF, altri
-formati, metadati clinici completi e parità multipiattaforma restano fuori.
+relativi verificabili. `build_pdf_pipeline` estrae il testo PDF digitale con
+`lopdf`, mantiene intervalli Unicode per pagina e warning, e li registra nel
+JSON e nella tabella SQLite `document_page_spans`; non esegue OCR. La pipeline
+continua a lasciare fuori Markdown, CSV, altri formati, metadati clinici
+completi e parità multipiattaforma. OCR resta nella scheda P07.02.
 
 `sanikey-core::simulated_export` assembla questo sottoinsieme in una nuova
 directory, crea un manifest deterministico con checksum, verifica l'integrità
@@ -75,7 +78,8 @@ Il target di copia deve essere validato prima di modificare file.
 
 Preferire dipendenze Rust incorporabili quando rispettano il contratto.
 Per PDF/OCR, Office e DICOM verificare fattibilità, codec, licenze e
-confezionamento prima del porting esteso.
+confezionamento prima del porting esteso. Il parser PDF digitale usa `lopdf`
+con feature predefinite disattivate; i codec e l'OCR non sono inclusi in P07.01.
 Una libreria C/C++ incorporata va inventariata anche quando non richiede
 installazione separata. Autocontenuto non significa necessariamente statico.
 

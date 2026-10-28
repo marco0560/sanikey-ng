@@ -139,8 +139,16 @@ phase = "P07"
 status = "pending"
 baseline_source = "src/sanikey/documents.py"
 baseline_test = "tests/test_documents.py"
-rust_tests = []
-evidence = ["verification/2026-10-26-pdf-ocr-feasibility.md"]
+rust_tests = [
+  "sanikey-core::pdf::tests::extracts_each_digital_page_and_records_unicode_offsets",
+  "sanikey-core::pdf::tests::malformed_and_text_poor_pdfs_return_warnings_without_ocr",
+  "sanikey-core::txt_pipeline::tests::pdf_pipeline_exports_digital_text_search_and_page_provenance",
+  "sanikey-core::txt_pipeline::tests::pdf_pipeline_preserves_extraction_warnings_in_json",
+]
+evidence = [
+  "verification/2026-10-26-pdf-ocr-feasibility.md",
+  "verification/2026-10-28-pdf-digital.md",
+]
 approved_deviations = []
 
 [[capability]]
