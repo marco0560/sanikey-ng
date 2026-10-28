@@ -26,7 +26,10 @@ valida le regole curate; P08.02d applica le regole ai candidati e produce
 decisioni esplicite; P08.02e applica politiche delle unità e conversioni
 esplicite, materializzando punti e serie; P08.02f genera report candidati e
 export statici; P08.02g genera i report diagnostici di accettazioni e rifiuti.
-Il prossimo passo P08.02h porta segni vitali e merge.
+P08.02h è completata: estrazione stretta di peso e pressione, provenienza,
+rifiuti di valori fuori intervallo e merge con precedenza curated nello stesso
+giorno. Il prossimo sottopasso P08.02i porta le celle annotate che descrivono
+il tipo di valore.
 P01.03 ha qualificato il campione in un checkout pulito e ha verificato il
 fetch remoto dello SHA fissato; non è stata eseguita una push del Python.
 

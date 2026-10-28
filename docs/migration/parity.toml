@@ -282,11 +282,16 @@ approved_deviations = []
 id = "vital_signs"
 description = "Segni vitali e merge"
 phase = "P08"
-status = "pending"
+status = "implemented"
 baseline_source = "src/sanikey/vital_signs.py"
 baseline_test = "tests/test_vital_signs.py"
-rust_tests = []
-evidence = []
+rust_tests = [
+  "vital_signs::tests::extracts_only_explicit_weight_and_pressure_forms_with_source_provenance",
+  "vital_signs::tests::ignores_undated_and_unmatched_documents_and_rejects_invalid_pressure",
+  "vital_signs::tests::extraction_is_deterministic_under_input_permutation",
+  "vital_signs::tests::merge_preserves_same_day_curated_points_and_deduplicates_series",
+]
+evidence = ["verification/2026-10-28-vital-signs.md"]
 approved_deviations = []
 
 [[capability]]
