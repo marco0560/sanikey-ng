@@ -1361,6 +1361,7 @@ dependencies = [
  "sha2 0.10.9",
  "tar",
  "toml",
+ "unicode-normalization",
  "xz2",
  "zip",
 ]

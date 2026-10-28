@@ -10,6 +10,7 @@ pub mod metadata;
 pub mod observation_imports;
 mod office;
 pub mod operation;
+pub mod parameter_rules;
 pub mod parameter_slices;
 pub mod pdf;
 pub mod privacy;
