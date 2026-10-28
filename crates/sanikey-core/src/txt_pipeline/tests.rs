@@ -1,5 +1,10 @@
-use super::{build_consultation_pipeline, build_pdf_pipeline, build_txt_pipeline};
+use super::{
+    build_consultation_pipeline, build_consultation_pipeline_with_renderer, build_pdf_pipeline,
+    build_txt_pipeline,
+};
 use crate::config::{IngestionConfig, PersonConfig, SearchConfig, UiConfig};
+use crate::office::OfficeRenderOutcome;
+use crate::operation::OperationError;
 use crate::pdf::test_support::synthetic_pdf;
 use rusqlite::Connection;
 use serde_json::Value;
@@ -248,6 +253,131 @@ fn consultation_pipeline_copies_openable_sources_without_ocr_on_images() {
     assert!(html_output.contains("Documenti consultabili"));
     assert!(html_output.contains("20260102%20Synthetic%20photo.JPG"));
     assert!(!html_output.contains("support.zip"));
+}
+
+#[test]
+fn consultation_pipeline_renders_office_derivatives_and_preserves_originals() {
+    let directory = TestDirectory::new();
+    let source = directory.path().join("source");
+    fs::create_dir_all(&source).expect("directory sorgente sintetica");
+    let office = source.join("20260108 Synthetic report.docx");
+    let original = b"synthetic Office original bytes";
+    fs::write(&office, original).expect("originale Office sintetico");
+    let person = person(
+        directory.path(),
+        &source,
+        &directory.path().join("metadata"),
+    );
+
+    let result = build_consultation_pipeline_with_renderer(&person, synthetic_office_renderer)
+        .expect("pipeline Office sintetica");
+
+    let exported: Value =
+        serde_json::from_str(&fs::read_to_string(&result.data).expect("JSON Office"))
+            .expect("JSON valido");
+    let document = &exported["documents"][0];
+    let document_id = document["id"].as_str().expect("id documento");
+    let derived_href = format!("../rendered-documents/{document_id}/document.pdf");
+    let derived_path = person
+        .local_build
+        .join("rendered-documents")
+        .join(document_id)
+        .join("document.pdf");
+    assert_eq!(result.documents, 1);
+    assert_eq!(document["href"], derived_href);
+    assert!(document["text"].as_str().is_some_and(|text| {
+        text.contains("Synthetic converted Office text with searchable content")
+    }));
+    assert_eq!(fs::read(&office).expect("originale invariato"), original);
+    assert_eq!(
+        fs::read(
+            person
+                .local_build
+                .join("documents/20260108 Synthetic report.docx")
+        )
+        .expect("copia dell'originale"),
+        original
+    );
+    assert!(derived_path.is_file());
+    let html = fs::read_to_string(&result.frontend).expect("frontend Office");
+    assert!(html.contains("Originale Office"));
+    assert!(html.contains("document.pdf"));
+}
+
+#[test]
+fn consultation_pipeline_keeps_office_original_when_converter_is_unavailable() {
+    let directory = TestDirectory::new();
+    let source = directory.path().join("source");
+    fs::create_dir_all(&source).expect("directory sorgente sintetica");
+    let office = source.join("20260109 Synthetic report.odt");
+    let original = b"synthetic ODT original bytes";
+    fs::write(&office, original).expect("originale ODT sintetico");
+    let person = person(
+        directory.path(),
+        &source,
+        &directory.path().join("metadata"),
+    );
+
+    let result = build_consultation_pipeline_with_renderer(&person, missing_office_renderer)
+        .expect("pipeline con convertitore assente");
+
+    let exported: Value =
+        serde_json::from_str(&fs::read_to_string(&result.data).expect("JSON Office"))
+            .expect("JSON valido");
+    let document = &exported["documents"][0];
+    assert!(document["href"].is_null());
+    assert_eq!(document["text"], "");
+    assert!(
+        document["warnings"][0]
+            .as_str()
+            .is_some_and(|warning| warning.contains("Pandoc non installato"))
+    );
+    assert_eq!(fs::read(&office).expect("originale invariato"), original);
+    assert_eq!(
+        fs::read(
+            person
+                .local_build
+                .join("documents/20260109 Synthetic report.odt")
+        )
+        .expect("copia dell'originale"),
+        original
+    );
+    assert!(
+        !person
+            .local_build
+            .join("rendered-documents")
+            .join(document["id"].as_str().expect("id documento"))
+            .join("document.pdf")
+            .exists()
+    );
+    let html = fs::read_to_string(&result.frontend).expect("frontend Office");
+    assert!(html.contains("Originale Office"));
+    assert!(html.contains("Pandoc non installato"));
+}
+
+fn synthetic_office_renderer(
+    _source: &Path,
+    output_directory: &Path,
+    _suffix_source: &Path,
+) -> Result<OfficeRenderOutcome, OperationError> {
+    fs::create_dir_all(output_directory).expect("directory PDF derivato");
+    let path = output_directory.join("document.pdf");
+    fs::write(
+        &path,
+        synthetic_pdf(&["Synthetic converted Office text with searchable content."]),
+    )
+    .expect("PDF derivato sintetico");
+    Ok(OfficeRenderOutcome::Rendered(path))
+}
+
+fn missing_office_renderer(
+    _source: &Path,
+    _output_directory: &Path,
+    _suffix_source: &Path,
+) -> Result<OfficeRenderOutcome, OperationError> {
+    Ok(OfficeRenderOutcome::Warning(
+        "Pandoc non installato; conversione PDF saltata".to_owned(),
+    ))
 }
 
 #[test]

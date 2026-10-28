@@ -36,9 +36,15 @@ nell'ordine dei percorsi.
 `sanikey-core::txt_pipeline` produce SQLite con FTS5, JSON e pagine HTML offline
 con originali copiati e link relativi. `build_txt_pipeline` legge `.txt`;
 `build_consultation_pipeline` cataloga anche PDF, Markdown, HTML e immagini
-JPEG/PNG. Le immagini sono copiate e linkate con testo e warning vuoti, senza
-richiedere OCR. Markdown conserva il testo ricercabile; HTML è linkato come
-originale.
+JPEG/PNG e converte i formati Office baseline in PDF. Le immagini sono
+copiate e linkate con testo e warning vuoti, senza richiedere OCR. Markdown
+conserva il testo ricercabile; HTML è linkato come originale. DOCX, ODT e RTF
+usano Pandoc; DOC legacy e fogli di calcolo usano LibreOffice in modalità
+headless. Il PDF consultabile è un derivato: l'originale Office resta copiato
+e linkato separatamente. Se il convertitore manca, termina male, supera 120
+secondi o produce un PDF invalido, il catalogo conserva l'originale e registra
+un warning senza esporre stderr o contenuto privato. La prova completa dei
+formati e il confezionamento multipiattaforma restano pending.
 
 `build_pdf_pipeline` estrae testo digitale con `lopdf` e, quando è
 insufficiente, renderizza ogni pagina PDF con PDFium e invia il raster PPM via

@@ -5,6 +5,7 @@
 pub mod config;
 pub mod inventory;
 pub mod metadata;
+mod office;
 pub mod operation;
 pub mod pdf;
 pub mod privacy;

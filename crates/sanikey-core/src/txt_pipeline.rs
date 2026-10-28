@@ -6,6 +6,7 @@ mod tests;
 use crate::config::PersonConfig;
 use crate::inventory::scan_documents;
 use crate::metadata::{DocumentRecord, load_curated_metadata};
+use crate::office::{OfficeRenderOutcome, render_office_document, supports_conversion};
 use crate::operation::{ErrorCode, OperationError};
 use crate::pdf::{PdfExtractionOptions, TextPageSpan, extract_pdf_text_with_options};
 use rusqlite::{Connection, params};
@@ -48,17 +49,38 @@ pub struct DocumentPipelineResult {
 /// Nome storico del risultato restituito dalle pipeline TXT e PDF.
 pub type TxtPipelineResult = DocumentPipelineResult;
 
-/// Cataloga, copia e rende consultabili i formati sorgente apribili dal browser.
+/// Cataloga i formati apribili dal browser e converte Office in PDF derivati.
 ///
-/// Include PDF, TXT, Markdown, HTML e immagini JPEG/PNG. Le immagini vengono
-/// copiate e catalogate senza estrarre testo o richiedere un provider OCR.
+/// Include PDF, TXT, Markdown, HTML, immagini JPEG/PNG e formati Office con
+/// convertitore baseline. Originali Office e immagini restano invariati.
 pub fn build_consultation_pipeline(
     person: &PersonConfig,
 ) -> Result<DocumentPipelineResult, OperationError> {
+    build_consultation_pipeline_with_renderer(person, render_office_document)
+}
+
+fn build_consultation_pipeline_with_renderer(
+    person: &PersonConfig,
+    office_renderer: fn(&Path, &Path, &Path) -> Result<OfficeRenderOutcome, OperationError>,
+) -> Result<DocumentPipelineResult, OperationError> {
+    let rendered_documents = person.local_build.join("rendered-documents");
+    match fs::remove_dir_all(&rendered_documents) {
+        Ok(()) => {}
+        Err(cause) if cause.kind() == std::io::ErrorKind::NotFound => {}
+        Err(cause) => {
+            return Err(filesystem_error(
+                "impossibile aggiornare i PDF Office derivati",
+                &rendered_documents,
+                cause,
+            ));
+        }
+    }
     build_pipeline(
         person,
-        is_browser_openable_source,
-        read_consultation_document,
+        is_consultable_source,
+        |person, record, tags, options| {
+            read_consultation_document(person, record, tags, options, office_renderer)
+        },
         "Documenti consultabili",
     )
 }
@@ -88,7 +110,7 @@ pub fn build_pdf_pipeline_with_options(
 struct TxtDocument {
     record: DocumentRecord,
     relative_path: String,
-    href: String,
+    href: Option<String>,
     text: String,
     warnings: Vec<String>,
     page_spans: Vec<TextPageSpan>,
@@ -191,17 +213,70 @@ fn is_browser_openable_source(record: &DocumentRecord) -> bool {
     }
 }
 
+fn is_consultable_source(record: &DocumentRecord) -> bool {
+    is_browser_openable_source(record) || supports_conversion(record)
+}
+
 fn read_consultation_document(
     person: &PersonConfig,
     record: DocumentRecord,
     configured_tags: &ConfiguredTags,
     options: PdfExtractionOptions,
+    office_renderer: fn(&Path, &Path, &Path) -> Result<OfficeRenderOutcome, OperationError>,
 ) -> Result<TxtDocument, OperationError> {
     match record.kind.as_str() {
         "pdf" => read_pdf_document(person, record, configured_tags, options),
         "text" => read_document(person, record, configured_tags, options),
+        "office" if supports_conversion(&record) => {
+            read_office_document(person, record, configured_tags, options, office_renderer)
+        }
         _ => read_link_only_document(person, record, configured_tags),
     }
+}
+
+fn read_office_document(
+    person: &PersonConfig,
+    record: DocumentRecord,
+    configured_tags: &ConfiguredTags,
+    options: PdfExtractionOptions,
+    office_renderer: fn(&Path, &Path, &Path) -> Result<OfficeRenderOutcome, OperationError>,
+) -> Result<TxtDocument, OperationError> {
+    let relative_path = relative_document_path(person, &record.path)?;
+    let tags = tags_for_document(&record, &relative_path, configured_tags);
+    let output_directory = person
+        .local_build
+        .join("rendered-documents")
+        .join(&record.document_id);
+    let (href, text, warnings, page_spans) =
+        match office_renderer(&record.path, &output_directory, &record.path)? {
+            OfficeRenderOutcome::Rendered(pdf_path) => {
+                let mut pdf_record = record.clone();
+                pdf_record.path = pdf_path;
+                pdf_record.kind = "pdf".to_owned();
+                let extracted = extract_pdf_text_with_options(&pdf_record, options);
+                (
+                    Some(format!(
+                        "../rendered-documents/{}/document.pdf",
+                        record.document_id
+                    )),
+                    extracted.text,
+                    extracted.warnings,
+                    extracted.page_spans,
+                )
+            }
+            OfficeRenderOutcome::Warning(warning) => {
+                (None, String::new(), vec![warning], Vec::new())
+            }
+        };
+    Ok(TxtDocument {
+        record,
+        relative_path,
+        href,
+        text,
+        warnings,
+        page_spans,
+        tags,
+    })
 }
 
 fn read_document(
@@ -223,7 +298,7 @@ fn read_document(
     Ok(TxtDocument {
         record,
         relative_path,
-        href,
+        href: Some(href),
         text,
         warnings: Vec::new(),
         page_spans: Vec::new(),
@@ -244,7 +319,7 @@ fn read_pdf_document(
     Ok(TxtDocument {
         record,
         relative_path,
-        href,
+        href: Some(href),
         text: extracted.text,
         warnings: extracted.warnings,
         page_spans: extracted.page_spans,
@@ -263,7 +338,7 @@ fn read_link_only_document(
     Ok(TxtDocument {
         record,
         relative_path,
-        href,
+        href: Some(href),
         text: String::new(),
         warnings: Vec::new(),
         page_spans: Vec::new(),
@@ -599,10 +674,29 @@ fn build_frontend(
             .date
             .as_deref()
             .unwrap_or("Data non indicata");
+        let title = match document.href.as_deref() {
+            Some(href) => format!(
+                "<a href=\"{}\">{}</a>",
+                escape_html(href),
+                escape_html(&document.record.title)
+            ),
+            None => escape_html(&document.record.title),
+        };
+        let original_link = if document.record.kind == "office" {
+            format!(
+                "<p><a href=\"../documents/{}\">Originale Office</a></p>",
+                encode_url_path(&document.relative_path)
+            )
+        } else {
+            String::new()
+        };
+        let warnings = document
+            .warnings
+            .iter()
+            .map(|warning| format!("<p class=\"warning\">Avviso: {}</p>", escape_html(warning)))
+            .collect::<String>();
         html.push_str(&format!(
-            "<li><article><h2><a href=\"{}\">{}</a></h2><p>{} · {}</p><p>Categoria: {}</p><pre>{}</pre></article></li>\n",
-            escape_html(&document.href),
-            escape_html(&document.record.title),
+            "<li><article><h2>{title}</h2><p>{} · {}</p><p>Categoria: {}</p>{original_link}{warnings}<pre>{}</pre></article></li>\n",
             escape_html(date),
             escape_html(&document.record.kind),
             escape_html(&document.record.category),
