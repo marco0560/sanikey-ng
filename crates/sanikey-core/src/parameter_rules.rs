@@ -2,7 +2,7 @@
 
 use crate::config::SearchDictionary;
 use crate::operation::{ErrorCode, OperationError};
-use crate::parameter_slices::{DiscoverySettings, normalize_label};
+use crate::parameter_slices::{DiscoverySettings, ParameterCandidate, normalize_label};
 use rust_decimal::Decimal;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
@@ -123,6 +123,150 @@ pub struct ParameterRules {
     pub discovery: DiscoverySettings,
     /// Regole ordinate per identificatore.
     pub rules: Vec<ParameterRule>,
+}
+
+/// Esito esplicito della valutazione di una regola su un candidato.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RuleDecision {
+    /// Identificatore stabile del candidato.
+    pub candidate_id: String,
+    /// Identificatore della regola valutata.
+    pub rule_id: String,
+    /// Indica se il candidato è accettato dalla regola.
+    pub accepted: bool,
+    /// Codice stabile che spiega l'esito.
+    pub reason_code: String,
+}
+
+/// Valuta candidati contro regole abilitate senza creare punti o applicare conversioni.
+///
+/// Per ogni regola abilitata emette un rifiuto al primo controllo fallito o
+/// un'accettazione provvisoria. Se più regole accettano lo stesso candidato,
+/// tutte le relative decisioni positive diventano rifiuti ambigui. Le decisioni
+/// sono ordinate per candidato, regola e codice, indipendentemente dall'ordine
+/// degli input.
+#[must_use]
+pub fn evaluate_parameter_candidates(
+    candidates: &[ParameterCandidate],
+    rules: &[ParameterRule],
+) -> Vec<RuleDecision> {
+    let mut decisions = Vec::new();
+    for candidate in candidates {
+        let mut matches = Vec::new();
+        for rule in rules.iter().filter(|rule| rule.enabled) {
+            if let Some(reason) = evaluate_rule(candidate, rule) {
+                if reason.starts_with("ACCEPTED_") {
+                    matches.push(rule.id.as_str());
+                }
+                decisions.push(RuleDecision {
+                    candidate_id: candidate.stable_id.clone(),
+                    rule_id: rule.id.clone(),
+                    accepted: reason.starts_with("ACCEPTED_"),
+                    reason_code: reason,
+                });
+            }
+        }
+        if matches.len() > 1 {
+            for decision in decisions.iter_mut().filter(|decision| {
+                decision.candidate_id == candidate.stable_id
+                    && matches.contains(&decision.rule_id.as_str())
+                    && decision.accepted
+            }) {
+                decision.accepted = false;
+                decision.reason_code = "REJECTED_MULTIPLE_RULE_MATCHES".into();
+            }
+        }
+    }
+    decisions.sort_by(|left, right| {
+        (&left.candidate_id, &left.rule_id, &left.reason_code).cmp(&(
+            &right.candidate_id,
+            &right.rule_id,
+            &right.reason_code,
+        ))
+    });
+    decisions
+}
+
+fn evaluate_rule(candidate: &ParameterCandidate, rule: &ParameterRule) -> Option<String> {
+    let label = normalized_nfkc(&candidate.normalized_label);
+    if !rule
+        .synonyms
+        .iter()
+        .any(|synonym| normalized_nfkc(synonym) == label)
+    {
+        return Some("REJECTED_LABEL".into());
+    }
+    let mut accepted = "ACCEPTED_CONFIGURED_SYNONYM";
+    if let Some(specimen) = rule.specimen.as_deref() {
+        let explicit = if label.starts_with("s-") {
+            Some("serum")
+        } else if label.starts_with("u-") || label.contains("urinari") {
+            Some("urine")
+        } else {
+            None
+        };
+        let observed = explicit.or(candidate.section_specimen.as_deref());
+        if observed.is_some_and(|observed| observed != specimen) {
+            return Some("REJECTED_SPECIMEN_MISMATCH".into());
+        }
+        if observed.is_none() {
+            if !rule
+                .default_specimen_labels
+                .iter()
+                .any(|item| normalized_nfkc(item) == label)
+            {
+                return Some("REJECTED_SPECIMEN_AMBIGUOUS".into());
+            }
+            accepted = "ACCEPTED_DEFAULT_SPECIMEN";
+        }
+    }
+    if candidate.parsed_value.is_none()
+        || !candidate
+            .number_format
+            .as_ref()
+            .is_some_and(|format| rule.number_formats.contains(format))
+    {
+        return Some(
+            candidate
+                .reason_code
+                .as_deref()
+                .unwrap_or("REJECTED_NUMBER_FORMAT")
+                .into(),
+        );
+    }
+    if candidate.qualifier.is_some() && rule.value_type != "qualified-scalar" {
+        return Some("REJECTED_QUALIFIER_UNSUPPORTED".into());
+    }
+    if candidate.document_date.is_none() {
+        return Some("REJECTED_DOCUMENT_DATE_MISSING".into());
+    }
+    if !rule.document_categories.is_empty()
+        && !rule.document_categories.iter().any(|category| {
+            normalized_nfkc(category) == normalized_nfkc(&candidate.document_category)
+        })
+    {
+        return Some("REJECTED_DOCUMENT_CATEGORY".into());
+    }
+    let line = normalized_nfkc(&candidate.original_line);
+    if rule
+        .required_context
+        .iter()
+        .any(|item| !line.contains(&normalized_nfkc(item)))
+    {
+        return Some("REJECTED_REQUIRED_CONTEXT_MISSING".into());
+    }
+    if rule
+        .excluded_context
+        .iter()
+        .any(|item| line.contains(&normalized_nfkc(item)))
+    {
+        return Some("REJECTED_EXCLUDED_CONTEXT".into());
+    }
+    Some(accepted.into())
+}
+
+fn normalized_nfkc(value: &str) -> String {
+    normalize_label(&value.nfkc().collect::<String>())
 }
 
 /// Carica le regole TOML, risolvendo gli alias dal dizionario di ricerca.
