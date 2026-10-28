@@ -38,11 +38,13 @@ qualifica l'apertura `file://`, prevista dalla scheda frontend.
 
 ## Prove
 
-Il modulo `xtask/src/compare.rs` aggiunge test per ogni tipo. Le mutazioni
+I moduli `xtask/src/compare/` aggiungono test per ogni tipo. Le mutazioni
 sintetiche cambiano byte e percorsi degli originali, valori JSON inclusi data,
 unità e provenienza, contenuto testuale, dati e vincoli SQLite, risultati FTS
 e file/dati frontend. Il comando SQLite è esercitato sul database sintetico
-generato in P02.02.
+generato in P02.02. La suddivisione in moduli mantiene l'indicizzazione Codira
+stabile: la prima versione concentrata in un solo file provocava un crash del
+parser Rust; dopo la divisione l'indice si completa senza errori.
 
 | Comando | Esito |
 | --- | --- |
@@ -53,9 +55,11 @@ generato in P02.02.
 | `cargo xtask compare text 'docs/migration/corpus/minimal/patient-a/documents/laboratory/20260102 Referto Sintetico.txt' 'docs/migration/corpus/minimal/patient-a/documents/laboratory/20260102 Referto Sintetico.txt'` | Exit 0 |
 | `cargo xtask compare frontend .artifacts/migration/p02-02-build/patient-a/web .artifacts/migration/p02-02-build/patient-a/web` | Exit 0 |
 | `cargo xtask compare json <expected> <mutated>` dopo `value: 70.0 -> 71.0` | Exit 1; differenza strutturale rilevata |
-| `cargo xtask check` | Exit 0 su Linux: fmt, Clippy, 16 test unitari, 1 doctest, build, smoke CLI, pubblicabilità e rustdoc |
-| `uv run codira index`; `uv run codira cov`; `uv run codira audit` | 0 errori di indicizzazione, copertura completa senza gap, nessun problema rustdoc |
-| `git diff --check`; `python3 scripts/check_publishable.py` | Exit 0; 139 file esaminati |
+| `cargo xtask check` | Exit 0 su Linux dopo la suddivisione in moduli: fmt, Clippy, 16 test unitari, 1 doctest, build, smoke CLI, pubblicabilità e rustdoc |
+| Cinque comandi `cargo xtask compare` (originals, SQLite, JSON, testo, frontend) | Exit 0 su fixture sintetiche; per SQLite inclusa la query FTS `sintetico` |
+| `cargo xtask compare json <expected> <mutated>` dopo `value: 70.0 -> 71.0` | Exit 1; differenza strutturale rilevata |
+| `uv run codira index`; `uv run codira cov`; `uv run codira audit` | 0 errori, 0 file falliti, copertura completa su 96 file, nessun gap e nessun problema rustdoc |
+| `git diff --check`; `python3 scripts/check_publishable.py` | Exit 0; 144 file esaminati |
 
 Il primo tentativo `cargo check --package xtask` non ha risolto
 `index.crates.io` nel sandbox; con l'accesso di rete autorizzato sono state
