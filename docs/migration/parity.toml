@@ -5,6 +5,38 @@ inventory_document = "contract-inventory.md"
 status_values = ["pending", "implemented", "verified", "blocked"]
 rule = "verified requires identified tests and actual evidence; deviations require approval"
 
+[comparison]
+version = 1
+command = "cargo xtask compare"
+failure = "nonzero exit for meaningful differences or invalid inputs"
+policy_document = "verification/2026-10-28-comparators.md"
+
+[comparison.originals]
+method = "same relative paths and SHA-256 of exact bytes"
+normalizations = []
+
+[comparison.sqlite]
+method = "schema SQL, typed rows, integrity, foreign keys, and FTS query results"
+ignored_physical_details = ["table and row ordering", "FTS shadow-table implementation rows"]
+fts_result_order = ["rank", "rowid"]
+required_query_argument = "--query"
+
+[comparison.json]
+method = "structural JSON equality"
+normalizations = ["object key order", "insignificant JSON whitespace"]
+ignored_fields = []
+volatile_field_policy = "producer omits only declared generated timestamps, absolute paths, and machine-specific filesystem metadata"
+
+[comparison.text]
+method = "exact UTF-8 text"
+normalizations = ["CRLF to LF"]
+ignored_content = []
+
+[comparison.frontend]
+method = "same relative file paths; JSON structurally, text as UTF-8, other files by SHA-256"
+normalizations = ["format-specific JSON and line-ending rules"]
+browser_file_url_qualification = false
+
 [[capability]]
 id = "configuration"
 description = "Configurazione e profili"

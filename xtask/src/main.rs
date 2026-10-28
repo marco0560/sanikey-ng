@@ -2,11 +2,13 @@
 
 #![forbid(unsafe_code)]
 
+mod compare;
+
 use std::path::Path;
 use std::process::{Command, ExitCode};
 
 const PINNED_TOOLCHAIN: &str = "1.98.1";
-const HELP: &str = "Uso: cargo xtask <comando>\n\nComandi disponibili:\n  check             Esegue il gate locale completo\n  verify-toolchain  Verifica la toolchain Rust fissata\n";
+const HELP: &str = "Uso: cargo xtask <comando>\n\nComandi disponibili:\n  check             Esegue il gate locale completo\n  compare           Confronta originali, SQLite, JSON, testo o frontend\n  verify-toolchain  Verifica la toolchain Rust fissata\n";
 
 fn main() -> ExitCode {
     let mut args = std::env::args().skip(1);
@@ -22,6 +24,13 @@ fn main() -> ExitCode {
             Ok(()) => ExitCode::SUCCESS,
             Err(message) => {
                 eprintln!("xtask: errore: {message}");
+                ExitCode::FAILURE
+            }
+        },
+        Some("compare") => match compare::run(args.collect()) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(message) => {
+                eprintln!("xtask: confronto non riuscito: {message}");
                 ExitCode::FAILURE
             }
         },
