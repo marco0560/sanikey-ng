@@ -20,9 +20,10 @@ indice sorgente, integrazione frontend e qualifiche mancanti. Il prodotto GUI
 Il corpus sintetico P02.02 è pronto con expected fissati alla baseline.
 
 Il [ledger](ledger.md) riporta lo stato effettivo della pubblicazione.
-La scheda attiva è P08.02. Il sottopasso P08.02a ha portato la scoperta di
-candidati per righe generiche; il prossimo è P08.02b, per i layout tabellari
-annotati e impilati, poi regole, report e segni vitali.
+La scheda attiva è P08.02. I sottopassi P08.02a e P08.02b hanno portato la
+scoperta generica e i principali layout tabellari annotati/impilati. Il prossimo
+passo P08.02c porta regole e normalizzazione, poi conversioni/report e segni
+vitali.
 P01.03 ha qualificato il campione in un checkout pulito e ha verificato il
 fetch remoto dello SHA fissato; non è stata eseguita una push del Python.
 
