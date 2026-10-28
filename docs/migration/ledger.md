@@ -35,6 +35,7 @@ di prodotto non ancora introdotto.
 | P04.06 | completata; G1 approvato | 2026-10-26; prototipi egui e Slint con eventi sintetici condivisi; check, test, Clippy e build release superati su Linux; binari 29.263.024/30.923.256 byte e grafo normale 366/443 nodi; gate `cargo xtask check` superato; accessibilità manuale, DPI, dialoghi e Windows/macOS non provati; commit `96ddfab`; approvazione egui/eframe 0.37.0 il 2026-10-27; [ricevuta](verification/2026-10-26-gui-toolkit-prototypes.md), [ADR](../decisions/0002-confronto-toolkit-gui.md) |
 | P05.01 | completata | 2026-10-28; parser TOML e validazione account con 22 corrispondenze dirette ai test baseline, ulteriori casi per chiavi chiuse e conflitti UUID; gate `cargo xtask check`, hook di commit e Codira index/cov/audit superati su Linux; Codira ha richiesto moduli più piccoli dopo SIGSEGV sui file grandi; commit `d783429`; la capability `configuration` resta pending fino a P05.03; [ricevuta](verification/2026-10-28-configuration.md) |
 | P05.02 | completata | 2026-10-28; modelli e loader metadata con validazione atomica; preflight privacy filesystem-only e guardia Git dev-only; originali invariati su fixture sintetica; `cargo xtask check`, hook di commit e Codira index/cov/audit superati su Linux; capability `metadata` e `privacy` implementate ma non ancora verificate; commit `da07e04`; [ricevuta](verification/2026-10-28-metadata-privacy.md) |
+| P05.03 | completata | 2026-10-28; importazione account legacy da percorso assoluto; copia TOML byte-per-byte in nuova destinazione sotto la stessa base, con no-overwrite, riapertura e verifica semantica; test con cwd cambiata, spazi, Unicode e riferimenti relativi; gate `cargo xtask check` e hook superati su Linux; Codira coverage completa, audit exit 0 con quattro rilievi rustdoc preesistenti fuori ambito; Windows/macOS non provati; capability `configuration` implementata, non ancora verificata multipiattaforma; commit `fbe1f33` e documentazione test `f3f5684`; [ricevuta](verification/2026-10-28-account-profiles.md) |
 
 Le schede non registrate sopra sono da_eseguire; l'indice completo è in
 [tasks/README.md](tasks/README.md).
@@ -68,8 +69,8 @@ autorizzazione specifica.
 ## Prossima sessione
 
 Leggere [START-HERE.md](START-HERE.md). G1 approvato per egui/eframe 0.37.0;
-la prossima scheda è [P05.03](tasks/P05.03-gestire-profili-e-importazione-dei-percorsi-storici.md),
-dipendente da P05.02. Il crate desktop di prodotto resta pianificato per P11.
+la prossima scheda è [P06.01](tasks/P06.01-portare-inventario-e-digest.md),
+dipendente da P05.03. Il crate desktop di prodotto resta pianificato per P11.
 
 A ogni scheda aggiungere data, commit, comandi ed esiti effettivi, eventuali
 skip con motivazione, evidenze, blocchi e successiva attività.
