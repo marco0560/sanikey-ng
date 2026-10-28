@@ -38,6 +38,7 @@ di prodotto non ancora introdotto.
 | P05.03 | completata | 2026-10-28; importazione account legacy da percorso assoluto; copia TOML byte-per-byte in nuova destinazione sotto la stessa base, con no-overwrite, riapertura e verifica semantica; test con cwd cambiata, spazi, Unicode e riferimenti relativi; gate `cargo xtask check` e hook superati su Linux; Codira coverage completa, audit exit 0 con quattro rilievi rustdoc preesistenti fuori ambito; Windows/macOS non provati; capability `configuration` implementata, non ancora verificata multipiattaforma; commit `fbe1f33` e documentazione test `f3f5684`; [ricevuta](verification/2026-10-28-account-profiles.md) |
 | P06.01 | completata | 2026-10-28; inventario canonico, categorie, filtri include/exclude, SHA-256 e duplicati; corpus sintetico coincide con baseline e originali invariati; `cargo xtask check`, Codira index/cov/audit e hook pre-commit superati su Linux; Codira audit exit 0 con quattro rilievi rustdoc preesistenti; primo hook rileva lockfile obsoleti nei workspace GUI isolati, aggiornati offline e poi validati; Windows/macOS non provati; capability `inventory` implementata, non ancora verificata multipiattaforma; commit `913284d`; [ricevuta](verification/2026-10-28-inventory.md) |
 | P06.02 | completata | 2026-10-28; pipeline `.txt` con lettura compatibile con baseline, metadati documento, SQLite/FTS5, JSON, pagina offline e originali linkati; corpus expected, FTS, link e byte originali verificati; `cargo xtask check`, pubblicabilità, hook e test dei tre workspace GUI superati su Linux; Codira index non disponibile per SIGBUS/BrokenProcessPool/SIGSEGV anche con output pulito; capability complete `sqlite`, `exports` e `frontend` restano pending; commit `471d54e`; [ricevuta](verification/2026-10-28-txt-pipeline.md) |
+| P06.03 | completata | 2026-10-28; export TXT su directory simulata con manifest/checksum, link verificati, due manifest byte-identici e mutazione rilevata; originali immutati; `cargo xtask check`, pubblicabilità, hook, 66 test core e prototipi GUI superati su Linux; nessun target fisico; capability USB completa pending; commit `f238bf7`; [ricevuta](verification/2026-10-28-simulated-export.md) |
 
 Le schede non registrate sopra sono da eseguire; l'indice completo è in
 [tasks/README.md](tasks/README.md). La parità per capability è mantenuta in
@@ -72,8 +73,9 @@ autorizzazione specifica.
 ## Prossima sessione
 
 Leggere [START-HERE.md](START-HERE.md). G1 approvato per egui/eframe 0.37.0;
-la prossima scheda è [P06.03](tasks/P06.03-esportare-e-validare-il-sottoinsieme-simulato.md),
-dipendente da P06.02. Il crate desktop di prodotto resta pianificato per P11.
+la prossima scheda è [P07.01](tasks/P07.01-portare-il-pdf-digitale.md),
+dipendente da P06.03 e P04.01. Il crate desktop di prodotto resta pianificato
+per P11.
 
 A ogni scheda aggiungere data, commit, comandi ed esiti effettivi, eventuali
 skip con motivazione, evidenze, blocchi e successiva attività.

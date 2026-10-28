@@ -40,7 +40,8 @@ nuovo sia completo.
   doctest, build, smoke CLI, controlli di pubblicabilità e rustdoc superati.
 - `python3 scripts/check_publishable.py`: exit 0, 202 file pubblicabili;
   `git diff --check`: exit 0.
-- Hook di commit: da eseguire alla chiusura della scheda.
+- Hook pre-commit: exit 0; test workspace, doctest e test dei tre prototipi GUI
+  superati.
 - Nessun dispositivo o volume fisico coinvolto.
 
 Il primo test di ripetibilità ha fallito confrontando manifest differenti per
