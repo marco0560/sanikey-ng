@@ -2,6 +2,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod aifa;
 pub mod config;
 pub mod containers;
 pub mod dicom;
