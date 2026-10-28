@@ -46,6 +46,7 @@ di prodotto non ancora introdotto.
 | P07.03 | completata; parità frontend/export pending | 2026-10-28; consultazione PDF, TXT, Markdown, HTML, JPEG e PNG; copie byte-identiche e href verificati; immagini con testo/warning vuoti e test passato con PDFium/Tesseract non disponibili; `cargo xtask check` exit 0 dopo correzione fmt; hook pre-commit superato (74 core, 8 xtask, 1 protocollo GUI; test egui/Slint e formattazione superati); browser e Windows/macOS non qualificati; commit `a82e47c`; [ricevuta](verification/2026-10-28-simple-consultation.md) |
 | P07.04 | completata; parità Office pending | 2026-10-28; Pandoc per DOCX/ODT/RTF, LibreOffice per DOC e fogli; originali conservati/linkati, PDF derivati verificati; conversione reale RTF e DOCX, warning DOCX corrotto, assenza convertitore e timeout verificati; `cargo xtask check` exit 0 (82 core, 1 ignored, 8 xtask, 3 CLI, doctest); hook superati (82 core, 1 ignored, 8 xtask, 3 CLI, GUI); XLSB/XLSM, browser e Windows/macOS pending; commit `e2e9586`; [ricevuta](verification/2026-10-28-office-conversion.md) |
 | P07.05 | completata; parità containers pending | 2026-10-28; staging confinato, manifest v1, filtri, ricorsione e deduplica; ZIP Stored/DEFLATE/BZIP2/LZMA, 7z, RAR e TAR.XZ provati; fixture `.iso` con payload 7z per il flusso disco, ISO/IMG reali pending; baseline `tests/test_containers.py` 20/20; `cargo xtask check` exit 0 (96 core, 1 ignored, 8 xtask, 3 CLI, doctest); pre-commit e GUI superati dopo aggiornamento offline dei lockfile isolati; Codira index SIGSEGV; commit `13ac794`, lockfile GUI `a8d287c`; [ricevuta](verification/2026-10-28-container-staging.md) |
+| P07.06 | completata; parità DICOM pending | 2026-10-28; baseline `tests/test_dicom.py` 20/20; catalogo Rust raggruppa UID, legge DICOMDIR, coalesca record e conserva provenienza staged/danneggiata; 5 test DICOM, `cargo xtask check` exit 0 (101 core, 1 ignored, 8 xtask, 3 CLI, doctest, pubblicabilità, rustdoc); pre-commit e tre GUI superati; Codira index SIGSEGV; commit `418baa3`; [ricevuta](verification/2026-10-28-dicom-catalog.md) |
 
 Le schede non registrate sopra sono da eseguire; l'indice completo è in
 [tasks/README.md](tasks/README.md). La parità per capability è mantenuta in
@@ -80,11 +81,13 @@ autorizzazione specifica.
 ## Prossima sessione
 
 Leggere [START-HERE.md](START-HERE.md). G1 approvato per egui/eframe 0.37.0;
-la prossima scheda è [P07.06](tasks/P07.06-portare-catalogazione-dicom.md).
+la prossima scheda è [P07.07](tasks/P07.07-portare-media-viewer-e-anteprime-dicom.md).
 Le pipeline PDF e Office sono implementate e verificate su Linux, ma la parità
 Office completa, la parità containers completa, il browser e il
 confezionamento multipiattaforma restano da verificare. Il crate desktop di
-prodotto resta pianificato per P11.
+prodotto resta pianificato per P11. P07.06 ha portato la catalogazione DICOM;
+media, viewer e anteprime restano nel perimetro di P07.07 e la capability
+DICOM rimane pending.
 
 A ogni scheda aggiungere data, commit, comandi ed esiti effettivi, eventuali
 skip con motivazione, evidenze, blocchi e successiva attività.
