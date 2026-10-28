@@ -22,6 +22,23 @@ pub struct ParameterReportPaths {
     pub slices_javascript: Option<PathBuf>,
 }
 
+/// Diagnostica esterna, per esempio un valore vitale riconosciuto ma rifiutato.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ParameterDiagnosticExtra {
+    /// Identificatore del candidato, vuoto se non applicabile.
+    pub candidate_id: String,
+    /// Nome del parametro o segno vitale.
+    pub parameter: String,
+    /// Documento sorgente leggibile.
+    pub document: String,
+    /// Riga sorgente.
+    pub line: usize,
+    /// Valore originale o riga da mostrare.
+    pub value: String,
+    /// Codice stabile del rifiuto.
+    pub reason_code: String,
+}
+
 /// Scrive il report candidati, il TOML disabilitato per la revisione e, se
 /// disponibile, gli export JSON e JavaScript delle serie derivate.
 ///
@@ -116,6 +133,139 @@ pub fn write_parameter_extraction_reports(
         &format!("window.SANIKEY_PARAMETER_SLICES = {compact};\n"),
     )?;
     Ok((export, script))
+}
+
+/// Scrive report JSON e testuali separati per esiti accettati e rifiutati.
+///
+/// Le righe aggiuntive possono rappresentare rifiuti di estrattori correlati,
+/// come i segni vitali. La funzione restituisce i due percorsi del report
+/// rifiutato, come fa il generatore Python di riferimento.
+///
+/// # Errors
+///
+/// Restituisce un errore se la directory non è creabile o i report non sono
+/// scrivibili.
+pub fn write_parameter_rejections(
+    build_root: impl AsRef<Path>,
+    discovery: &DiscoveryResult,
+    result: &ParameterBuildResult,
+    extra: &[ParameterDiagnosticExtra],
+) -> Result<(PathBuf, PathBuf), OperationError> {
+    let reports = build_root.as_ref().join("reports");
+    create_directory(&reports)?;
+    let candidates = discovery
+        .candidates
+        .iter()
+        .map(|candidate| (candidate.stable_id.as_str(), candidate))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    let mut accepted = Vec::new();
+    let mut rejected = Vec::new();
+    for decision in &result.decisions {
+        let Some(candidate) = candidates.get(decision.candidate_id.as_str()) else {
+            continue;
+        };
+        let row = json!({
+            "candidate_id": decision.candidate_id,
+            "parameter": decision.rule_id,
+            "document": candidate.document_name,
+            "line": candidate.line_number,
+            "page": candidate.page_number,
+            "page_label": candidate.page_label,
+            "context": candidate.context,
+            "value": candidate.raw_value,
+            "reason_code": decision.reason_code,
+        });
+        if decision.reason_code.starts_with("ACCEPTED_") {
+            accepted.push(row);
+        } else {
+            rejected.push(row);
+        }
+    }
+    for row in extra {
+        let value = json!({
+            "candidate_id": row.candidate_id,
+            "parameter": row.parameter,
+            "document": row.document,
+            "line": row.line,
+            "page": null,
+            "page_label": "non disponibile",
+            "context": "",
+            "value": row.value,
+            "reason_code": row.reason_code,
+        });
+        if row.reason_code.starts_with("ACCEPTED_") {
+            accepted.push(value);
+        } else {
+            rejected.push(value);
+        }
+    }
+    write_decision_report(&reports, "accepted", &accepted)?;
+    let rejected_json = reports.join("parameter-rejected.json");
+    let rejected_text = reports.join("parameter-rejected.txt");
+    write_decision_report(&reports, "rejected", &rejected)?;
+    Ok((rejected_json, rejected_text))
+}
+
+fn write_decision_report(
+    reports: &Path,
+    status: &str,
+    rows: &[Value],
+) -> Result<(), OperationError> {
+    let json_path = reports.join(format!("parameter-{status}.json"));
+    write_json(&json_path, &json!({"schema_version": "1.0", status: rows}))?;
+    let headings = [
+        "Parametro",
+        "Documento",
+        "Pagina",
+        "Riga",
+        "Valore",
+        "Contesto",
+        "Ragione",
+    ];
+    let columns = [
+        "parameter",
+        "document",
+        "page_label",
+        "line",
+        "value",
+        "context",
+        "reason_code",
+    ];
+    let cells = rows
+        .iter()
+        .map(|row| columns.map(|key| json_cell(&row[key])))
+        .collect::<Vec<_>>();
+    let widths = std::array::from_fn::<_, 7, _>(|index| {
+        cells
+            .iter()
+            .map(|row| row[index].chars().count())
+            .chain(std::iter::once(headings[index].chars().count()))
+            .max()
+            .unwrap_or(0)
+    });
+    let mut lines = Vec::with_capacity(cells.len() + 1);
+    lines.push(render_table_row(&headings.map(str::to_owned), &widths));
+    lines.extend(cells.iter().map(|row| render_table_row(row, &widths)));
+    write_text(
+        &reports.join(format!("parameter-{status}.txt")),
+        &format!("{}\n", lines.join("\n")),
+    )
+}
+
+fn json_cell(value: &Value) -> String {
+    match value {
+        Value::Null => "None".into(),
+        Value::String(value) => value.clone(),
+        value => value.to_string(),
+    }
+}
+
+fn render_table_row(row: &[String; 7], widths: &[usize; 7]) -> String {
+    row.iter()
+        .zip(widths)
+        .map(|(cell, width)| format!("{cell:<width$}"))
+        .collect::<Vec<_>>()
+        .join(" | ")
 }
 
 fn candidate_value(candidate: &ParameterCandidate) -> Value {
