@@ -20,16 +20,10 @@ indice sorgente, integrazione frontend e qualifiche mancanti. Il prodotto GUI
 Il corpus sintetico P02.02 è pronto con expected fissati alla baseline.
 
 Il [ledger](ledger.md) riporta lo stato effettivo della pubblicazione.
-La scheda attiva è P08.02. I sottopassi P08.02a/b hanno portato la scoperta
-generica e i principali layout tabellari annotati/impilati; P08.02c carica e
-valida le regole curate; P08.02d applica le regole ai candidati e produce
-decisioni esplicite; P08.02e applica politiche delle unità e conversioni
-esplicite, materializzando punti e serie; P08.02f genera report candidati e
-export statici; P08.02g genera i report diagnostici di accettazioni e rifiuti.
-P08.02h è completata: estrazione stretta di peso e pressione, provenienza,
-rifiuti di valori fuori intervallo e merge con precedenza curated nello stesso
-giorno. Il prossimo sottopasso P08.02i porta le celle annotate che descrivono
-il tipo di valore.
+P08.02 è completata: scoperta candidati, layout tabellari annotati e impilati,
+regole curate, conversioni, punti e serie, report diagnostici, segni vitali e
+celle descritte “valore in massa/percentuale”. La prossima scheda è P08.03,
+dedicata alla ricerca, scelta, cache, download e verifica dei riferimenti AIFA.
 P01.03 ha qualificato il campione in un checkout pulito e ha verificato il
 fetch remoto dello SHA fissato; non è stata eseguita una push del Python.
 

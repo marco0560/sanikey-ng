@@ -257,7 +257,7 @@ approved_deviations = []
 id = "parameters"
 description = "Regole slice e report"
 phase = "P08"
-status = "pending"
+status = "implemented"
 baseline_source = "src/sanikey/parameter_rules.py"
 baseline_test = "tests/test_parameter_rules.py"
 rust_tests = [
@@ -269,12 +269,26 @@ rust_tests = [
   "parameter_reports::tests::writes_candidate_report_and_disabled_toml_scaffold",
   "parameter_reports::tests::writes_machine_and_javascript_slice_exports_with_stable_bytes",
   "parameter_reports::tests::writes_accepted_rejected_json_and_aligned_text_with_extra_diagnostics",
+  "parameter_slices::tests::ambiguous_single_separator_numbers_are_rejected",
+  "parameter_slices::tests::configured_discovery_skips_unconfigured_numeric_lines",
+  "parameter_slices::tests::labels_without_letters_and_configured_exclusions_are_dropped",
+  "parameter_slices::tests::preserves_provenance_and_recognizes_numeric_formats",
+  "parameter_slices::tests::proposal_groups_require_exact_normalized_labels_and_thresholds",
+  "parameter_slices::tests::records_pdf_page_and_unicode_offsets",
+  "parameter_slices::tests::recognizes_asterisked_stacked_values",
+  "parameter_slices::tests::recognizes_vertical_stacked_cells_and_exponent_units",
+  "parameter_slices::tests::recognizes_unit_reference_value_table_cells",
+  "parameter_slices::tests::reads_annotated_value_after_method_lines",
+  "parameter_slices::tests::annotated_result_does_not_cross_into_the_next_label",
+  "parameter_slices::tests::prefers_glycated_hemoglobin_mass_cells_over_percentage_cells",
+  "parameter_slices::tests::section_headings_mark_urine_results",
 ]
 evidence = [
   "verification/2026-10-28-parameter-rule-decisions.md",
   "verification/2026-10-28-parameter-rules-build.md",
   "verification/2026-10-28-parameter-reports.md",
   "verification/2026-10-28-parameter-rejections.md",
+  "verification/2026-10-28-parameter-value-descriptions.md",
 ]
 approved_deviations = []
 
