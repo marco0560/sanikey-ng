@@ -33,21 +33,25 @@ tipo, data, SHA-256 e identità del documento. La scansione completa conserva i
 duplicati per la diagnosi; la vista deduplicata mantiene la prima occorrenza
 nell'ordine dei percorsi.
 
-`sanikey-core::txt_pipeline` compone inventario, lettura UTF-8 tollerante dei
-soli file `.txt`, SQLite con FTS5, JSON e pagina HTML offline con copie e link
-relativi verificabili. `build_pdf_pipeline` estrae testo digitale con `lopdf`
-e, quando è insufficiente, renderizza ogni pagina PDF con PDFium e invia il
-raster PPM via stdin a Tesseract. Usa la soglia di 40 caratteri non whitespace
-della baseline, conserva gli intervalli Unicode per pagina e i warning, e li
-registra nel JSON e in `document_page_spans`. La forzatura OCR si applica solo
-se ogni pagina è coperta per almeno il 90% da un'immagine. Le immagini sorgente
-non passano per OCR. PDFium e Tesseract sono runtime esterni: la libreria
-PDFium va accanto all'eseguibile o indicata con `SANIKEY_PDFIUM_LIBRARY`,
-Tesseract è cercato nel `PATH` o indicato con `SANIKEY_TESSERACT`; il modello
-predefinito inglese deve essere installato. Il glossario medico italiano è
-incorporato e materializzato in un file temporaneo protetto durante l'OCR.
-La pipeline continua a lasciare fuori Markdown, CSV, altri formati, metadati
-clinici completi e parità multipiattaforma.
+`sanikey-core::txt_pipeline` produce SQLite con FTS5, JSON e pagine HTML offline
+con originali copiati e link relativi. `build_txt_pipeline` legge `.txt`;
+`build_consultation_pipeline` cataloga anche PDF, Markdown, HTML e immagini
+JPEG/PNG. Le immagini sono copiate e linkate con testo e warning vuoti, senza
+richiedere OCR. Markdown conserva il testo ricercabile; HTML è linkato come
+originale.
+
+`build_pdf_pipeline` estrae testo digitale con `lopdf` e, quando è
+insufficiente, renderizza ogni pagina PDF con PDFium e invia il raster PPM via
+stdin a Tesseract. Usa la soglia di 40 caratteri non whitespace della
+baseline, conserva intervalli Unicode per pagina e warning, e li registra nel
+JSON e in `document_page_spans`. La forzatura OCR si applica solo se ogni
+pagina è coperta per almeno il 90% da un'immagine. PDFium e Tesseract sono
+runtime esterni: la libreria PDFium va accanto all'eseguibile o indicata con
+`SANIKEY_PDFIUM_LIBRARY`, Tesseract è cercato nel `PATH` o indicato con
+`SANIKEY_TESSERACT`; il modello predefinito inglese deve essere installato. Il
+glossario medico italiano è incorporato e materializzato in un file temporaneo
+protetto durante l'OCR. CSV, altri formati e metadati clinici completi restano
+fuori dal perimetro; la qualifica multipiattaforma è ancora pending.
 
 `sanikey-core::simulated_export` assembla questo sottoinsieme in una nuova
 directory, crea un manifest deterministico con checksum, verifica l'integrità

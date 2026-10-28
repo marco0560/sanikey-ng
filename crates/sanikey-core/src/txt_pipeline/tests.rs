@@ -1,4 +1,4 @@
-use super::{build_pdf_pipeline, build_txt_pipeline};
+use super::{build_consultation_pipeline, build_pdf_pipeline, build_txt_pipeline};
 use crate::config::{IngestionConfig, PersonConfig, SearchConfig, UiConfig};
 use crate::pdf::test_support::synthetic_pdf;
 use rusqlite::Connection;
@@ -151,6 +151,103 @@ fn txt_pipeline_replaces_invalid_utf8_and_escapes_html_and_urls() {
             .expect("href relativo")
             .contains("%20%3Creferto%3E.txt")
     );
+}
+
+#[test]
+fn consultation_pipeline_copies_openable_sources_without_ocr_on_images() {
+    let directory = TestDirectory::new();
+    let source = directory.path().join("source");
+    let images = source.join("images");
+    let notes = source.join("notes");
+    let pages = source.join("pages");
+    let reports = source.join("reports");
+    for path in [&images, &notes, &pages, &reports] {
+        fs::create_dir_all(path).expect("directory sorgente sintetica");
+    }
+
+    let image_jpeg = images.join("20260102 Synthetic photo.JPG");
+    let image_png = images.join("20260103 Synthetic scan.png");
+    let markdown = notes.join("20260104 Synthetic note.md");
+    let html = pages.join("20260105 Synthetic page.HTML");
+    let text = notes.join("20260106 Synthetic note.txt");
+    let pdf = reports.join("20260107 Synthetic report.pdf");
+    let ignored_archive = source.join("support.zip");
+    let originals = [
+        (image_jpeg, b"synthetic jpeg bytes".to_vec()),
+        (image_png, b"synthetic png bytes".to_vec()),
+        (
+            markdown,
+            b"# Synthetic markdown\nSearchable synthetic content.".to_vec(),
+        ),
+        (
+            html,
+            b"<!doctype html><html><body>synthetic page</body></html>".to_vec(),
+        ),
+        (text, b"Synthetic plain text content.".to_vec()),
+        (
+            pdf,
+            synthetic_pdf(&["Synthetic digital PDF content with enough searchable words."]),
+        ),
+    ];
+    for (path, bytes) in &originals {
+        fs::write(path, bytes).expect("file sorgente sintetico");
+    }
+    fs::write(&ignored_archive, b"synthetic archive").expect("archivio non apribile");
+    let person = person(
+        directory.path(),
+        &source,
+        &directory.path().join("metadata"),
+    );
+
+    let result = build_consultation_pipeline(&person).expect("pipeline consultazione");
+
+    assert_eq!(result.documents, originals.len());
+    let exported: Value =
+        serde_json::from_str(&fs::read_to_string(&result.data).expect("JSON consultazione"))
+            .expect("JSON valido");
+    let documents = exported["documents"]
+        .as_array()
+        .expect("catalogo documenti");
+    assert_eq!(documents.len(), originals.len());
+    for (path, original) in &originals {
+        let relative = path.strip_prefix(&source).expect("percorso relativo");
+        let expected_href = format!(
+            "../documents/{}",
+            super::encode_url_path(&relative.to_string_lossy())
+        );
+        let record = documents
+            .iter()
+            .find(|record| record["path"] == relative.to_string_lossy().as_ref())
+            .expect("documento nel catalogo");
+        assert_eq!(record["href"], expected_href);
+        assert_eq!(
+            fs::read(person.local_build.join("documents").join(relative))
+                .expect("copia consultabile tramite href relativo"),
+            *original
+        );
+        assert_eq!(fs::read(path).expect("originale invariato"), *original);
+    }
+
+    for image_name in [
+        "20260102 Synthetic photo.JPG",
+        "20260103 Synthetic scan.png",
+    ] {
+        let image = documents
+            .iter()
+            .find(|record| {
+                record["path"]
+                    .as_str()
+                    .is_some_and(|path| path.ends_with(image_name))
+            })
+            .expect("immagine catalogata");
+        assert_eq!(image["kind"], "image");
+        assert_eq!(image["text"], "");
+        assert_eq!(image["warnings"], serde_json::json!([]));
+    }
+    let html_output = fs::read_to_string(&result.frontend).expect("frontend consultazione");
+    assert!(html_output.contains("Documenti consultabili"));
+    assert!(html_output.contains("20260102%20Synthetic%20photo.JPG"));
+    assert!(!html_output.contains("support.zip"));
 }
 
 #[test]

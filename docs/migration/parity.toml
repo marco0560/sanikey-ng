@@ -239,8 +239,14 @@ phase = "P09"
 status = "pending"
 baseline_source = "src/sanikey/database.py"
 baseline_test = "tests/test_database.py"
-rust_tests = ["txt_pipeline::tests::txt_pipeline_matches_the_synthetic_baseline_and_builds_searchable_outputs"]
-evidence = ["verification/2026-10-28-txt-pipeline.md"]
+rust_tests = [
+  "txt_pipeline::tests::txt_pipeline_matches_the_synthetic_baseline_and_builds_searchable_outputs",
+  "txt_pipeline::tests::consultation_pipeline_copies_openable_sources_without_ocr_on_images",
+]
+evidence = [
+  "verification/2026-10-28-txt-pipeline.md",
+  "verification/2026-10-28-simple-consultation.md",
+]
 approved_deviations = []
 
 [[capability]]
@@ -264,8 +270,12 @@ baseline_test = "tests/test_frontend.py"
 rust_tests = [
   "txt_pipeline::tests::txt_pipeline_matches_the_synthetic_baseline_and_builds_searchable_outputs",
   "txt_pipeline::tests::txt_pipeline_replaces_invalid_utf8_and_escapes_html_and_urls",
+  "txt_pipeline::tests::consultation_pipeline_copies_openable_sources_without_ocr_on_images",
 ]
-evidence = ["verification/2026-10-28-txt-pipeline.md"]
+evidence = [
+  "verification/2026-10-28-txt-pipeline.md",
+  "verification/2026-10-28-simple-consultation.md",
+]
 approved_deviations = []
 
 [[capability]]

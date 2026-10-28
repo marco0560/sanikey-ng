@@ -1,4 +1,4 @@
-//! Pipeline consultabile per il sottoinsieme sintetico dei file `.txt`.
+//! Pipeline consultabili per file TXT, PDF e formati browser-apribili.
 
 #[cfg(test)]
 mod tests;
@@ -32,10 +32,10 @@ impl Drop for DatabaseStage {
     }
 }
 
-/// Risultati e percorsi prodotti dalla pipeline TXT.
+/// Risultati e percorsi prodotti da una pipeline di documenti consultabili.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct TxtPipelineResult {
-    /// Numero di documenti `.txt` distinti elaborati.
+pub struct DocumentPipelineResult {
+    /// Numero di documenti distinti elaborati.
     pub documents: usize,
     /// Percorso del database SQLite generato.
     pub database: PathBuf,
@@ -43,6 +43,24 @@ pub struct TxtPipelineResult {
     pub data: PathBuf,
     /// Percorso della pagina statica consultabile.
     pub frontend: PathBuf,
+}
+
+/// Nome storico del risultato restituito dalle pipeline TXT e PDF.
+pub type TxtPipelineResult = DocumentPipelineResult;
+
+/// Cataloga, copia e rende consultabili i formati sorgente apribili dal browser.
+///
+/// Include PDF, TXT, Markdown, HTML e immagini JPEG/PNG. Le immagini vengono
+/// copiate e catalogate senza estrarre testo o richiedere un provider OCR.
+pub fn build_consultation_pipeline(
+    person: &PersonConfig,
+) -> Result<DocumentPipelineResult, OperationError> {
+    build_pipeline(
+        person,
+        is_browser_openable_source,
+        read_consultation_document,
+        "Documenti consultabili",
+    )
 }
 
 /// Legge i PDF e li rende consultabili, eseguendo OCR sui PDF scansionati.
@@ -155,6 +173,37 @@ fn is_plain_text(record: &DocumentRecord) -> bool {
             .is_some_and(|extension| extension.eq_ignore_ascii_case("txt"))
 }
 
+fn is_browser_openable_source(record: &DocumentRecord) -> bool {
+    let Some(extension) = record.path.extension() else {
+        return false;
+    };
+    let extension = extension.to_string_lossy();
+    match record.kind.as_str() {
+        "pdf" => extension.eq_ignore_ascii_case("pdf"),
+        "text" => extension.eq_ignore_ascii_case("txt") || extension.eq_ignore_ascii_case("md"),
+        "office" => extension.eq_ignore_ascii_case("htm") || extension.eq_ignore_ascii_case("html"),
+        "image" => {
+            extension.eq_ignore_ascii_case("jpg")
+                || extension.eq_ignore_ascii_case("jpeg")
+                || extension.eq_ignore_ascii_case("png")
+        }
+        _ => false,
+    }
+}
+
+fn read_consultation_document(
+    person: &PersonConfig,
+    record: DocumentRecord,
+    configured_tags: &ConfiguredTags,
+    options: PdfExtractionOptions,
+) -> Result<TxtDocument, OperationError> {
+    match record.kind.as_str() {
+        "pdf" => read_pdf_document(person, record, configured_tags, options),
+        "text" => read_document(person, record, configured_tags, options),
+        _ => read_link_only_document(person, record, configured_tags),
+    }
+}
+
 fn read_document(
     person: &PersonConfig,
     record: DocumentRecord,
@@ -168,16 +217,7 @@ fn read_document(
         .replace("\r\n", "\n")
         .replace('\r', "\n");
     let relative_path = relative_document_path(person, &record.path)?;
-    let tags = configured_tags
-        .iter()
-        .find(|(key, _)| {
-            let normalized = key.replace('\\', "/");
-            relative_path.ends_with(&normalized)
-                || Path::new(&relative_path)
-                    .file_name()
-                    .is_some_and(|name| name.to_string_lossy() == normalized)
-        })
-        .map_or_else(|| record.tags.clone(), |(_, tags)| tags.clone());
+    let tags = tags_for_document(&record, &relative_path, configured_tags);
     let href = format!("../documents/{}", encode_url_path(&relative_path));
 
     Ok(TxtDocument {
@@ -200,16 +240,7 @@ fn read_pdf_document(
     let extracted = extract_pdf_text_with_options(&record, options);
     let relative_path = relative_document_path(person, &record.path)?;
     let href = format!("../documents/{}", encode_url_path(&relative_path));
-    let tags = configured_tags
-        .iter()
-        .find(|(key, _)| {
-            let normalized = key.replace('\\', "/");
-            relative_path.ends_with(&normalized)
-                || Path::new(&relative_path)
-                    .file_name()
-                    .is_some_and(|name| name.to_string_lossy() == normalized)
-        })
-        .map_or_else(|| record.tags.clone(), |(_, tags)| tags.clone());
+    let tags = tags_for_document(&record, &relative_path, configured_tags);
     Ok(TxtDocument {
         record,
         relative_path,
@@ -219,6 +250,42 @@ fn read_pdf_document(
         page_spans: extracted.page_spans,
         tags,
     })
+}
+
+fn read_link_only_document(
+    person: &PersonConfig,
+    record: DocumentRecord,
+    configured_tags: &ConfiguredTags,
+) -> Result<TxtDocument, OperationError> {
+    let relative_path = relative_document_path(person, &record.path)?;
+    let href = format!("../documents/{}", encode_url_path(&relative_path));
+    let tags = tags_for_document(&record, &relative_path, configured_tags);
+    Ok(TxtDocument {
+        record,
+        relative_path,
+        href,
+        text: String::new(),
+        warnings: Vec::new(),
+        page_spans: Vec::new(),
+        tags,
+    })
+}
+
+fn tags_for_document(
+    record: &DocumentRecord,
+    relative_path: &str,
+    configured_tags: &ConfiguredTags,
+) -> Vec<String> {
+    configured_tags
+        .iter()
+        .find(|(key, _)| {
+            let normalized = key.replace('\\', "/");
+            relative_path.ends_with(&normalized)
+                || Path::new(relative_path)
+                    .file_name()
+                    .is_some_and(|name| name.to_string_lossy() == normalized)
+        })
+        .map_or_else(|| record.tags.clone(), |(_, tags)| tags.clone())
 }
 
 fn build_database(
@@ -472,7 +539,7 @@ fn export_documents(
         .map_err(|cause| {
             OperationError::new(
                 ErrorCode::Configuration,
-                format!("impossibile serializzare i dati TXT: {cause}"),
+                format!("impossibile serializzare il catalogo documenti: {cause}"),
             )
         })? + "\n",
     )
@@ -521,7 +588,11 @@ fn build_frontend(
             })?;
         }
         fs::copy(&document.record.path, &copy_path).map_err(|cause| {
-            filesystem_error("impossibile copiare il documento TXT", &copy_path, cause)
+            filesystem_error(
+                "impossibile copiare il documento sorgente",
+                &copy_path,
+                cause,
+            )
         })?;
         let date = document
             .record
