@@ -43,7 +43,8 @@ La serializzazione usa `serde_json 1.0.154`, già fissato nel lockfile per
 - I test dei tre workspace isolati GUI, eseguiti singolarmente con
   `--offline`, sono passati dopo aver aggiornato i lockfile per le nuove
   dipendenze transitive di `sanikey-core`.
-- Hook di commit: da eseguire alla chiusura della scheda.
+- Hook pre-commit: exit 0; test workspace, doctest e test dei tre prototipi GUI
+  superati.
 
 Durante lo sviluppo, il primo test confrontava il testo del corpus con una
 stringa che non era nel fixture; il test ha poi riletto il contenuto atteso
