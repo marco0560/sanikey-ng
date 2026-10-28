@@ -39,6 +39,7 @@ di prodotto non ancora introdotto.
 | P06.01 | completata | 2026-10-28; inventario canonico, categorie, filtri include/exclude, SHA-256 e duplicati; corpus sintetico coincide con baseline e originali invariati; `cargo xtask check`, Codira index/cov/audit e hook pre-commit superati su Linux; Codira audit exit 0 con quattro rilievi rustdoc preesistenti; primo hook rileva lockfile obsoleti nei workspace GUI isolati, aggiornati offline e poi validati; Windows/macOS non provati; capability `inventory` implementata, non ancora verificata multipiattaforma; commit `913284d`; [ricevuta](verification/2026-10-28-inventory.md) |
 | P06.02 | completata | 2026-10-28; pipeline `.txt` con lettura compatibile con baseline, metadati documento, SQLite/FTS5, JSON, pagina offline e originali linkati; corpus expected, FTS, link e byte originali verificati; `cargo xtask check`, pubblicabilità, hook e test dei tre workspace GUI superati su Linux; Codira index non disponibile per SIGBUS/BrokenProcessPool/SIGSEGV anche con output pulito; capability complete `sqlite`, `exports` e `frontend` restano pending; commit `471d54e`; [ricevuta](verification/2026-10-28-txt-pipeline.md) |
 | P06.03 | completata | 2026-10-28; export TXT su directory simulata con manifest/checksum, link verificati, due manifest byte-identici e mutazione rilevata; originali immutati; `cargo xtask check`, pubblicabilità, hook, 66 test core e prototipi GUI superati su Linux; nessun target fisico; capability USB completa pending; commit `f238bf7`; [ricevuta](verification/2026-10-28-simulated-export.md) |
+| P07.01 | completata; parità PDF pending | 2026-10-28; estrazione PDF digitale con `lopdf 0.40.0`, warning e intervalli Unicode per pagina; testo verificato in JSON, FTS5 e HTML, copie originali identiche; PDF malformato e senza testo verificati senza OCR; `cargo xtask check`, hook e tre workspace GUI superati su Linux; OCR e qualifica multipiattaforma restano pending; commit `c2b2f2f`; [ricevuta](verification/2026-10-28-pdf-digital.md) |
 
 Le schede non registrate sopra sono da eseguire; l'indice completo è in
 [tasks/README.md](tasks/README.md). La parità per capability è mantenuta in
@@ -73,9 +74,9 @@ autorizzazione specifica.
 ## Prossima sessione
 
 Leggere [START-HERE.md](START-HERE.md). G1 approvato per egui/eframe 0.37.0;
-la prossima scheda è [P07.01](tasks/P07.01-portare-il-pdf-digitale.md),
-dipendente da P06.03 e P04.01. Il crate desktop di prodotto resta pianificato
-per P11.
+la prossima scheda è [P07.02](tasks/P07.02-portare-l-ocr-pdf.md), che integra
+l'OCR conservando il comportamento P07.01 sui PDF digitali. Il crate desktop
+di prodotto resta pianificato per P11.
 
 A ogni scheda aggiungere data, commit, comandi ed esiti effettivi, eventuali
 skip con motivazione, evidenze, blocchi e successiva attività.

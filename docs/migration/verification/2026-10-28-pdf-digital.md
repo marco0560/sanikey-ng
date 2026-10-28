@@ -36,8 +36,8 @@ resta aperta.
 
 ## Verifiche
 
-- `CARGO_HOME=/home/marco/Personalia/Progetti/.Temp/sanikey-p04-01/cargo-home cargo test -p sanikey-core pdf --offline`: 4 test superati.
-- `CARGO_NET_OFFLINE=true CARGO_HOME=/home/marco/Personalia/Progetti/.Temp/sanikey-p04-01/cargo-home cargo xtask check`: exit 0; fmt, Clippy, 3 test CLI, 70 test core, 8 test xtask, doctest, build, smoke CLI, 3 test del controllo pubblicabilità, 204 file pubblicabili e rustdoc.
+- `CARGO_HOME=<cache Cargo temporanea in .Temp> cargo test -p sanikey-core pdf --offline`: 4 test superati.
+- `CARGO_NET_OFFLINE=true CARGO_HOME=<cache Cargo temporanea in .Temp> cargo xtask check`: exit 0; fmt, Clippy, 3 test CLI, 70 test core, 8 test xtask, doctest, build, smoke CLI, 3 test del controllo pubblicabilità, 204 file pubblicabili e rustdoc.
 - Test workspace isolati: protocollo 1/1, egui 0 test, Slint 0 test; build dei tre workspace superata. Lockfile isolati aggiornati per `sanikey-core` e dipendenze PDF.
 - `cargo fmt --all` e gate documentale inclusi nel gate completo.
 - Nessuna verifica Windows/macOS o browser manuale; nessuna esecuzione OCR.
