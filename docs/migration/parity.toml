@@ -336,14 +336,18 @@ approved_deviations = []
 id = "sqlite"
 description = "SQLite e FTS5"
 phase = "P09"
-status = "pending"
+status = "implemented"
 baseline_source = "src/sanikey/database.py"
 baseline_test = "tests/test_database.py"
 rust_tests = [
+  "database::tests::builds_complete_archive_with_curated_rows_dicom_and_fts",
+  "database::tests::failed_transaction_preserves_the_previous_database",
   "txt_pipeline::tests::txt_pipeline_matches_the_synthetic_baseline_and_builds_searchable_outputs",
   "txt_pipeline::tests::consultation_pipeline_copies_openable_sources_without_ocr_on_images",
 ]
 evidence = [
+  "verification/2026-10-28-sqlite-database.md",
+  "verification/2026-10-28-comparators.md",
   "verification/2026-10-28-txt-pipeline.md",
   "verification/2026-10-28-simple-consultation.md",
 ]

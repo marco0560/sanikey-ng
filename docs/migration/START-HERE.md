@@ -26,7 +26,9 @@ celle descritte “valore in massa/percentuale”. P08.03 è completata a livell
 core: ricerca e classificazione AIFA, conferma esplicita, persistenza TOML,
 download FI/RCP in coppia e lookup filesystem-only dei PDF per uso offline. La
 capability resta pending finché il servizio reale non viene qualificato e gli
-export P09 non collegano i PDF. Prossima scheda: P09.01, SQLite e FTS5.
+export P09 non collegano i PDF. P09.01 ha portato schema completo, builder
+transazionale, provenienza, DICOM e FTS5 equivalente al campione. Prossima
+scheda: P09.02, export JSON e JavaScript.
 P01.03 ha qualificato il campione in un checkout pulito e ha verificato il
 fetch remoto dello SHA fissato; non è stata eseguita una push del Python.
 

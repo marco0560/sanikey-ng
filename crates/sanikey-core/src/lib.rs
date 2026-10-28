@@ -5,6 +5,7 @@
 pub mod aifa;
 pub mod config;
 pub mod containers;
+pub mod database;
 pub mod dicom;
 pub mod inventory;
 pub mod metadata;
