@@ -24,8 +24,9 @@ La scheda attiva è P08.02. I sottopassi P08.02a/b hanno portato la scoperta
 generica e i principali layout tabellari annotati/impilati; P08.02c carica e
 valida le regole curate; P08.02d applica le regole ai candidati e produce
 decisioni esplicite; P08.02e applica politiche delle unità e conversioni
-esplicite, materializzando punti e serie. Il prossimo passo P08.02f porta report
-e aggregate; seguiranno segni vitali e merge.
+esplicite, materializzando punti e serie; P08.02f genera report candidati e
+export statici. Il prossimo passo P08.02g genera i report diagnostici degli
+esiti accettati/rifiutati; seguiranno segni vitali e merge.
 P01.03 ha qualificato il campione in un checkout pulito e ha verificato il
 fetch remoto dello SHA fissato; non è stata eseguita una push del Python.
 

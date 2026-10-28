@@ -266,10 +266,13 @@ rust_tests = [
   "parameter_rules::tests::evaluates_specimen_category_context_and_qualifier_constraints",
   "parameter_rules::tests::builds_exact_converted_points_and_rejects_invalid_units_and_ranges",
   "parameter_rules::tests::normalizes_configured_unit_typography_and_applies_missing_unit_policies",
+  "parameter_reports::tests::writes_candidate_report_and_disabled_toml_scaffold",
+  "parameter_reports::tests::writes_machine_and_javascript_slice_exports_with_stable_bytes",
 ]
 evidence = [
   "verification/2026-10-28-parameter-rule-decisions.md",
   "verification/2026-10-28-parameter-rules-build.md",
+  "verification/2026-10-28-parameter-reports.md",
 ]
 approved_deviations = []
 
