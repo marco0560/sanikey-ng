@@ -215,6 +215,17 @@ pub fn discover_candidates(
                     &offsets,
                     settings,
                 )
+            })
+            .or_else(|| {
+                candidate_from_annotated_value_description(
+                    document,
+                    document_hrefs.and_then(|hrefs| hrefs.get(&document.document_id)),
+                    &digest,
+                    &lines,
+                    index,
+                    &offsets,
+                    settings,
+                )
             }) else {
                 continue;
             };
@@ -526,6 +537,85 @@ fn candidate_from_annotated_result(
     ))
 }
 
+fn candidate_from_annotated_value_description(
+    document: &DocumentRecord,
+    href: Option<&String>,
+    digest: &str,
+    lines: &[&str],
+    label_index: usize,
+    offsets: &[usize],
+    settings: &DiscoverySettings,
+) -> Option<ParameterCandidate> {
+    let label = lines[label_index];
+    let normalized_label = normalize_label(label);
+    if !label_is_eligible(&normalized_label, settings)
+        || !glycated_hemoglobin_label_pattern().is_match(label)
+    {
+        return None;
+    }
+    let following = lines
+        .iter()
+        .enumerate()
+        .skip(label_index + 1)
+        .take(14)
+        .filter(|(_, line)| !line.trim().is_empty())
+        .collect::<Vec<_>>();
+    for kind in ["in massa", "percentuale"] {
+        for (position, (_, description_line)) in following.iter().enumerate() {
+            let Some(description) = value_description_pattern().captures(description_line) else {
+                continue;
+            };
+            if !description
+                .name("kind")
+                .is_some_and(|value| value.as_str().eq_ignore_ascii_case(kind))
+                || position + 2 >= following.len()
+            {
+                continue;
+            }
+            let (_, value_line) = following[position + 1];
+            let (unit_index, unit_line) = following[position + 2];
+            let Some(value) = stacked_value_pattern().captures(value_line) else {
+                continue;
+            };
+            let Some(unit) = stacked_unit_pattern().captures(unit_line) else {
+                continue;
+            };
+            let Some(raw_value) = value.name("number").map(|item| item.as_str()) else {
+                continue;
+            };
+            let raw_unit = unit_without_reference_range(unit.name("unit")?.as_str());
+            if raw_unit.is_empty() {
+                continue;
+            }
+            let candidate = candidate_from_line(
+                document,
+                href,
+                digest,
+                &format!(
+                    "{label} {} {raw_value} {raw_unit}",
+                    value.name("qualifier").map_or("", |item| item.as_str())
+                ),
+                label_index + 1,
+                offsets[label_index],
+                settings,
+            )?;
+            let unit_start = unit_line.rfind(&raw_unit)?;
+            let end = offsets[unit_index]
+                + unit_line[..unit_start].chars().count()
+                + raw_unit.chars().count();
+            return Some(finish_table_candidate(
+                candidate,
+                offsets[label_index],
+                end,
+                lines[label_index..=unit_index].join("\n"),
+                raw_value,
+                &raw_unit,
+            ));
+        }
+    }
+    None
+}
+
 fn finish_table_candidate(
     mut candidate: ParameterCandidate,
     start: usize,
@@ -788,6 +878,22 @@ fn inline_result_pattern() -> &'static Regex {
     })
 }
 
+fn value_description_pattern() -> &'static Regex {
+    static PATTERN: OnceLock<Regex> = OnceLock::new();
+    PATTERN.get_or_init(|| {
+        Regex::new(r"(?i)^\s*valore\s+(?P<kind>in\s+massa|percentuale)\s*$")
+            .expect("grammatica descrizione valore costante valida")
+    })
+}
+
+fn glycated_hemoglobin_label_pattern() -> &'static Regex {
+    static PATTERN: OnceLock<Regex> = OnceLock::new();
+    PATTERN.get_or_init(|| {
+        Regex::new(r"(?i)\b(?:hb\s+glicosilat|hb\s+glicat|emoglobina\s+glicosilat)")
+            .expect("grammatica emoglobina glicata costante valida")
+    })
+}
+
 fn reference_range_suffix_pattern() -> &'static Regex {
     static PATTERN: OnceLock<Regex> = OnceLock::new();
     PATTERN.get_or_init(|| {
@@ -1019,6 +1125,49 @@ mod tests {
             );
             assert!(candidate.original_line.contains("0,93"), "{text}");
         }
+    }
+
+    #[test]
+    fn prefers_glycated_hemoglobin_mass_cells_over_percentage_cells() {
+        let text = concat!(
+            "Hb GLICATA (HbA1c)\n",
+            "met. Elettrof.capillare\n",
+            "valore in massa\n",
+            "41,0\n",
+            "mmol/mol\n",
+            "standardizzazione IFCC: 20 - 42\n",
+            "valore percentuale\n",
+            "5,9\n",
+            "%\n",
+        );
+        let result = discover_candidates(
+            &[document("doc-a", None)],
+            &[extraction("doc-a", text)],
+            None,
+            &permissive(),
+            None,
+        )
+        .expect("valid discovery");
+
+        let candidates = result
+            .candidates
+            .iter()
+            .filter(|candidate| candidate.normalized_label == "hb glicata (hba1c)")
+            .collect::<Vec<_>>();
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].raw_value, "41,0");
+        assert_eq!(candidates[0].parsed_value, Some(41.0));
+        assert_eq!(candidates[0].raw_unit.as_deref(), Some("mmol/mol"));
+        assert!(
+            candidates[0]
+                .original_line
+                .starts_with("Hb GLICATA (HbA1c)\n")
+        );
+        assert!(candidates[0].original_line.contains("41,0\nmmol/mol"));
+        assert_eq!(
+            &text[candidates[0].character_start..candidates[0].character_end],
+            "Hb GLICATA (HbA1c)\nmet. Elettrof.capillare\nvalore in massa\n41,0\nmmol/mol"
+        );
     }
 
     #[test]
