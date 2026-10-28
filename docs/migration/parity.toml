@@ -361,11 +361,20 @@ status = "pending"
 baseline_source = "src/sanikey/exports.py"
 baseline_test = "tests/test_exports.py"
 rust_tests = [
+  "exports::tests::exports_clinical_search_timeline_and_file_url_javascript",
+  "exports::tests::exports_for_two_people_use_disjoint_build_roots",
+  "exports::tests::exports_advanced_search_dictionary_and_size_warning",
+  "exports::tests::exports_dicom_viewer_links_and_manifest_for_a_synthetic_study",
+  "exports::tests::exports_technical_documents_with_quoted_csv_and_escaped_html",
+  "exports::tests::exports_longitudinal_observation_series_and_missing_values_without_zeroes",
+  "exports::tests::exports_timeline_oldest_first_when_requested",
+  "exports::tests::exports_clinical_procedures_observations_and_hides_technical_dicom_documents",
   "txt_pipeline::tests::txt_pipeline_matches_the_synthetic_baseline_and_builds_searchable_outputs",
   "txt_pipeline::tests::consultation_pipeline_renders_office_derivatives_and_preserves_originals",
   "txt_pipeline::tests::consultation_pipeline_keeps_office_original_when_converter_is_unavailable",
 ]
 evidence = [
+  "verification/2026-10-28-exports-checkpoint.md",
   "verification/2026-10-28-txt-pipeline.md",
   "verification/2026-10-28-office-conversion.md",
 ]

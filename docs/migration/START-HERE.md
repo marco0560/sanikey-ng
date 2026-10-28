@@ -27,8 +27,12 @@ core: ricerca e classificazione AIFA, conferma esplicita, persistenza TOML,
 download FI/RCP in coppia e lookup filesystem-only dei PDF per uso offline. La
 capability resta pending finché il servizio reale non viene qualificato e gli
 export P09 non collegano i PDF. P09.01 ha portato schema completo, builder
-transazionale, provenienza, DICOM e FTS5 equivalente al campione. Prossima
-scheda: P09.02, export JSON e JavaScript.
+transazionale, provenienza, DICOM e FTS5 equivalente al campione. P09.02 è in
+corso: export JSON/JavaScript, dati clinici e DICOM, ricerca e report tecnici
+sono implementati e confrontati su fixture sintetiche. La resa CommonMark
+resta in attesa del checkpoint G2 per la dipendenza Markdown; vedi la ricevuta
+[checkpoint P09.02](verification/2026-10-28-exports-checkpoint.md). La prossima
+attività resta P09.02, completare e verificare la resa Markdown dopo G2.
 P01.03 ha qualificato il campione in un checkout pulito e ha verificato il
 fetch remoto dello SHA fissato; non è stata eseguita una push del Python.
 
