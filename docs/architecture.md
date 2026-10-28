@@ -3,9 +3,9 @@
 Stato: piano approvato; il workspace P03.01 contiene i crate iniziali
 `sanikey-core`, `sanikey-cli` e `xtask`. P03.02 aggiunge al core errori
 categorizzati, eventi tipizzati e annullamento cooperativo; la CLI implementa
-informazioni/versione. P06 fornisce una pipeline sintetica limitata ai file
-`.txt`; la pipeline completa multi-formato e la GUI restano da realizzare. Il
-crate desktop attende G1.
+informazioni/versione. Le fasi P06–P09 hanno aggiunto pipeline documentali,
+database ed export offline; il frontend completo e la GUI restano da realizzare.
+Il crate desktop attende G1, approvato per egui/eframe 0.37.0.
 
 ## Componenti
 
@@ -75,6 +75,13 @@ fuori dal perimetro; la qualifica multipiattaforma è ancora pending.
 directory, crea un manifest deterministico con checksum, verifica l'integrità
 e i link locali e finalizza l'albero tramite rename dallo staging. Non rileva né
 scrive su supporti fisici e non costituisce la capability USB completa.
+
+`sanikey-core::exports::generate_exports` produce dati e script per il frontend
+offline, inclusi Markdown CommonMark con HTML raw escapato. I link con schemi
+non sicuri restano testo inerte; le immagini `data:` sono limitate ai MIME
+ammessi dalla baseline. Report tecnici, dati clinici, collegamenti ai PDF FI/RCP
+locali e pagine AIFA fanno parte dell'export. La parità è verificata su fixture
+sintetiche Linux; la qualifica del servizio AIFA reale resta pending.
 
 Organizzare inizialmente il core in moduli, evitando un crate per ogni file
 Python. Gli adattatori di sistema, conversione e rete hanno confini espliciti.

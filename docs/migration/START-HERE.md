@@ -25,14 +25,14 @@ regole curate, conversioni, punti e serie, report diagnostici, segni vitali e
 celle descritte “valore in massa/percentuale”. P08.03 è completata a livello
 core: ricerca e classificazione AIFA, conferma esplicita, persistenza TOML,
 download FI/RCP in coppia e lookup filesystem-only dei PDF per uso offline. La
-capability resta pending finché il servizio reale non viene qualificato e gli
-export P09 non collegano i PDF. P09.01 ha portato schema completo, builder
-transazionale, provenienza, DICOM e FTS5 equivalente al campione. P09.02 è in
-corso: export JSON/JavaScript, dati clinici e DICOM, ricerca e report tecnici
-sono implementati e confrontati su fixture sintetiche. La resa CommonMark
-resta in attesa del checkpoint G2 per la dipendenza Markdown; vedi la ricevuta
-[checkpoint P09.02](verification/2026-10-28-exports-checkpoint.md). La prossima
-attività resta P09.02, completare e verificare la resa Markdown dopo G2.
+capability resta pending finché il servizio reale non viene qualificato; P09.02
+collega ora FI/RCP locali e URL AIFA agli export. P09.01 ha portato schema
+completo, builder transazionale, provenienza, DICOM e FTS5 equivalente al
+campione. P09.02 è completata: export JSON/JavaScript, dati clinici e DICOM,
+ricerca, report tecnici e Markdown CommonMark sono confrontati su fixture
+sintetiche. Raw HTML è escapato e i link non sicuri restano testo inerte; vedi
+la [ricevuta P09.02](verification/2026-10-28-exports-checkpoint.md).
+La prossima attività è P09.03, completare il frontend offline.
 P01.03 ha qualificato il campione in un checkout pulito e ha verificato il
 fetch remoto dello SHA fissato; non è stata eseguita una push del Python.
 

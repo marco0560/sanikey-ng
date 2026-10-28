@@ -1,53 +1,70 @@
-# P09.02 — Checkpoint export JSON e JavaScript
+# P09.02 — Chiusura export JSON e JavaScript
 
-Stato: **in corso**, non dimostra la parità completa degli export.
+Stato: **completata**. La capability `exports` è implementata; la parità è
+verificata sulle fixture sintetiche Linux descritte qui, non su piattaforme o
+servizi reali non provati.
 
-## Ambito verificato
+## Ambito
 
-Il modulo Rust genera catalogo documenti, ricerca, timeline, sommario, script
-JavaScript per il caricamento `file://`, ricerca avanzata, payload clinici,
-link AIFA e DICOM, report tecnici e manifest viewer. Gli input di documenti e
-studi con un `patient_id` diverso vengono esclusi.
+`sanikey-core::exports::generate_exports` produce catalogo documenti, ricerca,
+timeline, sommario, script JavaScript per `file://`, ricerca avanzata, payload
+clinici, report tecnici, collegamenti AIFA/FI/RCP e manifest per viewer DICOM.
+I dati di persone diverse restano isolati. Gli export Markdown usano
+CommonMark tramite `pulldown-cmark 0.13.5`: HTML raw viene escapato, schemi URL
+non sicuri sono resi inerti e gli URL `data:` ammessi corrispondono alla
+allowlist della baseline.
+
+L'utente ha chiesto di terminare P09.02 dopo aver ricevuto la proposta G2 di
+aggiungere `pulldown-cmark` per la parità CommonMark. Tale richiesta è stata
+interpretata come approvazione di quella specifica dipendenza e del suo uso per
+questa scheda. Il punto G2 distinto sulla semantica di `usb_uuid` rimane aperto;
+nessuna decisione generale G2 o qualifica del servizio AIFA reale è implicata.
 
 ## Verifiche
 
-- Baseline fissata: estratto isolato di `fdad1d93e56496cc6cb9933b3089729175d5b5b3`;
-  `uv run --project <checkout-ambiente-Python> --no-sync pytest
-  tests/test_exports.py -q` con `PYTHONPATH=<baseline>/src` — 8 passed.
-- Rust: `cargo fmt --all -- --check`, `cargo clippy -p sanikey-core
-  --all-targets -- -D warnings` e `cargo test -p sanikey-core exports::tests
-  -- --nocapture` — superati, 8 test. La prova aggiunta verifica la ricerca di
-  procedure e osservazioni e l'esclusione dei file DICOM tecnici quando lo
-  studio non dispone di un viewer.
-- Fixture sintetica non vuota con documento, tag, problemi clinici, farmaco,
-  terapia, riferimenti AIFA, studio DICOM, viewer offline e testo indicizzato:
-  `cargo xtask compare frontend <baseline-web> <rust-web>` — nessuna
-  differenza significativa.
-- Confronti separati di ricerca e timeline JSON, report tecnico CSV/HTML e
-  manifest viewer JSON — nessuna differenza significativa.
-- Un primo test timeline fallì perché il fixture assegnava la stessa data ai
-  due documenti; corretta la data nel test e ripetuta la suite con esito 7/7.
-- Un primo tentativo di `uv run` nell'estrazione baseline non riuscì a
-  scaricare i requisiti di build per DNS assente. Il test è stato poi eseguito
-  con l'ambiente Python locale non sincronizzato e `PYTHONPATH` puntato
-  all'estrazione esatta della baseline. Il repository Python è rimasto pulito.
-- Codira: prima l'indice incrementale terminò con `BrokenProcessPool` e il
-  tentativo con `--concurrency thread` con SIGSEGV (139). Dopo la correzione
-  dell'analizzatore Rust segnalata dal manutentore, `uv run codira index` è
-  terminato con exit 0 (`Indexed: 0`, `Reused: 201`, `Failed: 0`; 2241
-  embeddings riusati). `uv run codira cov` segnala come unico file non coperto
-  `.user-words`, che non ha un analyzer registrato; l'analyzer Rust v4 copre
-  i file `.rs`. Le query Codira successive hanno usato la generazione valida.
+- Baseline fissata `fdad1d93e56496cc6cb9933b3089729175d5b5b3`, test export
+  eseguiti da estrazione isolata: `tests/test_exports.py` — 8/8. Il checkout
+  Python di riferimento non è stato modificato.
+- Rust focalizzato: `cargo test -p sanikey-core exports::tests --offline --
+  --nocapture` — 10/10; `cargo fmt --all -- --check` — superato;
+  `cargo clippy -p sanikey-core --all-targets --offline -- -D warnings` —
+  superato.
+- `cargo xtask compare frontend <baseline-web> <rust-web>` — exit 0, nessuna
+  differenza significativa sulla fixture sintetica con Markdown, HTML raw,
+  link sicuri e non sicuri, immagini `data:`, FI/RCP locali, URL AIFA, DICOM e
+  dati clinici. Confronti separati per ricerca/timeline JSON, report CSV/HTML
+  e manifest del viewer DICOM — nessuna differenza significativa.
+- `cargo xtask check` — exit 0: 167 test core passati, 1 ignorato; 8 test xtask;
+  3 test CLI; 2 doctest; pubblicabilità verificata su 252 file e rustdoc
+  superato. L'ultima modifica di codice ha aggiunto asserzioni ai test esistenti;
+  il gate completo viene ripetuto prima del commit di chiusura.
+- Hook pre-commit completati dopo l'aggiornamento offline dei tre lockfile dei
+  prototipi GUI, rimasti indietro rispetto alla nuova dipendenza core.
+- `uv run codira index` — exit 0 (`Indexed: 0`, `Reused: 201`, `Failed: 0`;
+  2241 embeddings riusati). `uv run codira cov` segnala solo `.user-words`,
+  che non ha analyzer registrato; i file Rust sono coperti dall'analyzer v4.
 
-## Blocco G2 e lavoro residuo
+## Tentativi falliti e correzioni
 
-Il contratto Python renderizza CommonMark con HTML raw disabilitato nei
-documenti Markdown e nella sintesi clinica. Il workspace Rust non contiene un
-parser Markdown. È stata chiesta approvazione G2 per aggiungere
-`pulldown-cmark` 0.13 e trasformare gli eventi HTML raw in testo escapato;
-nessuna dipendenza è stata aggiunta in attesa della decisione.
+- Il primo test Cargo offline non trovava `pulldown-cmark-escape`; il download
+  Cargo online ha reso disponibile la dipendenza.
+- I confronti iniziali hanno evidenziato una differenza di newline attorno
+  all'HTML raw, un newline finale nel sommario JSON e un diverso trattamento
+  delle immagini `data:`. Sono stati corretti rispettivamente il rendering,
+  la serializzazione e la allowlist delle immagini, poi i confronti sono stati
+  ripetuti.
+- La prima esecuzione del pre-commit ha rilevato lockfile GUI obsoleti; sono
+  stati aggiornati offline e il hook è stato ripetuto con esito positivo.
+- Codira aveva fallito inizialmente con `BrokenProcessPool` e SIGSEGV
+  (`--concurrency thread`, exit 139). Dopo la correzione dell'analizzatore Rust
+  comunicata dal manutentore, l'indicizzazione è terminata correttamente.
 
-Da fare dopo G2: implementare e confrontare la resa Markdown; ripetere i
-confronti completi, `cargo xtask check`, aggiornare il ledger e chiudere la
-scheda con un commit atomico. Fino ad allora la capability `exports` resta
-`pending`.
+## Commit e limiti
+
+Commit funzionali: `28b53ca`, `fe8f578`, `5d75ac8`, `69d8ba7`. La ricevuta e il
+ledger saranno committati insieme all'allineamento di START-HERE, architettura
+e matrice di parità.
+
+Non è stata effettuata una richiesta al servizio AIFA reale. Browser, sistemi
+Windows/macOS e frontend completo sono fuori dalla qualifica di questa scheda;
+il frontend offline prosegue in P09.03.

@@ -357,7 +357,7 @@ approved_deviations = []
 id = "exports"
 description = "Export JSON e JavaScript"
 phase = "P09"
-status = "pending"
+status = "implemented"
 baseline_source = "src/sanikey/exports.py"
 baseline_test = "tests/test_exports.py"
 rust_tests = [
@@ -369,6 +369,8 @@ rust_tests = [
   "exports::tests::exports_longitudinal_observation_series_and_missing_values_without_zeroes",
   "exports::tests::exports_timeline_oldest_first_when_requested",
   "exports::tests::exports_clinical_procedures_observations_and_hides_technical_dicom_documents",
+  "exports::tests::markdown_exports_render_commonmark_and_escape_raw_html",
+  "exports::tests::markdown_exports_remove_unsafe_link_and_image_destinations",
   "txt_pipeline::tests::txt_pipeline_matches_the_synthetic_baseline_and_builds_searchable_outputs",
   "txt_pipeline::tests::consultation_pipeline_renders_office_derivatives_and_preserves_originals",
   "txt_pipeline::tests::consultation_pipeline_keeps_office_original_when_converter_is_unavailable",
