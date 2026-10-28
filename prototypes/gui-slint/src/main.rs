@@ -1,3 +1,5 @@
+//! Prototipo Slint che visualizza il flusso GUI con eventi sintetici.
+
 use std::error::Error;
 
 slint::slint! {

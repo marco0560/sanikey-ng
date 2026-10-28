@@ -1,3 +1,5 @@
+//! Modello delle operazioni e identità applicativa del nucleo SaniKey.
+
 #![forbid(unsafe_code)]
 
 pub mod operation;

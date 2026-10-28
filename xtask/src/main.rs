@@ -1,3 +1,5 @@
+//! Comandi di sviluppo del workspace e gate locale di verifica.
+
 #![forbid(unsafe_code)]
 
 use std::path::Path;

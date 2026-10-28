@@ -1,3 +1,5 @@
+//! Comandi CLI disponibili in questa fase della migrazione.
+
 #![forbid(unsafe_code)]
 
 use std::process::ExitCode;

@@ -1,3 +1,5 @@
+//! Prototipo eframe per confrontare l'interazione GUI con eventi sintetici.
+
 use std::{
     collections::VecDeque,
     time::{Duration, Instant},
@@ -22,6 +24,7 @@ struct Prototype {
     events: VecDeque<OperationEvent>,
 }
 
+/// Inizializza lo stato della dimostrazione GUI.
 impl Default for Prototype {
     fn default() -> Self {
         Self {
@@ -39,6 +42,7 @@ impl Default for Prototype {
     }
 }
 
+/// Gestisce stato, eventi e tempi della dimostrazione.
 impl Prototype {
     fn start(&mut self) {
         self.progress = 0;
@@ -110,6 +114,7 @@ impl Prototype {
     }
 }
 
+/// Collega lo stato della demo al rendering e agli input egui.
 impl eframe::App for Prototype {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let context = ui.ctx().clone();

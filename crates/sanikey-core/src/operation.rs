@@ -34,6 +34,7 @@ pub struct OperationError {
     message: String,
 }
 
+/// Espone le operazioni per costruire e interrogare errori applicativi.
 impl OperationError {
     /// Creates an error without coupling its machine category to its wording.
     #[must_use]
@@ -57,12 +58,14 @@ impl OperationError {
     }
 }
 
+/// Formatta l'errore con il messaggio destinato alle persone.
 impl fmt::Display for OperationError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(self.message())
     }
 }
 
+/// Integra l'errore applicativo con il protocollo standard di Rust.
 impl std::error::Error for OperationError {}
 
 /// A coarse phase reported by a running operation.
@@ -110,6 +113,7 @@ pub enum OperationOutcome<T> {
 #[derive(Clone, Debug, Default)]
 pub struct CancellationToken(Arc<AtomicBool>);
 
+/// Richiede l'annullamento e ne espone lo stato condiviso.
 impl CancellationToken {
     /// Requests cancellation; the operation observes it at its next safe point.
     pub fn cancel(&self) {
@@ -139,6 +143,7 @@ pub struct OperationContext<'a> {
     events: Vec<OperationEvent>,
 }
 
+/// Gestisce fase, progresso e controlli di annullamento dell'operazione.
 impl OperationContext<'_> {
     /// Changes the phase used by subsequent progress events.
     pub fn set_phase(&mut self, phase: OperationPhase) {
