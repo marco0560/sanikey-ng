@@ -22,6 +22,7 @@ di prodotto non ancora introdotto.
 | P01.03 | completata | 2026-10-26; checkout isolato sul commit fissato, sync locked e gate exit 0; fetch remoto diretto dello SHA riuscito; commit `cb5d088`; [ricevuta](verification/2026-10-26-python-clean-checkout.md) |
 | P02.01 | completata | 2026-10-26; inventario di 20 capability, CLI, formati, persistenza, default, errori e ADR; TOML/link/diff check superati; nessuna ambiguità materiale; commit `d70e743`; [ricevuta](verification/2026-10-26-contract-inventory.md) |
 | P02.02 | completata | 2026-10-26; 17 fixture sintetici con hash, 11 generatori/adattatori referenziati con hash; baseline positiva e due negativi eseguiti; expected normalizzati; commit `b1bf5c0`; [ricevuta](verification/2026-10-26-synthetic-corpus.md) |
+| P02.03 | completata | 2026-10-28; comparatori per originali, SQLite, JSON, testo e frontend; 8 test xtask, mutazione JSON exit 1, gate Rust/documentale, Codira e smoke comparatori exit 0 su Linux; commit `b59cae1`, refactoring Codira `a7012e2`, docstring audit `7e1d174`; [ricevuta](verification/2026-10-28-comparators.md) |
 | P03.01 | completata | 2026-10-26; workspace di tre crate, toolchain 1.98.1, CLI info/versione, xtask e doctest; build, Clippy, rustdoc, unit test e doctest superati; commit `597bdf7`; [ricevuta](verification/2026-10-26-rust-foundation.md) |
 | P03.02 | completata | 2026-10-26; errori codificati, eventi ordinati, progresso e annullamento cooperativo; info passa dal runner; 9 unit test, doctest, Clippy e rustdoc superati; commit `1ed6545`; [ricevuta](verification/2026-10-26-operation-contract.md) |
 | P03.03 | completata | 2026-10-26; `cargo xtask check` exit 0; run 40404493580 completato su Ubuntu/Windows/macOS; commit `6a671e1`; [ricevuta](verification/2026-10-26-rust-gate-ci.md) |
@@ -65,8 +66,8 @@ autorizzazione specifica.
 ## Prossima sessione
 
 Leggere [START-HERE.md](START-HERE.md). G1 approvato per egui/eframe 0.37.0;
-la prossima scheda è [P02.03](tasks/P02.03-costruire-il-confronto-e-provarne-la-sensibilita.md),
-dipendente da P02.02 e P03.03. Il crate desktop di prodotto resta pianificato
+la prossima scheda è [P05.01](tasks/P05.01-portare-configurazione-e-validazione.md),
+dipendente da P02.03 e P03.03. Il crate desktop di prodotto resta pianificato
 per P11.
 
 A ogni scheda aggiungere data, commit, comandi ed esiti effettivi, eventuali
