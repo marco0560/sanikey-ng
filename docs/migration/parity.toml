@@ -264,8 +264,13 @@ rust_tests = [
   "parameter_rules::tests::evaluates_exact_synonyms_and_emits_first_rejection_reason",
   "parameter_rules::tests::rejects_ambiguous_rule_matches_and_ignores_disabled_rules",
   "parameter_rules::tests::evaluates_specimen_category_context_and_qualifier_constraints",
+  "parameter_rules::tests::builds_exact_converted_points_and_rejects_invalid_units_and_ranges",
+  "parameter_rules::tests::normalizes_configured_unit_typography_and_applies_missing_unit_policies",
 ]
-evidence = ["verification/2026-10-28-parameter-rule-decisions.md"]
+evidence = [
+  "verification/2026-10-28-parameter-rule-decisions.md",
+  "verification/2026-10-28-parameter-rules-build.md",
+]
 approved_deviations = []
 
 [[capability]]
