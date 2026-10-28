@@ -1,3 +1,5 @@
+//! Verifiche sintetiche per importare ed esportare profili account.
+
 use super::AccountsProfile;
 use crate::config::tests::{CURRENT_DIRECTORY_LOCK, TestDirectory, WorkingDirectory};
 use std::fs;

@@ -32,6 +32,9 @@ riferimento è `docs/config-example/accounts.toml` del checkout baseline.
 
 Durante lo sviluppo, i primi controlli mirati hanno trovato una visibilità
 Rust errata del helper della base e due asserzioni di test impostate male;
-entrambi i problemi sono stati corretti prima della verifica finale.
+entrambi i problemi sono stati corretti prima della verifica finale. Il primo
+audit dopo il commit ha inoltre trovato il modulo test profilo privo di
+rustdoc; la documentazione è stata aggiunta e il controllo aggiornato mantiene
+solo i quattro rilievi precedenti fuori ambito.
 La prova è stata eseguita solo su Linux: i test sono portabili, ma Windows e
 macOS non sono stati eseguiti in questa scheda. Non sono stati usati dati reali.
