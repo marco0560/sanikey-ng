@@ -118,6 +118,11 @@ fn check() -> Result<(), String> {
         false,
     )?;
     let python = if cfg!(windows) { "python" } else { "python3" };
+    run_step(
+        python,
+        &["-B", "-m", "unittest", "scripts.test_check_publishable"],
+        false,
+    )?;
     run_step(python, &["scripts/check_publishable.py"], false)?;
     run_step(
         "cargo",

@@ -4,6 +4,8 @@
 /dist/
 /site/
 /local-data/
+/patients/
+/generated/
 /config/
 /exports/
 /logs/

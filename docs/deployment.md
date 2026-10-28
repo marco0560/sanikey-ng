@@ -20,8 +20,9 @@ non diventano facoltativi senza una decisione esplicita.
 
 ## Aree locali
 
-Le directory local-data, config, exports, logs, .artifacts, target e dist
-sono ignorate. Nessun dato sanitario va inserito nei contenuti pubblici.
+Le directory local-data, patients, generated, config, exports, logs,
+.artifacts, target e dist sono ignorate. Nessun dato sanitario va inserito
+nei contenuti pubblici.
 Usare dati sintetici anche in screenshot, documenti dimostrativi e CI.
 
 - local-data/reference/: checkout di controllo e dati privati di sviluppo.

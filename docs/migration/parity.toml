@@ -75,22 +75,40 @@ approved_deviations = []
 id = "metadata"
 description = "Metadati curati e isolamento"
 phase = "P05"
-status = "pending"
+status = "implemented"
 baseline_source = "src/sanikey/metadata.py"
 baseline_test = "tests/test_metadata.py"
-rust_tests = []
-evidence = []
+rust_tests = [
+  "metadata::tests::loading::load_curated_metadata_reads_supported_files",
+  "metadata::tests::loading::load_curated_metadata_allows_missing_directory",
+  "metadata::tests::references::load_curated_metadata_rejects_malformed_items",
+  "metadata::tests::references::load_curated_metadata_rejects_invalid_toml",
+  "metadata::tests::references::load_curated_metadata_rejects_a_file_instead_of_directory",
+  "metadata::tests::references::load_curated_metadata_generates_stable_therapy_ids",
+  "metadata::tests::references::load_curated_metadata_rejects_duplicate_ids",
+  "metadata::tests::references::load_curated_metadata_rejects_unknown_medication_reference",
+  "metadata::tests::references::load_curated_metadata_rejects_aifa_and_non_aifa_overlap",
+]
+evidence = ["verification/2026-10-28-metadata-privacy.md"]
 approved_deviations = []
 
 [[capability]]
 id = "privacy"
 description = "Privacy e protezione delle fonti"
 phase = "P05"
-status = "pending"
+status = "implemented"
 baseline_source = "src/sanikey/privacy.py"
-baseline_test = "scripts/privacy_guard.py"
-rust_tests = []
-evidence = []
+baseline_test = "tests/test_config.py"
+rust_tests = [
+  "metadata::tests::loading::load_curated_metadata_keeps_people_isolated",
+  "metadata::tests::references::load_curated_metadata_rejects_point_with_unknown_series",
+  "privacy::tests::runtime_privacy_rejects_versioned_repository_paths",
+  "privacy::tests::runtime_privacy_allows_paths_under_local_data_directories",
+  "privacy::tests::runtime_privacy_allows_data_outside_the_repository",
+  "privacy::tests::metadata_preflight_fails_before_returning_prepared_people",
+  "privacy::tests::metadata_preflight_preserves_original_documents_without_git",
+]
+evidence = ["verification/2026-10-28-metadata-privacy.md"]
 approved_deviations = []
 
 [[capability]]

@@ -34,6 +34,8 @@ FORBIDDEN_PREFIXES = (
     "dist/",
     "exports/",
     "local-data/",
+    "patients/",
+    "generated/",
     "logs/",
     "target/",
 )
@@ -46,6 +48,16 @@ FORBIDDEN_SUFFIXES = (
     ".pfx",
     ".sqlite",
     ".sqlite3",
+)
+MAX_PRIVACY_SCAN_BYTES = 2 * 1024 * 1024
+PRIVATE_PATH = re.compile(
+    r"""
+    file:///(?:home|Users)/[^\s|"'`<>)\]]+
+    |/(?:home|Users)/[^\s|"'`<>)\]]+
+    |[A-Za-z]:\\Users\\[^\s|"'`<>)\]]+
+    |\$(?:HOME|\{HOME\})/[^\s|"'`<>)\]]+
+    """,
+    re.VERBOSE,
 )
 MARKDOWN_LINK = re.compile(r"!?\[[^\]]*\]\(([^)]+)\)")
 
@@ -148,6 +160,43 @@ def publishability_errors(paths: list[Path]) -> list[str]:
     return errors
 
 
+def private_path_errors(root: Path, paths: list[Path]) -> list[str]:
+    """Reject host-local paths in tracked and unignored text files.
+
+    Parameters
+    ----------
+    root : Path
+        Repository root directory.
+    paths : list[Path]
+        Commit-candidate repository-relative paths.
+
+    Returns
+    -------
+    list[str]
+        Host-local path references found in candidate text files.
+    """
+    errors: list[str] = []
+    for relative_path in sorted(paths):
+        path = root / relative_path
+        try:
+            if path.stat().st_size > MAX_PRIVACY_SCAN_BYTES:
+                continue
+            raw = path.read_bytes()
+        except OSError:
+            continue
+        if b"\0" in raw:
+            continue
+        content = raw.decode("utf-8", errors="replace")
+        for line_number, line in enumerate(content.splitlines(), start=1):
+            match = PRIVATE_PATH.search(line)
+            if match is not None:
+                errors.append(
+                    f"riferimento host-specific in {relative_path}:{line_number}"
+                )
+                break
+    return errors
+
+
 def documentation_errors(root: Path, paths: list[Path]) -> list[str]:
     """Validate required documents, their local links, and migration TOML.
 
@@ -193,6 +242,7 @@ def main() -> int:
     paths, errors = repository_paths(root)
     errors.extend(documentation_errors(root, paths))
     errors.extend(publishability_errors(paths))
+    errors.extend(private_path_errors(root, paths))
     if errors:
         print("\n".join(errors), file=sys.stderr)
         return 1

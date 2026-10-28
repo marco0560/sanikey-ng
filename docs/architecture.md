@@ -13,6 +13,13 @@ il crate desktop attende G1.
 - sanikey-desktop: adattatore grafico, da introdurre dopo G1.
 - xtask: verifiche e strumenti del repository, esclusi dal prodotto.
 
+`sanikey-core::metadata::prepare_people_metadata` applica i controlli di
+percorso runtime e carica tutti i metadati delle persone abilitate prima che
+un servizio inizi l'elaborazione. La preparazione restituisce risultati solo
+se tutte le persone superano la validazione; non invoca Git. `xtask check`
+mantiene separata la scansione Git di directory locali e riferimenti host prima
+della pubblicazione.
+
 Organizzare inizialmente il core in moduli, evitando un crate per ogni file
 Python. Gli adattatori di sistema, conversione e rete hanno confini espliciti.
 Nuove separazioni in crate richiedono un bisogno concreto e una ADR.

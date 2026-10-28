@@ -3,7 +3,9 @@
 #![forbid(unsafe_code)]
 
 pub mod config;
+pub mod metadata;
 pub mod operation;
+pub mod privacy;
 
 use operation::{CancellationToken, OperationRun, run_operation};
 
