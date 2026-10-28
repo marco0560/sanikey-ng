@@ -16,8 +16,8 @@ della capability osservazioni resta pending.
 
 - Sorgente baseline `parameter_slices.py` verificato nel checkout isolato fissato.
 - Sottoinsieme corrispondente della baseline Python: 6 test superati.
-- Rust: `CARGO_HOME=/home/marco/Personalia/Progetti/.Temp/sanikey-p04-02/cargo-home CARGO_NET_OFFLINE=true cargo test --offline -p sanikey-core parameter_slices -- --nocapture` — 7 test superati.
-- `CARGO_HOME=/home/marco/Personalia/Progetti/.Temp/sanikey-p04-02/cargo-home CARGO_NET_OFFLINE=true cargo clippy --offline -p sanikey-core --all-targets -- -D warnings` — exit 0.
+- Rust: `CARGO_HOME=<cargo-home> CARGO_NET_OFFLINE=true cargo test --offline -p sanikey-core parameter_slices -- --nocapture` — 7 test superati.
+- `CARGO_HOME=<cargo-home> CARGO_NET_OFFLINE=true cargo clippy --offline -p sanikey-core --all-targets -- -D warnings` — exit 0.
 - Hook `pre-commit` durante il commit — exit 0; test workspace e prototipi GUI completati. Il gate esplicito `cargo xtask check` non è stato rieseguito per questo sottopasso.
 
 Il parser mantiene il lessico numerico e interpreta i separatori supportati per

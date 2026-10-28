@@ -7,14 +7,13 @@ La sessione di bootstrap si è fermata dopo repository e documentazione;
 l'implementazione approvata è ripresa in seguito con P03.01.
 
 Baseline Python: `fdad1d93e56496cc6cb9933b3089729175d5b5b3`.
-Stato Rust: P08.01 completata; P08.02 in corso (P08.02a righe generiche e
-P08.02b layout annotati/impilati completati); importazioni osservazioni implementate e
+Stato Rust: P08.01 completata; P08.02 in corso (P08.02a righe generiche,
+P08.02b layout annotati/impilati e P08.02c caricamento regole completati); importazioni osservazioni implementate e
 verificate con fixture sintetiche Linux. Staging contenitori, catalogazione DICOM,
 media e anteprime sono implementati e verificati con fixture sintetiche Linux. Le
 capability containers e DICOM restano pending per media mancanti/non standard,
 integrazione frontend e qualifica di codec, viewer e Windows/macOS. La prossima
-attività è P08.02c: portare le regole di configurazione/normalizzazione dei
-parametri clinici.
+attività è P08.02d: applicare le regole ai candidati con decisioni esplicite.
 Stato GUI: G1 approvato il 2026-10-27 per egui/eframe 0.37.0; crate desktop
 di prodotto non ancora introdotto.
 
@@ -53,7 +52,7 @@ di prodotto non ancora introdotto.
 | P07.06 | completata; parità DICOM pending | 2026-10-28; baseline `tests/test_dicom.py` 20/20; catalogo Rust raggruppa UID, legge DICOMDIR, coalesca record e conserva provenienza staged/danneggiata; 5 test DICOM, `cargo xtask check` exit 0 (101 core, 1 ignored, 8 xtask, 3 CLI, doctest, pubblicabilità, rustdoc); pre-commit e tre GUI superati; Codira index SIGSEGV; commit `418baa3`; [ricevuta](verification/2026-10-28-dicom-catalog.md) |
 | P07.07 | completata; parità DICOM pending | 2026-10-28; baseline DICOM 20/20; media conserva istanze byte-identiche, DICOMDIR valido e viewer HTML relativo senza launcher nativi; anteprima 2×2 decodificata, errore isolato e originali integri; 11 test DICOM, `cargo xtask check` exit 0 (107 core, 1 ignored, 8 xtask, 3 CLI, 2 doctest, pubblicabilità 221 file, rustdoc); Codira index SIGSEGV; pre-commit e tre GUI superati; commit `7d24597`; [ricevuta](verification/2026-10-28-dicom-media.md) |
 | P08.01 | completata; parità osservazioni pending | 2026-10-28; baseline fissata 7/7; Rust 8 test inclusi CSV, XLSX sintetico, layout matrice, estrazioni multiple, staleness e protezione metadati curati; `cargo xtask check` exit 0 (115 core, 1 ignored, 8 xtask, 3 CLI, 2 doctest); hook pre-commit superato con i tre prototipi GUI; lockfile GUI aggiornati per le nuove dipendenze core; commit funzionale `bda9293`; [ricevuta](verification/2026-10-28-observation-imports.md) |
-| P08.02 | in corso — P08.02a/b completati | 2026-10-28; P08.02a: candidati per righe generiche, baseline mirata 6/6, Rust 7 test e Clippy superati, commit `6c11b88`; P08.02b: celle verticali e layout unità/intervallo/valore, riga `valore` annotata, baseline 7/7, Rust 12 test mirati e Clippy superati; hook completo superato (127 core, 1 ignored, 8 xtask, 3 CLI, 2 doctest e tre prototipi GUI); commit `51c0900`; [ricevuta P08.02a](verification/2026-10-28-parameter-candidates-lines.md), [ricevuta P08.02b](verification/2026-10-28-parameter-table-layouts.md). Regole, conversioni/report, segni vitali e celle con descrizione del tipo di valore restano da portare. |
+| P08.02 | in corso — P08.02a/b/c completati | 2026-10-28; P08.02a: candidati per righe generiche, baseline mirata 6/6, Rust 7 test e Clippy superati, commit `6c11b88`; P08.02b: celle verticali e layout unità/intervallo/valore, riga `valore` annotata, baseline 7/7, Rust 12 test mirati e Clippy superati; commit `51c0900`; P08.02c: loader TOML, alias, override paziente, digest compatibile con baseline (`853a7b…`) e numeri configurati `Decimal`; 3 test Rust e Clippy superati; `cargo xtask check` exit 0 (130 core, 1 ignored, 8 xtask, 3 CLI, 2 doctest, pubblicabilità, rustdoc); hook pre-commit superato con i tre prototipi GUI; commit `d18e7b2`, correzione Decimal `03821b1`; [ricevuta P08.02a](verification/2026-10-28-parameter-candidates-lines.md), [ricevuta P08.02b](verification/2026-10-28-parameter-table-layouts.md), [ricevuta P08.02c](verification/2026-10-28-parameter-rules-load.md). Applicazione regole, report, segni vitali e celle con descrizione del tipo di valore restano da portare. |
 
 Le schede non registrate sopra sono da eseguire; l'indice completo è in
 [tasks/README.md](tasks/README.md). La parità per capability è mantenuta in
@@ -89,8 +88,8 @@ autorizzazione specifica.
 
 Leggere [START-HERE.md](START-HERE.md). G1 approvato per egui/eframe 0.37.0;
 continuare [P08.02](tasks/P08.02-portare-parametri-slice-e-segni-vitali.md)
-dal sottopasso P08.02c: regole di configurazione e normalizzazione dei
-parametri clinici.
+dal sottopasso P08.02d: applicare le regole di configurazione ai candidati e
+produrre decisioni esplicite.
 Le pipeline PDF e Office sono implementate e verificate su Linux, ma la parità
 Office completa, la parità containers completa, il browser e il
 confezionamento multipiattaforma restano da verificare. Il crate desktop di
