@@ -77,8 +77,9 @@ consultata tramite Context7; le dipendenze sono state compilate dal lockfile.
 Il primo hook pre-commit si è fermato perché i lockfile indipendenti dei tre
 prototipi GUI non includevano più le dipendenze transitivamente richieste dal
 core. I tre lockfile sono stati aggiornati con `cargo check --offline` sui
-manifesti dei prototipi. Il gate completo è stato poi ripetuto con gli hook
-attivi e superato.
+manifesti dei prototipi. Il primo `cargo xtask check` ha poi segnalato il test
+interno prima di funzioni successive nel modulo; il test è stato spostato in
+fondo. Gate e hook sono stati rieseguiti e superati.
 L'indice Codira Rust ha inizialmente terminato con SIGSEGV su più moduli grandi
 pur compilabili; la suddivisione in moduli tematici più piccoli ha eliminato il
 crash. Reindicizzazione, copertura Rust/Markdown e audit sono passati senza gap
