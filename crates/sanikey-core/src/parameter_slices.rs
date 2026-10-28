@@ -182,7 +182,40 @@ pub fn discover_candidates(
                 index + 1,
                 offsets[index],
                 settings,
-            ) else {
+            )
+            .or_else(|| {
+                candidate_from_stacked_cells(
+                    document,
+                    document_hrefs.and_then(|hrefs| hrefs.get(&document.document_id)),
+                    &digest,
+                    &lines,
+                    index,
+                    &offsets,
+                    settings,
+                )
+            })
+            .or_else(|| {
+                candidate_from_reference_table_cells(
+                    document,
+                    document_hrefs.and_then(|hrefs| hrefs.get(&document.document_id)),
+                    &digest,
+                    &lines,
+                    index,
+                    &offsets,
+                    settings,
+                )
+            })
+            .or_else(|| {
+                candidate_from_annotated_result(
+                    document,
+                    document_hrefs.and_then(|hrefs| hrefs.get(&document.document_id)),
+                    &digest,
+                    &lines,
+                    index,
+                    &offsets,
+                    settings,
+                )
+            }) else {
                 continue;
             };
             if accepted_labels.is_some_and(|labels| !labels.contains(&candidate.normalized_label)) {
@@ -340,6 +373,215 @@ fn candidate_from_line(
         page_label: "non applicabile".into(),
         section_specimen: None,
     })
+}
+
+fn candidate_from_stacked_cells(
+    document: &DocumentRecord,
+    href: Option<&String>,
+    digest: &str,
+    lines: &[&str],
+    label_index: usize,
+    offsets: &[usize],
+    settings: &DiscoverySettings,
+) -> Option<ParameterCandidate> {
+    let cells = following_table_cells(lines, label_index, 2);
+    let [(_, value_line), (unit_index, unit_line)] = cells.as_slice() else {
+        return None;
+    };
+    let value = stacked_value_pattern().captures(value_line)?;
+    let unit = stacked_unit_pattern().captures(unit_line)?;
+    let raw_unit = unit_without_reference_range(unit.name("unit")?.as_str());
+    if raw_unit.is_empty() {
+        return None;
+    }
+    let label = lines[label_index];
+    let normalized_label = normalize_label(label);
+    if !label_is_eligible(&normalized_label, settings) {
+        return None;
+    }
+    let raw_value = value.name("number")?.as_str();
+    let candidate = candidate_from_line(
+        document,
+        href,
+        digest,
+        &format!(
+            "{label} {} {raw_value} {raw_unit}",
+            value.name("qualifier").map_or("", |m| m.as_str())
+        ),
+        label_index + 1,
+        offsets[label_index],
+        settings,
+    )?;
+    let unit_start = unit_line.find(&raw_unit)?;
+    let end =
+        offsets[*unit_index] + unit_line[..unit_start].chars().count() + raw_unit.chars().count();
+    Some(finish_table_candidate(
+        candidate,
+        offsets[label_index],
+        end,
+        lines[label_index..=*unit_index].join("\n"),
+        raw_value,
+        &raw_unit,
+    ))
+}
+
+fn candidate_from_reference_table_cells(
+    document: &DocumentRecord,
+    href: Option<&String>,
+    digest: &str,
+    lines: &[&str],
+    label_index: usize,
+    offsets: &[usize],
+    settings: &DiscoverySettings,
+) -> Option<ParameterCandidate> {
+    let cells = following_table_cells(lines, label_index, 3);
+    let [
+        (_unit_index, unit_line),
+        (_, reference_line),
+        (value_index, value_line),
+    ] = cells.as_slice()
+    else {
+        return None;
+    };
+    if !reference_cell_pattern().is_match(reference_line) {
+        return None;
+    }
+    let unit = stacked_unit_pattern().captures(unit_line)?;
+    let value = stacked_value_pattern().captures(value_line)?;
+    let raw_unit = unit_without_reference_range(unit.name("unit")?.as_str());
+    if raw_unit.is_empty() {
+        return None;
+    }
+    let label = lines[label_index];
+    let normalized_label = normalize_label(label);
+    if !label_is_eligible(&normalized_label, settings) {
+        return None;
+    }
+    let raw_value = value.name("number")?.as_str();
+    let candidate = candidate_from_line(
+        document,
+        href,
+        digest,
+        &format!(
+            "{label} {} {raw_value} {raw_unit}",
+            value.name("qualifier").map_or("", |m| m.as_str())
+        ),
+        label_index + 1,
+        offsets[label_index],
+        settings,
+    )?;
+    let value_start = value_line.rfind(raw_value)?;
+    let end = offsets[*value_index]
+        + value_line[..value_start].chars().count()
+        + raw_value.chars().count();
+    Some(finish_table_candidate(
+        candidate,
+        offsets[label_index],
+        end,
+        lines[label_index..=*value_index].join("\n"),
+        raw_value,
+        &raw_unit,
+    ))
+}
+
+fn candidate_from_annotated_result(
+    document: &DocumentRecord,
+    href: Option<&String>,
+    digest: &str,
+    lines: &[&str],
+    label_index: usize,
+    offsets: &[usize],
+    settings: &DiscoverySettings,
+) -> Option<ParameterCandidate> {
+    let cells = following_table_cells(lines, label_index, 1);
+    let [(value_index, value_line)] = cells.as_slice() else {
+        return None;
+    };
+    let content = inline_result_pattern()
+        .captures(value_line)?
+        .name("content")?
+        .as_str();
+    let label = lines[label_index];
+    let candidate = candidate_from_line(
+        document,
+        href,
+        digest,
+        &format!("{label} {content}"),
+        label_index + 1,
+        offsets[label_index],
+        settings,
+    )?;
+    let consumed = candidate.character_end - offsets[label_index] - label.chars().count() - 1;
+    let content_start = value_line.find(content)?;
+    let end = offsets[*value_index] + value_line[..content_start].chars().count() + consumed;
+    let raw_value = candidate.raw_value.clone();
+    let raw_unit = candidate.raw_unit.clone().unwrap_or_default();
+    Some(finish_table_candidate(
+        candidate,
+        offsets[label_index],
+        end,
+        lines[label_index..=*value_index].join("\n"),
+        &raw_value,
+        &raw_unit,
+    ))
+}
+
+fn finish_table_candidate(
+    mut candidate: ParameterCandidate,
+    start: usize,
+    end: usize,
+    original_line: String,
+    raw_value: &str,
+    raw_unit: &str,
+) -> ParameterCandidate {
+    candidate.stable_id = sha256(
+        [
+            candidate.document_id.as_str(),
+            candidate.source_text_digest.as_str(),
+            &start.to_string(),
+            &end.to_string(),
+            candidate.normalized_label.as_str(),
+            raw_value,
+            raw_unit,
+        ]
+        .join("\u{1f}")
+        .as_bytes(),
+    );
+    candidate.character_start = start;
+    candidate.character_end = end;
+    candidate.original_line = original_line;
+    candidate.prefix_context.clear();
+    candidate.suffix_context.clear();
+    candidate
+}
+
+fn following_table_cells<'a>(
+    lines: &[&'a str],
+    label_index: usize,
+    count: usize,
+) -> Vec<(usize, &'a str)> {
+    let mut cells = Vec::new();
+    for (index, line) in lines.iter().enumerate().skip(label_index + 1).take(12) {
+        let trimmed = line.trim();
+        if trimmed.is_empty()
+            || table_method_pattern().is_match(trimmed)
+            || trimmed.eq_ignore_ascii_case("valore")
+        {
+            continue;
+        }
+        cells.push((index, *line));
+        if cells.len() == count {
+            break;
+        }
+    }
+    cells
+}
+
+fn unit_without_reference_range(unit: &str) -> String {
+    reference_range_suffix_pattern()
+        .replace(unit, "")
+        .trim()
+        .to_owned()
 }
 
 fn parse_number(raw: &str) -> (Option<f64>, Option<String>, Option<String>) {
@@ -508,6 +750,52 @@ fn candidate_pattern() -> &'static Regex {
     PATTERN.get_or_init(|| Regex::new(r"^(?P<label>.+?)(?P<separator>\s*(?::|=)\s*|\s+)(?P<qualifier><=|>=|<|>)?\s*(?P<number>\d{1,3}(?:[.,]\d{3})+[.,]\d+|\d+[.,]\d+|\d+)(?:\s*(?P<unit>[A-Za-z%µμ][A-Za-z0-9%µμ/._^*\-]*(?:\s*/\s*[A-Za-z%µμ][A-Za-z0-9%µμ._^*\-]*)?))?").expect("grammar costante valida"))
 }
 
+fn stacked_value_pattern() -> &'static Regex {
+    static PATTERN: OnceLock<Regex> = OnceLock::new();
+    PATTERN.get_or_init(|| {
+        Regex::new(r"^\s*(?:\*\s*)?(?P<qualifier><=|>=|<|>)?\s*(?P<number>\d{1,3}(?:[.,]\d{3})+[.,]\d+|\d+[.,]\d+|\d+)\s*$")
+            .expect("grammar costante valida")
+    })
+}
+
+fn stacked_unit_pattern() -> &'static Regex {
+    static PATTERN: OnceLock<Regex> = OnceLock::new();
+    PATTERN.get_or_init(|| {
+        Regex::new(r#"^\s*(?P<unit>[A-Za-z%µμ][A-Za-z0-9%µμ/._^+*\-" ]*)\s*$"#)
+            .expect("grammar costante valida")
+    })
+}
+
+fn reference_cell_pattern() -> &'static Regex {
+    static PATTERN: OnceLock<Regex> = OnceLock::new();
+    PATTERN.get_or_init(|| {
+        Regex::new(r"^\s*(?:\(\s*)?(?:<=|>=|<|>)?\s*\d+(?:[.,]\d+)?(?:\s*(?:-|–|a)\s*(?:<=|>=|<|>)?\s*\d+(?:[.,]\d+)?)?\s*\)?\s*$")
+            .expect("grammar costante valida")
+    })
+}
+
+fn table_method_pattern() -> &'static Regex {
+    static PATTERN: OnceLock<Regex> = OnceLock::new();
+    PATTERN.get_or_init(|| {
+        Regex::new(r"(?i)^(?:met\.|metodo\s*:).*$").expect("grammar costante valida")
+    })
+}
+
+fn inline_result_pattern() -> &'static Regex {
+    static PATTERN: OnceLock<Regex> = OnceLock::new();
+    PATTERN.get_or_init(|| {
+        Regex::new(r"(?i)^\s*valore\s+(?P<content>.+)$").expect("grammar costante valida")
+    })
+}
+
+fn reference_range_suffix_pattern() -> &'static Regex {
+    static PATTERN: OnceLock<Regex> = OnceLock::new();
+    PATTERN.get_or_init(|| {
+        Regex::new(r"\s+(?:[<>=~]\s*)?\d+(?:[.,]\d+)?\s*(?:-|–|a)\s*\d+(?:[.,]\d+)?\s*$")
+            .expect("grammar costante valida")
+    })
+}
+
 fn trailing_separator() -> &'static Regex {
     static PATTERN: OnceLock<Regex> = OnceLock::new();
     PATTERN.get_or_init(|| Regex::new(r"\s*[:=]\s*$").expect("grammar costante valida"))
@@ -631,6 +919,129 @@ mod tests {
             .find(|item| item.normalized_label == "azotemia")
             .unwrap();
         assert_eq!(nitrogen.raw_unit.as_deref(), Some("ma /AL"));
+    }
+
+    #[test]
+    fn recognizes_vertical_stacked_cells_and_exponent_units() {
+        let result = discover_candidates(
+            &[document("doc-a", None)],
+            &[extraction(
+                "doc-a",
+                "PLT (Piastrine)\n    159\n\nx10^3/mmc 140-440\n",
+            )],
+            None,
+            &permissive(),
+            None,
+        )
+        .expect("valid discovery");
+        let candidate = &result.candidates[0];
+        assert_eq!(candidate.normalized_label, "plt (piastrine)");
+        assert_eq!(candidate.raw_value, "159");
+        assert_eq!(candidate.raw_unit.as_deref(), Some("x10^3/mmc"));
+        assert_eq!(
+            candidate.original_line,
+            "PLT (Piastrine)\n    159\n\nx10^3/mmc 140-440"
+        );
+    }
+
+    #[test]
+    fn recognizes_asterisked_stacked_values() {
+        let result = discover_candidates(
+            &[document("doc-a", None)],
+            &[extraction("doc-a", "GLICEMIA\n*   120\nmg/dl\n70 - 100\n")],
+            None,
+            &permissive(),
+            None,
+        )
+        .expect("valid discovery");
+        assert_eq!(result.candidates[0].normalized_label, "glicemia");
+        assert_eq!(result.candidates[0].raw_value, "120");
+        assert_eq!(result.candidates[0].raw_unit.as_deref(), Some("mg/dl"));
+    }
+
+    #[test]
+    fn recognizes_unit_reference_value_table_cells() {
+        let result = discover_candidates(
+            &[document("doc-a", None)],
+            &[extraction(
+                "doc-a",
+                "GLICEMIA BASALE\nmg/dl\n(60,0-100,0)\n134\nEMOGLOBINA GLICOSILATA\n%\n<6\n7,0\nCREATININA\nmg/dl\n(0,72-1,25)\n1,06\n",
+            )],
+            None,
+            &permissive(),
+            None,
+        )
+        .expect("valid discovery");
+        let observed = result
+            .candidates
+            .iter()
+            .map(|candidate| {
+                (
+                    candidate.normalized_label.as_str(),
+                    candidate.raw_value.as_str(),
+                    candidate.raw_unit.as_deref(),
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            observed,
+            [
+                ("creatinina", "1,06", Some("mg/dl")),
+                ("emoglobina glicosilata", "7,0", Some("%")),
+                ("glicemia basale", "134", Some("mg/dl")),
+            ]
+        );
+    }
+
+    #[test]
+    fn reads_annotated_value_after_method_lines() {
+        let examples = [
+            "CREATININA\nmet. Colorimetria\n\nvalore\n  0,93\n\nmg/dL\nadulto: 0,7 - 1,2\n",
+            "CREATININA\nMetodo: Enzimatico\nvalore 0,93 mg/dL adulto: 0,7 - 1,2\n",
+            "CREATININA\nmet. Colorimetria\nmg/dL\n(0,7-1,2)\n0,93\n",
+        ];
+        for text in examples {
+            let result = discover_configured_candidates(
+                &[document("doc-a", None)],
+                &[extraction("doc-a", text)],
+                &["creatinina".into()],
+                None,
+                &permissive(),
+            )
+            .expect("valid discovery");
+            assert_eq!(result.candidates.len(), 1, "{text}");
+            let candidate = &result.candidates[0];
+            assert_eq!(candidate.raw_value, "0,93", "{text}");
+            assert_eq!(candidate.raw_unit.as_deref(), Some("mg/dL"), "{text}");
+            assert!(
+                candidate.original_line.starts_with("CREATININA\n"),
+                "{text}"
+            );
+            assert!(candidate.original_line.contains("0,93"), "{text}");
+        }
+    }
+
+    #[test]
+    fn annotated_result_does_not_cross_into_the_next_label() {
+        let result = discover_configured_candidates(
+            &[document("doc-a", None)],
+            &[extraction(
+                "doc-a",
+                "CREATININA\nmet. Colorimetria\nEmoglobina\nvalore 13,7 g/dL\n",
+            )],
+            &["creatinina".into(), "emoglobina".into()],
+            None,
+            &permissive(),
+        )
+        .expect("valid discovery");
+        assert_eq!(
+            result
+                .candidates
+                .iter()
+                .map(|candidate| candidate.normalized_label.as_str())
+                .collect::<Vec<_>>(),
+            ["emoglobina"]
+        );
     }
 
     #[test]
