@@ -5,6 +5,7 @@ mod paths;
 mod person;
 
 pub use load::{default_accounts_path, load_accounts, parse_accounts_data};
+pub(super) use paths::{absolute_non_strict, path_base};
 
 use crate::operation::OperationError;
 use toml::{Table, Value};

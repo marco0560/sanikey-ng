@@ -20,6 +20,12 @@ se tutte le persone superano la validazione; non invoca Git. `xtask check`
 mantiene separata la scansione Git di directory locali e riferimenti host prima
 della pubblicazione.
 
+`sanikey-core::config::AccountsProfile` importa file account esistenti tramite
+un percorso assoluto e ne conserva il contenuto originale. L'esportazione crea
+solo un nuovo file nella stessa base dei percorsi relativi, rifiuta
+sovrascritture e verifica byte e configurazione riaprendo la copia; non richiede
+la directory corrente, Git o Python.
+
 Organizzare inizialmente il core in moduli, evitando un crate per ogni file
 Python. Gli adattatori di sistema, conversione e rete hanno confini espliciti.
 Nuove separazioni in crate richiedono un bisogno concreto e una ADR.

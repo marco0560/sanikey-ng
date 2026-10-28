@@ -1,6 +1,7 @@
 //! Configurazione globale e per persona, con validazione TOML.
 
 mod parse;
+mod profile;
 mod sections;
 mod validation;
 
@@ -9,6 +10,7 @@ mod tests;
 
 use indexmap::IndexMap;
 pub use parse::{default_accounts_path, load_accounts, parse_accounts_data};
+pub use profile::AccountsProfile;
 use std::path::PathBuf;
 
 /// Configurazione dell'interfaccia statica associata a una persona.

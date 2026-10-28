@@ -15,7 +15,7 @@ pub(super) fn resolve_person_path(
     Ok(resolve_path(&value, base_dir))
 }
 
-pub(super) fn path_base(config_path: &Path) -> Result<PathBuf, OperationError> {
+pub(in crate::config) fn path_base(config_path: &Path) -> Result<PathBuf, OperationError> {
     let resolved = absolute_non_strict(config_path)?;
     let parent = resolved.parent().unwrap_or_else(|| Path::new("."));
     if parent.file_name().is_some_and(|name| name == "config") {
@@ -31,7 +31,7 @@ pub(super) fn expand_path(path: &Path) -> PathBuf {
         .unwrap_or_else(|| path.to_path_buf())
 }
 
-pub(super) fn absolute_non_strict(path: &Path) -> Result<PathBuf, OperationError> {
+pub(in crate::config) fn absolute_non_strict(path: &Path) -> Result<PathBuf, OperationError> {
     let absolute = if path.is_absolute() {
         path.to_path_buf()
     } else {

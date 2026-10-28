@@ -7,14 +7,14 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use toml::Value;
 
-static CURRENT_DIRECTORY_LOCK: Mutex<()> = Mutex::new(());
+pub(in crate::config) static CURRENT_DIRECTORY_LOCK: Mutex<()> = Mutex::new(());
 
 /// Conserva fixture sintetiche isolate per i test di configurazione.
-struct TestDirectory(PathBuf);
+pub(in crate::config) struct TestDirectory(PathBuf);
 
 /// Crea e accede alla directory temporanea del test.
 impl TestDirectory {
-    fn new() -> Self {
+    pub(in crate::config) fn new() -> Self {
         static NEXT_ID: AtomicUsize = AtomicUsize::new(0);
         let path = std::env::temp_dir().join(format!(
             "sanikey-ng-config-{}-{}",
@@ -25,7 +25,7 @@ impl TestDirectory {
         Self(path)
     }
 
-    fn path(&self) -> &Path {
+    pub(in crate::config) fn path(&self) -> &Path {
         &self.0
     }
 
@@ -44,11 +44,11 @@ impl Drop for TestDirectory {
 }
 
 /// Ripristina la directory corrente dopo i test che verificano i percorsi relativi.
-struct WorkingDirectory(PathBuf);
+pub(in crate::config) struct WorkingDirectory(PathBuf);
 
 /// Imposta la directory di lavoro isolata per il test.
 impl WorkingDirectory {
-    fn enter(path: &Path) -> Self {
+    pub(in crate::config) fn enter(path: &Path) -> Self {
         let previous = std::env::current_dir().expect("directory corrente");
         std::env::set_current_dir(path).expect("impostazione directory temporanea");
         Self(previous)

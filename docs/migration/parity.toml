@@ -41,7 +41,7 @@ browser_file_url_qualification = false
 id = "configuration"
 description = "Configurazione e profili"
 phase = "P05"
-status = "pending"
+status = "implemented"
 baseline_source = "src/sanikey/config.py"
 baseline_test = "tests/test_config.py"
 rust_tests = [
@@ -67,8 +67,10 @@ rust_tests = [
   "config::tests::test_parse_accounts_rejects_non_boolean_enabled",
   "config::tests::test_parse_accounts_rejects_empty_string_fields",
   "config::tests::test_parse_accounts_rejects_duplicate_patient_ids",
+  "config::profile::tests::profile_copy_survives_working_directory_change_and_reopens_with_unicode_paths",
+  "config::profile::tests::profile_export_rejects_overwrite_and_a_different_path_base",
 ]
-evidence = ["verification/2026-10-28-configuration.md"]
+evidence = ["verification/2026-10-28-configuration.md", "verification/2026-10-28-account-profiles.md"]
 approved_deviations = []
 
 [[capability]]
