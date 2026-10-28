@@ -7,6 +7,7 @@ pub mod inventory;
 pub mod metadata;
 pub mod operation;
 pub mod privacy;
+pub mod txt_pipeline;
 
 use operation::{CancellationToken, OperationRun, run_operation};
 

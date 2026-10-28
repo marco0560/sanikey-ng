@@ -32,6 +32,11 @@ tipo, data, SHA-256 e identità del documento. La scansione completa conserva i
 duplicati per la diagnosi; la vista deduplicata mantiene la prima occorrenza
 nell'ordine dei percorsi.
 
+`sanikey-core::txt_pipeline` compone inventario, lettura UTF-8 tollerante dei
+soli file `.txt`, SQLite con FTS5, JSON e pagina HTML offline con copie e link
+relativi verificabili. È un sottoinsieme sintetico: Markdown, CSV, PDF, altri
+formati, metadati clinici completi e parità multipiattaforma restano fuori.
+
 Organizzare inizialmente il core in moduli, evitando un crate per ogni file
 Python. Gli adattatori di sistema, conversione e rete hanno confini espliciti.
 Nuove separazioni in crate richiedono un bisogno concreto e una ADR.

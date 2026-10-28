@@ -254,6 +254,8 @@ name = "sanikey-core"
 version = "0.1.0"
 dependencies = [
  "indexmap",
+ "rusqlite",
+ "serde_json",
  "sha2",
  "toml",
 ]
