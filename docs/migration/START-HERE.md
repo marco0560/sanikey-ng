@@ -5,17 +5,16 @@
 La preparazione ha committato tutte le modifiche Python nel riferimento
 `fdad1d93e56496cc6cb9933b3089729175d5b5b3`, con gate superato.
 Ha predisposto repository e documentazione per il piano approvato.
-Il workspace Rust include CLI info/versione, il modello P03.02 per errori,
-eventi e annullamento cooperativo, il gate P03.03 superato localmente e sui
-runner hosted Linux, Windows e macOS, e la CLI minima provata fuori dal
-checkout su Linux in P03.04. Pipeline di generazione, GUI e comparatori
-restano da implementare. Il corpus sintetico P02.02 è pronto con expected
-fissati alla baseline.
+Il workspace Rust include CLI info/versione, gate CI, comparatori e pipeline
+di consultazione per TXT, PDF, Markdown, HTML e immagini JPEG/PNG. P07.03 è
+completata con verifica locale Linux; il browser, Windows/macOS e la parità
+funzionale completa restano pending. Il prodotto GUI è pianificato per P11.
+Il corpus sintetico P02.02 è pronto con expected fissati alla baseline.
 
 Il [ledger](ledger.md) riporta lo stato effettivo della pubblicazione.
-La prossima scheda è quella indicata nel [ledger](ledger.md). P01.03 ha
-qualificato il campione in un checkout pulito e ha verificato il fetch remoto
-dello SHA fissato; non è stata eseguita una push del Python.
+La prossima scheda è quella indicata nel [ledger](ledger.md): P07.04.
+P01.03 ha qualificato il campione in un checkout pulito e ha verificato il
+fetch remoto dello SHA fissato; non è stata eseguita una push del Python.
 
 ## Prerequisiti della sessione
 

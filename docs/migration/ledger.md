@@ -7,8 +7,9 @@ La sessione di bootstrap si è fermata dopo repository e documentazione;
 l'implementazione approvata è ripresa in seguito con P03.01.
 
 Baseline Python: `fdad1d93e56496cc6cb9933b3089729175d5b5b3`.
-Stato Rust: P03.04 completata; gate e CI hosted Linux/Windows/macOS superati;
-prova CLI minima limitata a Linux; pipeline non implementata.
+Stato Rust: P07.03 completata; pipeline di consultazione per TXT, PDF,
+Markdown, HTML e JPEG/PNG implementata e verificata su Linux. Il browser e
+Windows/macOS non sono qualificati; P07.04 è la prossima scheda.
 Stato GUI: G1 approvato il 2026-10-27 per egui/eframe 0.37.0; crate desktop
 di prodotto non ancora introdotto.
 
@@ -41,6 +42,7 @@ di prodotto non ancora introdotto.
 | P06.03 | completata | 2026-10-28; export TXT su directory simulata con manifest/checksum, link verificati, due manifest byte-identici e mutazione rilevata; originali immutati; `cargo xtask check`, pubblicabilità, hook, 66 test core e prototipi GUI superati su Linux; nessun target fisico; capability USB completa pending; commit `f238bf7`; [ricevuta](verification/2026-10-28-simulated-export.md) |
 | P07.01 | completata; parità PDF pending | 2026-10-28; estrazione PDF digitale con `lopdf 0.40.0`, warning e intervalli Unicode per pagina; testo verificato in JSON, FTS5 e HTML, copie originali identiche; PDF malformato e senza testo verificati senza OCR; `cargo xtask check`, hook e tre workspace GUI superati su Linux; OCR e qualifica multipiattaforma restano pending; commit `c2b2f2f`; [ricevuta](verification/2026-10-28-pdf-digital.md) |
 | P07.02 | completata; parità PDF pending | 2026-10-28; OCR PDF via PDFium e Tesseract, soglia baseline, forzatura su scansioni e glossario; OCR sintetico, fallback digitale, errori e provenienza verificati; `cargo xtask check` exit 0; pre-commit superato con 73 test core e i tre workspace GUI; Windows/macOS e distribuzione nativa pending; commit `a4e15a5`; [ricevuta](verification/2026-10-28-pdf-ocr.md) |
+| P07.03 | completata; parità frontend/export pending | 2026-10-28; consultazione PDF, TXT, Markdown, HTML, JPEG e PNG; copie byte-identiche e href verificati; immagini con testo/warning vuoti e test passato con PDFium/Tesseract non disponibili; `cargo xtask check` exit 0 dopo correzione fmt; hook pre-commit superato (74 core, 8 xtask, 1 protocollo GUI; test egui/Slint e formattazione superati); browser e Windows/macOS non qualificati; commit `a82e47c`; [ricevuta](verification/2026-10-28-simple-consultation.md) |
 
 Le schede non registrate sopra sono da eseguire; l'indice completo è in
 [tasks/README.md](tasks/README.md). La parità per capability è mantenuta in
@@ -75,10 +77,10 @@ autorizzazione specifica.
 ## Prossima sessione
 
 Leggere [START-HERE.md](START-HERE.md). G1 approvato per egui/eframe 0.37.0;
-la prossima scheda è [P07.03](tasks/P07.03-portare-immagini-e-rappresentazioni-semplici.md).
-La capability PDF è implementata, con qualifica locale Linux e confezionamento
-nativo ancora da verificare. Il crate desktop di prodotto resta pianificato
-per P11.
+la prossima scheda è [P07.04](tasks/P07.04-portare-conversioni-office.md).
+Le pipeline PDF e consultazione semplice sono implementate e verificate su
+Linux; parità funzionale completa, browser e confezionamento multipiattaforma
+restano da verificare. Il crate desktop di prodotto resta pianificato per P11.
 
 A ogni scheda aggiungere data, commit, comandi ed esiti effettivi, eventuali
 skip con motivazione, evidenze, blocchi e successiva attività.
