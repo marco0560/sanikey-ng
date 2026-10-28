@@ -11,6 +11,8 @@ path = "src/lib.rs"
 [dependencies]
 dicom-core = "=0.10.0"
 dicom-object = "=0.10.0"
+dicom-pixeldata = { version = "=0.10.0", default-features = false, features = ["image", "native"] }
+image = { version = "=0.25.10", default-features = false, features = ["jpeg"] }
 indexmap = "2.14.2"
 lopdf = { version = "=0.40.0", default-features = false }
 pdfium-render = { version = "=0.9.4", default-features = false, features = ["pdfium_latest", "thread_safe"] }

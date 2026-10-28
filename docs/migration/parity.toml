@@ -219,10 +219,17 @@ rust_tests = [
   "dicom::tests::catalog_reads_dicomdir_and_prefers_instances_when_coalescing_uid",
   "dicom::tests::catalog_preserves_staged_container_provenance",
   "dicom::tests::catalog_reports_damaged_dicom_without_discarding_its_provenance",
+  "dicom::tests::media_copies_original_instances_and_a_resolvable_dicomdir",
+  "dicom::tests::media_keeps_relative_html_assets_and_excludes_native_launchers",
+  "dicom::tests::catalog_prefers_offline_ihe_pages_and_applies_path_exclusions",
+  "dicom::tests::catalog_rejects_viewer_pages_with_external_runtime_dependencies",
+  "dicom::tests::previews_decode_supported_pixels_and_preserve_the_original",
+  "dicom::tests::previews_report_unsupported_pixels_without_losing_the_instance",
 ]
 evidence = [
   "verification/2026-10-26-dicom-codec-feasibility.md",
   "verification/2026-10-28-dicom-catalog.md",
+  "verification/2026-10-28-dicom-media.md",
 ]
 approved_deviations = []
 
