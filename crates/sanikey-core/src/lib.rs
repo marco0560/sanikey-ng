@@ -7,6 +7,7 @@ pub mod containers;
 pub mod dicom;
 pub mod inventory;
 pub mod metadata;
+pub mod observation_imports;
 mod office;
 pub mod operation;
 pub mod pdf;
