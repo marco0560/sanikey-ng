@@ -114,6 +114,14 @@ fn exports_clinical_search_timeline_and_file_url_javascript() {
         schedule: vec!["mattina".to_owned(), "sera".to_owned()],
         instructions: None,
     });
+    let leaflet_directory = person.local_build.join("medication-leaflets/drug-a");
+    fs::create_dir_all(&leaflet_directory).expect("directory fogli AIFA");
+    fs::write(
+        leaflet_directory.join("foglio-illustrativo.pdf"),
+        b"%PDF-fi",
+    )
+    .expect("foglio illustrativo sintetico");
+    fs::write(leaflet_directory.join("rcp.pdf"), b"%PDF-rcp").expect("RCP sintetico");
 
     let result =
         generate_exports(&person, &[document], &metadata, &[], &[]).expect("export sintetici");
@@ -136,6 +144,11 @@ fn exports_clinical_search_timeline_and_file_url_javascript() {
     let therapy = &payload["clinical"]["therapies"][0];
     assert_eq!(therapy["title"], "Terapia: Farmaco sintetico");
     assert_eq!(therapy["schedule"], serde_json::json!(["mattina", "sera"]));
+    assert_eq!(
+        therapy["leaflet_href"],
+        "../medication-leaflets/drug-a/foglio-illustrativo.pdf"
+    );
+    assert_eq!(therapy["rcp_href"], "../medication-leaflets/drug-a/rcp.pdf");
     assert_eq!(
         therapy["aifa_fi_url"],
         "https://api.aifa.gov.it/aifa-bdf-eif-be/1.0.0/organizzazione/123/farmaci/456/stampati?ts=FI"
