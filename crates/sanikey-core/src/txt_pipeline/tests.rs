@@ -88,7 +88,7 @@ fn txt_pipeline_matches_the_synthetic_baseline_and_builds_searchable_outputs() {
     assert_eq!(actual_document["text"], expected_text);
     assert_eq!(
         actual_document["href"],
-        "documents/duplicate/20260102%20Copia%20sintetica.txt"
+        "../documents/duplicate/20260102%20Copia%20sintetica.txt"
     );
     assert_eq!(
         fs::read(&original_path).expect("originale invariato"),
@@ -97,11 +97,11 @@ fn txt_pipeline_matches_the_synthetic_baseline_and_builds_searchable_outputs() {
 
     let copied = person
         .local_build
-        .join("web/documents/duplicate/20260102 Copia sintetica.txt");
+        .join("documents/duplicate/20260102 Copia sintetica.txt");
     assert_eq!(fs::read(copied).expect("copia linkata"), original_bytes);
     let html = fs::read_to_string(&result.frontend).expect("pagina HTML");
     assert!(html.contains("<html lang=\"it\">"));
-    assert!(html.contains("href=\"documents/duplicate/20260102%20Copia%20sintetica.txt\""));
+    assert!(html.contains("href=\"../documents/duplicate/20260102%20Copia%20sintetica.txt\""));
     assert!(html.contains("Referto di laboratorio sintetico"));
     assert!(!html.contains(person.source_documents.to_string_lossy().as_ref()));
 

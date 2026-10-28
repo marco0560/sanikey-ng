@@ -11,6 +11,25 @@ use rusqlite::{Connection, params};
 use serde_json::{Value, json};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+static NEXT_DATABASE: AtomicUsize = AtomicUsize::new(0);
+
+struct DatabaseStage {
+    path: PathBuf,
+    committed: bool,
+}
+
+impl Drop for DatabaseStage {
+    fn drop(&mut self) {
+        if !self.committed {
+            let _ = fs::remove_file(&self.path);
+            let mut journal = self.path.as_os_str().to_os_string();
+            journal.push("-journal");
+            let _ = fs::remove_file(PathBuf::from(journal));
+        }
+    }
+}
 
 /// Risultati e percorsi prodotti dalla pipeline TXT.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -106,7 +125,7 @@ fn read_document(
                     .is_some_and(|name| name.to_string_lossy() == normalized)
         })
         .map_or_else(|| record.tags.clone(), |(_, tags)| tags.clone());
-    let href = format!("documents/{}", encode_url_path(&relative_path));
+    let href = format!("../documents/{}", encode_url_path(&relative_path));
 
     Ok(TxtDocument {
         record,
@@ -127,95 +146,168 @@ fn build_database(
             filesystem_error("impossibile creare la directory SQLite", parent, cause)
         })?;
     }
-    let mut connection = Connection::open(path)
-        .map_err(|cause| database_error("impossibile aprire il database SQLite", path, cause))?;
-    connection
-        .pragma_update(None, "foreign_keys", "ON")
-        .map_err(|cause| database_error("impossibile attivare le chiavi esterne", path, cause))?;
-    let transaction = connection
-        .transaction()
-        .map_err(|cause| database_error("impossibile iniziare la transazione", path, cause))?;
-    transaction
-        .execute_batch(
-            "DROP TABLE IF EXISTS document_fts;
-             DROP TABLE IF EXISTS document_text;
-             DROP TABLE IF EXISTS documents;
-             CREATE TABLE documents (
-                 id TEXT PRIMARY KEY,
-                 patient_id TEXT NOT NULL,
-                 path TEXT NOT NULL,
-                 title TEXT NOT NULL,
-                 category TEXT NOT NULL,
-                 kind TEXT NOT NULL,
-                 sha256 TEXT NOT NULL,
-                 document_date TEXT,
-                 series TEXT,
-                 origin TEXT NOT NULL,
-                 container_id TEXT,
-                 internal_path TEXT
-             );
-             CREATE TABLE document_text (
-                 document_id TEXT PRIMARY KEY,
-                 text TEXT NOT NULL,
-                 FOREIGN KEY (document_id) REFERENCES documents(id)
-             );
-             CREATE VIRTUAL TABLE document_fts USING fts5(
-                 title, category, tags, text
-             );",
-        )
-        .map_err(|cause| database_error("impossibile creare lo schema TXT", path, cause))?;
-
-    for document in documents {
-        transaction
-            .execute(
-                "INSERT INTO documents (
-                     id, patient_id, path, title, category, kind, sha256,
-                     document_date, series, origin, container_id, internal_path
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
-                params![
-                    document.record.document_id,
-                    patient_id,
-                    document.relative_path,
-                    document.record.title,
-                    document.record.category,
-                    document.record.kind,
-                    document.record.sha256,
-                    document.record.date,
-                    document.record.series,
-                    document.record.origin,
-                    document.record.container_id,
-                    document.record.internal_path,
-                ],
+    let mut stage = DatabaseStage {
+        path: temporary_database_path(path, "building"),
+        committed: false,
+    };
+    {
+        let mut connection = Connection::open(&stage.path).map_err(|cause| {
+            database_error(
+                "impossibile creare il database SQLite temporaneo",
+                path,
+                cause,
             )
+        })?;
+        connection
+            .pragma_update(None, "foreign_keys", "ON")
             .map_err(|cause| {
-                database_error("impossibile inserire il documento TXT", path, cause)
+                database_error("impossibile attivare le chiavi esterne", path, cause)
             })?;
-        let row_id = transaction.last_insert_rowid();
-        if !document.text.is_empty() {
+        let transaction = connection
+            .transaction()
+            .map_err(|cause| database_error("impossibile iniziare la transazione", path, cause))?;
+        transaction
+            .execute_batch(
+                "CREATE TABLE documents (
+                     id TEXT PRIMARY KEY,
+                     patient_id TEXT NOT NULL,
+                     path TEXT NOT NULL,
+                     title TEXT NOT NULL,
+                     category TEXT NOT NULL,
+                     kind TEXT NOT NULL,
+                     sha256 TEXT NOT NULL,
+                     document_date TEXT,
+                     series TEXT,
+                     origin TEXT NOT NULL,
+                     container_id TEXT,
+                     internal_path TEXT
+                 );
+                 CREATE TABLE document_text (
+                     document_id TEXT PRIMARY KEY,
+                     text TEXT NOT NULL,
+                     FOREIGN KEY (document_id) REFERENCES documents(id)
+                 );
+                 CREATE VIRTUAL TABLE document_fts USING fts5(
+                     title, category, tags, text
+                 );",
+            )
+            .map_err(|cause| database_error("impossibile creare lo schema TXT", path, cause))?;
+
+        for document in documents {
             transaction
                 .execute(
-                    "INSERT INTO document_text(document_id, text) VALUES (?1, ?2)",
-                    params![document.record.document_id, document.text],
+                    "INSERT INTO documents (
+                         id, patient_id, path, title, category, kind, sha256,
+                         document_date, series, origin, container_id, internal_path
+                     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+                    params![
+                        document.record.document_id,
+                        patient_id,
+                        document.relative_path,
+                        document.record.title,
+                        document.record.category,
+                        document.record.kind,
+                        document.record.sha256,
+                        document.record.date,
+                        document.record.series,
+                        document.record.origin,
+                        document.record.container_id,
+                        document.record.internal_path,
+                    ],
                 )
-                .map_err(|cause| database_error("impossibile salvare il testo TXT", path, cause))?;
+                .map_err(|cause| {
+                    database_error("impossibile inserire il documento TXT", path, cause)
+                })?;
+            let row_id = transaction.last_insert_rowid();
+            if !document.text.is_empty() {
+                transaction
+                    .execute(
+                        "INSERT INTO document_text(document_id, text) VALUES (?1, ?2)",
+                        params![document.record.document_id, document.text],
+                    )
+                    .map_err(|cause| {
+                        database_error("impossibile salvare il testo TXT", path, cause)
+                    })?;
+            }
+            transaction
+                .execute(
+                    "INSERT INTO document_fts(rowid, title, category, tags, text)
+                     VALUES (?1, ?2, ?3, ?4, ?5)",
+                    params![
+                        row_id,
+                        document.record.title,
+                        document.record.category,
+                        document.tags.join(" "),
+                        document.text,
+                    ],
+                )
+                .map_err(|cause| {
+                    database_error("impossibile indicizzare il testo TXT", path, cause)
+                })?;
         }
-        transaction
-            .execute(
-                "INSERT INTO document_fts(rowid, title, category, tags, text)
-                 VALUES (?1, ?2, ?3, ?4, ?5)",
-                params![
-                    row_id,
-                    document.record.title,
-                    document.record.category,
-                    document.tags.join(" "),
-                    document.text,
-                ],
-            )
-            .map_err(|cause| database_error("impossibile indicizzare il testo TXT", path, cause))?;
+        transaction.commit().map_err(|cause| {
+            database_error("impossibile confermare il database SQLite", path, cause)
+        })?;
     }
-    transaction
-        .commit()
-        .map_err(|cause| database_error("impossibile confermare il database SQLite", path, cause))
+    replace_generated_database(&stage.path, path)?;
+    stage.committed = true;
+    Ok(())
+}
+
+fn temporary_database_path(target: &Path, purpose: &str) -> PathBuf {
+    let sequence = NEXT_DATABASE.fetch_add(1, Ordering::Relaxed);
+    let file_name = target
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("database.db");
+    target.with_file_name(format!(
+        ".{file_name}.{purpose}-{}-{sequence}",
+        std::process::id()
+    ))
+}
+
+fn replace_generated_database(source: &Path, target: &Path) -> Result<(), OperationError> {
+    match fs::symlink_metadata(target) {
+        Err(cause) if cause.kind() == std::io::ErrorKind::NotFound => fs::rename(source, target)
+            .map_err(|cause| {
+                filesystem_error("impossibile installare il database generato", target, cause)
+            }),
+        Err(cause) => Err(filesystem_error(
+            "impossibile verificare il database precedente",
+            target,
+            cause,
+        )),
+        Ok(metadata) if metadata.is_file() && !metadata.file_type().is_symlink() => {
+            let backup = temporary_database_path(target, "previous");
+            fs::rename(target, &backup).map_err(|cause| {
+                filesystem_error(
+                    "impossibile conservare il database precedente",
+                    target,
+                    cause,
+                )
+            })?;
+            if let Err(cause) = fs::rename(source, target) {
+                let detail = match fs::rename(&backup, target) {
+                    Ok(()) => "database precedente ripristinato".to_owned(),
+                    Err(error) => format!("ripristino del database precedente fallito: {error}"),
+                };
+                return Err(filesystem_error(
+                    &format!("impossibile installare il database generato; {detail}"),
+                    target,
+                    cause,
+                ));
+            }
+            let _ = fs::remove_file(backup);
+            Ok(())
+        }
+        Ok(_) => Err(OperationError::new(
+            ErrorCode::Configuration,
+            format!(
+                "il percorso del database non è un file regolare: {}",
+                target.display()
+            ),
+        )),
+    }
 }
 
 fn export_documents(
@@ -262,6 +354,19 @@ fn build_frontend(
     person: &PersonConfig,
     documents: &[TxtDocument],
 ) -> Result<(), OperationError> {
+    let document_root = path
+        .parent()
+        .expect("la pagina frontend ha una directory")
+        .parent()
+        .expect("la directory frontend ha un genitore")
+        .join("documents");
+    fs::create_dir_all(&document_root).map_err(|cause| {
+        filesystem_error(
+            "impossibile creare la directory dei documenti",
+            &document_root,
+            cause,
+        )
+    })?;
     let mut html = format!(
         "<!doctype html>\n<html lang=\"it\">\n<head>\n<meta charset=\"utf-8\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n<title>SaniKey - {}</title>\n</head>\n<body>\n<main>\n<h1>Archivio TXT — {}</h1>\n<ul>\n",
         escape_html(&person.display_name),
@@ -271,6 +376,8 @@ fn build_frontend(
         let copy_path = path
             .parent()
             .expect("la pagina frontend ha una directory")
+            .parent()
+            .expect("la directory frontend ha un genitore")
             .join("documents")
             .join(&document.relative_path);
         if let Some(parent) = copy_path.parent() {

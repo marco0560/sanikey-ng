@@ -3,8 +3,9 @@
 Stato: piano approvato; il workspace P03.01 contiene i crate iniziali
 `sanikey-core`, `sanikey-cli` e `xtask`. P03.02 aggiunge al core errori
 categorizzati, eventi tipizzati e annullamento cooperativo; la CLI implementa
-informazioni/versione. Le pipeline SaniKey e la GUI restano da implementare;
-il crate desktop attende G1.
+informazioni/versione. P06 fornisce una pipeline sintetica limitata ai file
+`.txt`; la pipeline completa multi-formato e la GUI restano da realizzare. Il
+crate desktop attende G1.
 
 ## Componenti
 
@@ -36,6 +37,11 @@ nell'ordine dei percorsi.
 soli file `.txt`, SQLite con FTS5, JSON e pagina HTML offline con copie e link
 relativi verificabili. È un sottoinsieme sintetico: Markdown, CSV, PDF, altri
 formati, metadati clinici completi e parità multipiattaforma restano fuori.
+
+`sanikey-core::simulated_export` assembla questo sottoinsieme in una nuova
+directory, crea un manifest deterministico con checksum, verifica l'integrità
+e i link locali e finalizza l'albero tramite rename dallo staging. Non rileva né
+scrive su supporti fisici e non costituisce la capability USB completa.
 
 Organizzare inizialmente il core in moduli, evitando un crate per ogni file
 Python. Gli adattatori di sistema, conversione e rete hanno confini espliciti.

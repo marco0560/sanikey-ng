@@ -274,8 +274,11 @@ phase = "P10"
 status = "pending"
 baseline_source = "src/sanikey/usb.py"
 baseline_test = "tests/test_usb.py"
-rust_tests = []
-evidence = ["verification/2026-10-26-volume-identity-feasibility.md"]
+rust_tests = [
+  "simulated_export::tests::simulated_export_is_repeatable_detects_tampering_and_preserves_originals",
+  "simulated_export::tests::simulated_export_rejects_existing_targets_and_input_overlaps",
+]
+evidence = ["verification/2026-10-26-volume-identity-feasibility.md", "verification/2026-10-28-simulated-export.md"]
 approved_deviations = []
 
 [[capability]]
