@@ -1,0 +1,17 @@
+#!/bin/sh
+set -eu
+
+REPO_ROOT=$(git rev-parse --show-toplevel)
+cd "$REPO_ROOT"
+
+echo "==> Verifica diff staged"
+git diff --cached --check
+
+echo "==> Formattazione workspace"
+cargo fmt --all -- --check
+
+echo "==> Test workspace"
+cargo test --workspace --locked
+
+echo "==> Formattazione e test dei prototipi GUI"
+scripts/check_gui_prototypes.sh

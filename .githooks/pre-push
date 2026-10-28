@@ -1,0 +1,11 @@
+#!/bin/sh
+set -eu
+
+REPO_ROOT=$(git rev-parse --show-toplevel)
+cd "$REPO_ROOT"
+
+echo "==> Gate Rust e documentale completo"
+cargo xtask check
+
+echo "==> Formattazione e test dei prototipi GUI"
+scripts/check_gui_prototypes.sh

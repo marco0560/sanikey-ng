@@ -79,3 +79,17 @@ Il subject deve essere descrittivo, in forma imperativa e lungo al massimo
 Non riscrivere storia pubblicata. Non generare release a ogni push.
 La pubblicazione del repository sanikey-ng è approvata; il repository
 Python e le decisioni G1–G4 hanno controlli distinti.
+
+### Hook locali
+
+Installare gli hook versionati una volta per checkout, dalla radice:
+
+```bash
+git config --local core.hooksPath .githooks
+```
+
+Il `pre-commit` controlla il diff staged, la formattazione e tutti i test del
+workspace, inclusi i tre crate isolati dei prototipi GUI. Il `pre-push` esegue
+`cargo xtask check` e ripete formattazione e test dei prototipi. Un errore o
+un comando mancante interrompe commit o push. La CI hosted resta il controllo
+indipendente multipiattaforma.
