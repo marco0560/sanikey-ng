@@ -3748,6 +3748,10 @@ dependencies = [
 [[package]]
 name = "sanikey-core"
 version = "0.1.0"
+dependencies = [
+ "indexmap",
+ "toml",
+]
 
 [[package]]
 name = "sanikey-prototype-gui-protocol"

@@ -44,8 +44,31 @@ phase = "P05"
 status = "pending"
 baseline_source = "src/sanikey/config.py"
 baseline_test = "tests/test_config.py"
-rust_tests = []
-evidence = []
+rust_tests = [
+  "config::tests::test_load_accounts_accepts_valid_synthetic_config",
+  "config::tests::test_load_accounts_parses_ui_defaults_and_person_override",
+  "config::tests::test_load_accounts_parses_search_and_background_config",
+  "config::tests::test_load_accounts_parses_ingestion_and_usb_config",
+  "config::tests::test_load_accounts_rejects_unknown_person_field",
+  "config::tests::test_parse_accounts_uses_global_usb_uuid_default",
+  "config::tests::test_parse_accounts_rejects_missing_usb_uuid_without_global",
+  "config::tests::test_load_accounts_rejects_invalid_ui_values",
+  "config::tests::test_load_accounts_rejects_unknown_ui_field",
+  "config::tests::test_default_accounts_path_uses_current_working_directory",
+  "config::tests::test_load_accounts_rejects_missing_file",
+  "config::tests::test_load_accounts_rejects_invalid_toml",
+  "config::tests::test_load_accounts_resolves_relative_config_path",
+  "config::tests::test_parse_accounts_rejects_missing_real_paths",
+  "config::tests::test_parse_accounts_rejects_invalid_top_level_shapes",
+  "config::tests::test_parse_accounts_accepts_repository_version_alias",
+  "config::tests::test_parse_accounts_resolves_relative_paths_from_config_root",
+  "config::tests::test_parse_accounts_rejects_invalid_patient_id",
+  "config::tests::test_parse_accounts_rejects_non_table_person_entry",
+  "config::tests::test_parse_accounts_rejects_non_boolean_enabled",
+  "config::tests::test_parse_accounts_rejects_empty_string_fields",
+  "config::tests::test_parse_accounts_rejects_duplicate_patient_ids",
+]
+evidence = ["verification/2026-10-28-configuration.md"]
 approved_deviations = []
 
 [[capability]]
