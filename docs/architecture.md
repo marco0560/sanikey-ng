@@ -35,11 +35,19 @@ nell'ordine dei percorsi.
 
 `sanikey-core::txt_pipeline` compone inventario, lettura UTF-8 tollerante dei
 soli file `.txt`, SQLite con FTS5, JSON e pagina HTML offline con copie e link
-relativi verificabili. `build_pdf_pipeline` estrae il testo PDF digitale con
-`lopdf`, mantiene intervalli Unicode per pagina e warning, e li registra nel
-JSON e nella tabella SQLite `document_page_spans`; non esegue OCR. La pipeline
-continua a lasciare fuori Markdown, CSV, altri formati, metadati clinici
-completi e parità multipiattaforma. OCR resta nella scheda P07.02.
+relativi verificabili. `build_pdf_pipeline` estrae testo digitale con `lopdf`
+e, quando è insufficiente, renderizza ogni pagina PDF con PDFium e invia il
+raster PPM via stdin a Tesseract. Usa la soglia di 40 caratteri non whitespace
+della baseline, conserva gli intervalli Unicode per pagina e i warning, e li
+registra nel JSON e in `document_page_spans`. La forzatura OCR si applica solo
+se ogni pagina è coperta per almeno il 90% da un'immagine. Le immagini sorgente
+non passano per OCR. PDFium e Tesseract sono runtime esterni: la libreria
+PDFium va accanto all'eseguibile o indicata con `SANIKEY_PDFIUM_LIBRARY`,
+Tesseract è cercato nel `PATH` o indicato con `SANIKEY_TESSERACT`; il modello
+predefinito inglese deve essere installato. Il glossario medico italiano è
+incorporato e materializzato in un file temporaneo protetto durante l'OCR.
+La pipeline continua a lasciare fuori Markdown, CSV, altri formati, metadati
+clinici completi e parità multipiattaforma.
 
 `sanikey-core::simulated_export` assembla questo sottoinsieme in una nuova
 directory, crea un manifest deterministico con checksum, verifica l'integrità
@@ -79,7 +87,10 @@ Il target di copia deve essere validato prima di modificare file.
 Preferire dipendenze Rust incorporabili quando rispettano il contratto.
 Per PDF/OCR, Office e DICOM verificare fattibilità, codec, licenze e
 confezionamento prima del porting esteso. Il parser PDF digitale usa `lopdf`
-con feature predefinite disattivate; i codec e l'OCR non sono inclusi in P07.01.
+con feature predefinite disattivate. L'OCR usa `pdfium-render 0.9.4` con
+feature predefinite e supporto immagini disattivati, più il binario Tesseract
+e i suoi modelli installati a runtime. Il confezionamento dei binari nativi e
+la qualifica Windows/macOS restano da verificare.
 Una libreria C/C++ incorporata va inventariata anche quando non richiede
 installazione separata. Autocontenuto non significa necessariamente statico.
 

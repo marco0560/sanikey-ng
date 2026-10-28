@@ -136,18 +136,22 @@ approved_deviations = []
 id = "pdf"
 description = "PDF digitale e OCR"
 phase = "P07"
-status = "pending"
+status = "implemented"
 baseline_source = "src/sanikey/documents.py"
 baseline_test = "tests/test_documents.py"
 rust_tests = [
   "sanikey-core::pdf::tests::extracts_each_digital_page_and_records_unicode_offsets",
-  "sanikey-core::pdf::tests::malformed_and_text_poor_pdfs_return_warnings_without_ocr",
+  "sanikey-core::pdf::tests::malformed_and_text_poor_pdfs_keep_extraction_warnings",
+  "sanikey-core::pdf::tests::extracts_text_from_a_synthetic_scanned_pdf",
+  "sanikey-core::pdf::tests::tesseract_launch_failure_is_reported_without_exposing_stderr",
+  "sanikey-core::pdf::tests::medical_glossary_is_canonical_and_matches_the_baseline",
   "sanikey-core::txt_pipeline::tests::pdf_pipeline_exports_digital_text_search_and_page_provenance",
   "sanikey-core::txt_pipeline::tests::pdf_pipeline_preserves_extraction_warnings_in_json",
 ]
 evidence = [
   "verification/2026-10-26-pdf-ocr-feasibility.md",
   "verification/2026-10-28-pdf-digital.md",
+  "verification/2026-10-28-pdf-ocr.md",
 ]
 approved_deviations = []
 

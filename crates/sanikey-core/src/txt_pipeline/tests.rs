@@ -266,12 +266,11 @@ fn pdf_pipeline_preserves_extraction_warnings_in_json() {
             .unwrap()
             .is_empty()
     );
-    assert_eq!(
-        exported["documents"][0]["warnings"]
+    assert!(
+        !exported["documents"][0]["warnings"]
             .as_array()
             .unwrap()
-            .len(),
-        1
+            .is_empty()
     );
     assert_eq!(
         exported["documents"][0]["page_spans"],

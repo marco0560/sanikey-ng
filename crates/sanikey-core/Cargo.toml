@@ -11,6 +11,7 @@ path = "src/lib.rs"
 [dependencies]
 indexmap = "2.14.2"
 lopdf = { version = "=0.40.0", default-features = false }
+pdfium-render = { version = "=0.9.4", default-features = false, features = ["pdfium_latest", "thread_safe"] }
 rusqlite = { version = "0.38.0", features = ["bundled"] }
 serde_json = "1.0.154"
 sha2 = "0.10.9"

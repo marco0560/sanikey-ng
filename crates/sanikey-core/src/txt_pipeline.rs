@@ -7,7 +7,7 @@ use crate::config::PersonConfig;
 use crate::inventory::scan_documents;
 use crate::metadata::{DocumentRecord, load_curated_metadata};
 use crate::operation::{ErrorCode, OperationError};
-use crate::pdf::{TextPageSpan, extract_pdf_text};
+use crate::pdf::{PdfExtractionOptions, TextPageSpan, extract_pdf_text_with_options};
 use rusqlite::{Connection, params};
 use serde_json::{Value, json};
 use std::fs;
@@ -45,12 +45,25 @@ pub struct TxtPipelineResult {
     pub frontend: PathBuf,
 }
 
-/// Legge i PDF digitali e li rende consultabili senza eseguire OCR.
+/// Legge i PDF e li rende consultabili, eseguendo OCR sui PDF scansionati.
 ///
 /// I documenti originali vengono copiati invariati; testo, warning e
 /// provenienza delle pagine sono esportati in JSON e SQLite.
 pub fn build_pdf_pipeline(person: &PersonConfig) -> Result<TxtPipelineResult, OperationError> {
-    build_pipeline(person, is_pdf, read_pdf_document, "Archivio PDF")
+    build_pdf_pipeline_with_options(person, PdfExtractionOptions::default())
+}
+
+/// Legge i PDF applicando opzioni OCR esplicite.
+pub fn build_pdf_pipeline_with_options(
+    person: &PersonConfig,
+    options: PdfExtractionOptions,
+) -> Result<TxtPipelineResult, OperationError> {
+    build_pipeline(
+        person,
+        is_pdf,
+        |person, record, tags, _| read_pdf_document(person, record, tags, options),
+        "Archivio PDF",
+    )
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -65,9 +78,6 @@ struct TxtDocument {
 }
 
 type ConfiguredTags = indexmap::IndexMap<String, Vec<String>>;
-type DocumentReader =
-    fn(&PersonConfig, DocumentRecord, &ConfiguredTags) -> Result<TxtDocument, OperationError>;
-
 /// Legge i documenti `.txt`, crea l'indice SQLite e genera export e pagina HTML.
 ///
 /// Il perimetro comprende solo file con estensione `.txt`, in UTF-8 con
@@ -86,14 +96,24 @@ pub fn build_txt_pipeline(person: &PersonConfig) -> Result<TxtPipelineResult, Op
 fn build_pipeline(
     person: &PersonConfig,
     include: fn(&DocumentRecord) -> bool,
-    read: DocumentReader,
+    read: impl Fn(
+        &PersonConfig,
+        DocumentRecord,
+        &ConfiguredTags,
+        PdfExtractionOptions,
+    ) -> Result<TxtDocument, OperationError>,
     heading: &str,
 ) -> Result<TxtPipelineResult, OperationError> {
     let inventory = scan_documents(person)?;
     let metadata = load_curated_metadata(&person.metadata_directory)?;
     let mut documents = Vec::new();
     for record in inventory.into_iter().filter(include) {
-        documents.push(read(person, record, &metadata.document_tags)?);
+        documents.push(read(
+            person,
+            record,
+            &metadata.document_tags,
+            PdfExtractionOptions::default(),
+        )?);
     }
 
     let database = person
@@ -139,6 +159,7 @@ fn read_document(
     person: &PersonConfig,
     record: DocumentRecord,
     configured_tags: &ConfiguredTags,
+    _options: PdfExtractionOptions,
 ) -> Result<TxtDocument, OperationError> {
     let bytes = fs::read(&record.path).map_err(|cause| {
         filesystem_error("impossibile leggere il documento TXT", &record.path, cause)
@@ -174,8 +195,9 @@ fn read_pdf_document(
     person: &PersonConfig,
     record: DocumentRecord,
     configured_tags: &ConfiguredTags,
+    options: PdfExtractionOptions,
 ) -> Result<TxtDocument, OperationError> {
-    let extracted = extract_pdf_text(&record);
+    let extracted = extract_pdf_text_with_options(&record, options);
     let relative_path = relative_document_path(person, &record.path)?;
     let href = format!("../documents/{}", encode_url_path(&relative_path));
     let tags = configured_tags
