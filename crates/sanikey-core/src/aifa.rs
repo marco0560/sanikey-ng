@@ -6,13 +6,15 @@ use crate::operation::{ErrorCode, OperationError};
 use regex::Regex;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
-use std::collections::BTreeSet;
-use std::fs;
+use std::collections::{BTreeMap, BTreeSet};
+use std::fs::{self, File};
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 const API_ROOT: &str = "https://api.aifa.gov.it/aifa-bdf-eif-be/1.0.0/";
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+const DOWNLOAD_MANIFEST: &str = "medication-leaflets.json";
 
 /// Candidato farmaco restituito dal catalogo AIFA.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -50,6 +52,28 @@ pub struct AifaCandidateSearch {
     pub review: Vec<AifaCandidate>,
     /// Tutti i candidati restituiti dalle richieste riuscite.
     pub all_candidates: Vec<AifaCandidate>,
+}
+
+/// Descrive il fallimento del download di un singolo documento AIFA.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LeafletDownloadFailure {
+    /// Identificatore del farmaco curato.
+    pub medication_id: String,
+    /// Tipo del documento, `FI` oppure `RCP`.
+    pub kind: String,
+    /// URL pubblico richiesto.
+    pub url: String,
+    /// Diagnostica breve del fallimento.
+    pub reason: String,
+}
+
+/// Date e diagnostiche dei documenti AIFA scaricati per una generazione.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct LeafletDownloadResult {
+    /// Date ISO dei download completi, indicizzate per identificatore farmaco.
+    pub downloaded_at: BTreeMap<String, String>,
+    /// Fallimenti per singolo FI o RCP.
+    pub failures: Vec<LeafletDownloadFailure>,
 }
 
 /// Crea un riferimento AIFA confermato esplicitamente per il farmaco curato.
@@ -195,6 +219,219 @@ impl AifaClient {
         let payload: Value = serde_json::from_str(&response.into_string().ok()?).ok()?;
         payload.is_object().then_some(payload)
     }
+
+    fn get_pdf(&self, url: &str) -> Result<Vec<u8>, String> {
+        let response = self
+            .agent
+            .get(url)
+            .set("Accept", "application/pdf")
+            .call()
+            .map_err(aifa_request_error)?;
+        let mut content = Vec::new();
+        response
+            .into_reader()
+            .read_to_end(&mut content)
+            .map_err(|error| format!("errore di rete: {error}"))?;
+        Ok(content)
+    }
+}
+
+/// Verifica online la disponibilità di entrambi i documenti per un riferimento.
+pub fn probe_leaflet_documents(reference: &MedicationLeaflet) -> Vec<LeafletDownloadFailure> {
+    let client = AifaClient::new();
+    fetch_leaflet_documents_with(reference, |url| client.get_pdf(url)).1
+}
+
+/// Scarica i documenti FI/RCP dei riferimenti e aggiorna il manifest locale.
+pub fn download_confirmed_leaflets(
+    build_root: &Path,
+    references: &[MedicationLeaflet],
+) -> Result<LeafletDownloadResult, OperationError> {
+    let client = AifaClient::new();
+    download_confirmed_leaflets_with(build_root, references, |url| client.get_pdf(url))
+}
+
+/// Legge le date dei download completi conservate nel manifest locale.
+#[must_use]
+pub fn leaflet_download_dates(build_root: &Path) -> BTreeMap<String, String> {
+    let path = build_root.join("manifests").join(DOWNLOAD_MANIFEST);
+    let Ok(content) = fs::read_to_string(path) else {
+        return BTreeMap::new();
+    };
+    let Ok(payload) = serde_json::from_str::<Value>(&content) else {
+        return BTreeMap::new();
+    };
+    payload
+        .get("downloaded_at")
+        .and_then(Value::as_object)
+        .into_iter()
+        .flatten()
+        .filter_map(|(medication_id, date)| {
+            Some((medication_id.clone(), date.as_str()?.to_owned()))
+        })
+        .collect()
+}
+
+fn download_confirmed_leaflets_with<F>(
+    build_root: &Path,
+    references: &[MedicationLeaflet],
+    mut fetch_pdf: F,
+) -> Result<LeafletDownloadResult, OperationError>
+where
+    F: FnMut(&str) -> Result<Vec<u8>, String>,
+{
+    let mut result = LeafletDownloadResult {
+        downloaded_at: leaflet_download_dates(build_root),
+        failures: Vec::new(),
+    };
+    let mut changed = false;
+    for reference in references {
+        let (downloaded, failures) = fetch_leaflet_documents_with(reference, &mut fetch_pdf);
+        result.failures.extend(failures);
+        if downloaded.len() != 2 {
+            continue;
+        }
+        let target = build_root
+            .join("medication-leaflets")
+            .join(&reference.medication_id);
+        fs::create_dir_all(&target).map_err(|error| {
+            aifa_persistence_error(format!("creazione directory {}: {error}", target.display()))
+        })?;
+        let fi = target.join("foglio-illustrativo.pdf");
+        let rcp = target.join("rcp.pdf");
+        let fi_temporary = target.join(".foglio-illustrativo.pdf.tmp");
+        let rcp_temporary = target.join(".rcp.pdf.tmp");
+        write_temporary(&fi_temporary, &downloaded["foglio-illustrativo.pdf"])?;
+        write_temporary(&rcp_temporary, &downloaded["rcp.pdf"])?;
+        fs::rename(&fi_temporary, &fi).map_err(|error| {
+            aifa_persistence_error(format!("sostituzione {}: {error}", fi.display()))
+        })?;
+        fs::rename(&rcp_temporary, &rcp).map_err(|error| {
+            aifa_persistence_error(format!("sostituzione {}: {error}", rcp.display()))
+        })?;
+        result.downloaded_at.insert(
+            reference.medication_id.clone(),
+            chrono::Utc::now().date_naive().to_string(),
+        );
+        changed = true;
+    }
+    if changed {
+        write_download_dates(build_root, &result.downloaded_at)?;
+    }
+    Ok(result)
+}
+
+fn fetch_leaflet_documents_with<F>(
+    reference: &MedicationLeaflet,
+    mut fetch_pdf: F,
+) -> (BTreeMap<String, Vec<u8>>, Vec<LeafletDownloadFailure>)
+where
+    F: FnMut(&str) -> Result<Vec<u8>, String>,
+{
+    let mut downloaded = BTreeMap::new();
+    let mut failures = Vec::new();
+    for (kind, filename) in [("FI", "foglio-illustrativo.pdf"), ("RCP", "rcp.pdf")] {
+        let url = leaflet_document_url(reference, kind);
+        match fetch_pdf(&url) {
+            Ok(content) if content.starts_with(b"%PDF-") => {
+                downloaded.insert(filename.to_owned(), content);
+            }
+            Ok(_) => failures.push(LeafletDownloadFailure {
+                medication_id: reference.medication_id.clone(),
+                kind: kind.to_owned(),
+                url,
+                reason: "risposta AIFA non in formato PDF".into(),
+            }),
+            Err(reason) => failures.push(LeafletDownloadFailure {
+                medication_id: reference.medication_id.clone(),
+                kind: kind.to_owned(),
+                url,
+                reason,
+            }),
+        }
+    }
+    (downloaded, failures)
+}
+
+fn leaflet_document_url(reference: &MedicationLeaflet, kind: &str) -> String {
+    format!(
+        "{API_ROOT}organizzazione/{}/farmaci/{}/stampati?ts={kind}",
+        reference.codice_sis, reference.aic6
+    )
+}
+
+fn aifa_request_error(error: ureq::Error) -> String {
+    match error {
+        ureq::Error::Status(status, response) => {
+            let detail = response
+                .into_string()
+                .ok()
+                .and_then(|body| aifa_error_detail(&body));
+            detail.map_or_else(
+                || format!("HTTP {status}"),
+                |detail| format!("HTTP {status}: {detail}"),
+            )
+        }
+        ureq::Error::Transport(error) => format!("errore di rete: {error}"),
+    }
+}
+
+fn aifa_error_detail(body: &str) -> Option<String> {
+    let payload: Value = serde_json::from_str(body).ok()?;
+    let errors = payload.get("errors").and_then(Value::as_array);
+    let detail = errors
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(str::trim)
+        .filter(|message| !message.is_empty())
+        .collect::<Vec<_>>()
+        .join("; ");
+    if !detail.is_empty() {
+        return Some(detail.chars().take(240).collect());
+    }
+    payload
+        .get("description")
+        .or_else(|| payload.get("message"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|message| !message.is_empty())
+        .map(|message| message.chars().take(240).collect())
+}
+
+fn write_temporary(path: &Path, content: &[u8]) -> Result<(), OperationError> {
+    let mut file = File::create(path).map_err(|error| {
+        aifa_persistence_error(format!(
+            "creazione file temporaneo {}: {error}",
+            path.display()
+        ))
+    })?;
+    file.write_all(content).map_err(|error| {
+        aifa_persistence_error(format!(
+            "scrittura file temporaneo {}: {error}",
+            path.display()
+        ))
+    })
+}
+
+fn write_download_dates(
+    build_root: &Path,
+    downloaded_at: &BTreeMap<String, String>,
+) -> Result<(), OperationError> {
+    let directory = build_root.join("manifests");
+    fs::create_dir_all(&directory).map_err(|error| {
+        aifa_persistence_error(format!(
+            "creazione directory {}: {error}",
+            directory.display()
+        ))
+    })?;
+    let content = serde_json::to_vec_pretty(&serde_json::json!({"downloaded_at": downloaded_at}))
+        .map_err(|error| {
+        aifa_persistence_error(format!("serializzazione manifest: {error}"))
+    })?;
+    fs::write(directory.join(DOWNLOAD_MANIFEST), content).map_err(|error| {
+        aifa_persistence_error(format!("scrittura manifest download AIFA: {error}"))
+    })
 }
 
 /// Cerca candidati usando il client AIFA predefinito.

@@ -1,8 +1,9 @@
 use super::{
-    AifaCandidate, AifaCandidateSearch, confirm_aifa_candidate, lookup_candidate_search_with,
-    medication_fingerprint, write_confirmed_references,
+    AifaCandidate, AifaCandidateSearch, confirm_aifa_candidate, download_confirmed_leaflets_with,
+    leaflet_download_dates, lookup_candidate_search_with, medication_fingerprint,
+    write_confirmed_references,
 };
-use crate::metadata::{Medication, MedicationLeafletExclusion};
+use crate::metadata::{Medication, MedicationLeaflet, MedicationLeafletExclusion};
 use serde_json::{Value, json};
 use std::fs;
 use std::path::PathBuf;
@@ -156,6 +157,110 @@ fn persists_sorted_references_and_exclusions_as_loadable_toml() {
     );
     assert_eq!(loaded.medication_leaflet_exclusions, exclusions);
     fs::remove_dir_all(directory).expect("pulizia directory sintetica");
+}
+
+#[test]
+fn downloads_and_records_only_a_complete_pdf_pair() {
+    let directory = temporary_directory();
+    let reference = MedicationLeaflet {
+        medication_id: "drug-a".into(),
+        codice_sis: "123".into(),
+        aic6: "456".into(),
+        downloaded_at: None,
+        source_fingerprint: None,
+    };
+    let mut requests = Vec::new();
+    let result = download_confirmed_leaflets_with(&directory, &[reference], |url| {
+        requests.push(url.to_owned());
+        Ok(b"%PDF-synthetic".to_vec())
+    })
+    .expect("download sintetico");
+
+    assert!(result.failures.is_empty());
+    assert_eq!(requests.len(), 2);
+    assert!(requests[0].ends_with("/123/farmaci/456/stampati?ts=FI"));
+    assert!(requests[1].ends_with("/123/farmaci/456/stampati?ts=RCP"));
+    assert_eq!(
+        fs::read(directory.join("medication-leaflets/drug-a/foglio-illustrativo.pdf"))
+            .expect("FI scaricato"),
+        b"%PDF-synthetic"
+    );
+    assert_eq!(
+        fs::read(directory.join("medication-leaflets/drug-a/rcp.pdf")).expect("RCP scaricato"),
+        b"%PDF-synthetic"
+    );
+    assert_eq!(leaflet_download_dates(&directory), result.downloaded_at);
+    assert!(result.downloaded_at.contains_key("drug-a"));
+    fs::remove_dir_all(directory).expect("pulizia directory sintetica");
+}
+
+#[test]
+fn failed_document_keeps_the_existing_pair_and_cached_date() {
+    let directory = temporary_directory();
+    let target = directory.join("medication-leaflets/drug-a");
+    fs::create_dir_all(&target).expect("creazione cache sintetica");
+    fs::write(target.join("foglio-illustrativo.pdf"), b"%PDF-old-fi").expect("FI precedente");
+    fs::write(target.join("rcp.pdf"), b"%PDF-old-rcp").expect("RCP precedente");
+    fs::create_dir_all(directory.join("manifests")).expect("creazione manifest sintetico");
+    fs::write(
+        directory.join("manifests/medication-leaflets.json"),
+        r#"{"downloaded_at":{"drug-a":"2026-10-27"}}"#,
+    )
+    .expect("manifest precedente");
+    let reference = MedicationLeaflet {
+        medication_id: "drug-a".into(),
+        codice_sis: "123".into(),
+        aic6: "456".into(),
+        downloaded_at: None,
+        source_fingerprint: None,
+    };
+    let result = download_confirmed_leaflets_with(&directory, &[reference], |url| {
+        if url.ends_with("ts=RCP") {
+            Err("HTTP 503: servizio sospeso".into())
+        } else {
+            Ok(b"%PDF-new-fi".to_vec())
+        }
+    })
+    .expect("un errore per documento resta nel risultato");
+
+    assert_eq!(result.downloaded_at["drug-a"], "2026-10-27");
+    assert_eq!(result.failures.len(), 1);
+    assert_eq!(result.failures[0].kind, "RCP");
+    assert_eq!(result.failures[0].reason, "HTTP 503: servizio sospeso");
+    assert_eq!(
+        fs::read(target.join("foglio-illustrativo.pdf")).expect("FI conservato"),
+        b"%PDF-old-fi"
+    );
+    assert_eq!(
+        fs::read(target.join("rcp.pdf")).expect("RCP conservato"),
+        b"%PDF-old-rcp"
+    );
+    fs::remove_dir_all(directory).expect("pulizia directory sintetica");
+}
+
+#[test]
+fn rejects_non_pdf_bodies_and_extracts_aifa_error_details() {
+    let reference = MedicationLeaflet {
+        medication_id: "drug-a".into(),
+        codice_sis: "123".into(),
+        aic6: "456".into(),
+        downloaded_at: None,
+        source_fingerprint: None,
+    };
+    let (_, failures) = super::fetch_leaflet_documents_with(&reference, |_| {
+        Ok(br#"{"message":"non disponibile"}"#.to_vec())
+    });
+
+    assert_eq!(failures.len(), 2);
+    assert!(
+        failures
+            .iter()
+            .all(|failure| { failure.reason == "risposta AIFA non in formato PDF" })
+    );
+    assert_eq!(
+        super::aifa_error_detail(r#"{"errors":["Stampato RCP/FI non disponibile"]}"#).as_deref(),
+        Some("Stampato RCP/FI non disponibile")
+    );
 }
 
 #[test]
