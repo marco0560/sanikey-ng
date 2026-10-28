@@ -1,7 +1,7 @@
 use super::{
     AifaCandidate, AifaCandidateSearch, confirm_aifa_candidate, download_confirmed_leaflets_with,
-    leaflet_download_dates, lookup_candidate_search_with, medication_fingerprint,
-    write_confirmed_references,
+    leaflet_download_dates, local_leaflet_documents, lookup_candidate_search_with,
+    medication_fingerprint, write_confirmed_references,
 };
 use crate::metadata::{Medication, MedicationLeaflet, MedicationLeafletExclusion};
 use serde_json::{Value, json};
@@ -261,6 +261,28 @@ fn rejects_non_pdf_bodies_and_extracts_aifa_error_details() {
         super::aifa_error_detail(r#"{"errors":["Stampato RCP/FI non disponibile"]}"#).as_deref(),
         Some("Stampato RCP/FI non disponibile")
     );
+}
+
+#[test]
+fn finds_cached_leaflet_files_for_offline_use() {
+    let directory = temporary_directory();
+    let cache = directory.join("medication-leaflets/drug-a");
+    fs::create_dir_all(&cache).expect("creazione cache sintetica");
+    fs::write(cache.join("foglio-illustrativo.pdf"), b"%PDF-synthetic").expect("FI sintetico");
+    fs::write(cache.join("rcp.pdf"), b"%PDF-synthetic").expect("RCP sintetico");
+
+    let documents = local_leaflet_documents(&directory, "drug-a");
+
+    assert_eq!(
+        documents.leaflet_pdf,
+        Some(cache.join("foglio-illustrativo.pdf"))
+    );
+    assert_eq!(documents.rcp_pdf, Some(cache.join("rcp.pdf")));
+    assert_eq!(
+        local_leaflet_documents(&directory, "missing-drug"),
+        Default::default()
+    );
+    fs::remove_dir_all(directory).expect("pulizia directory sintetica");
 }
 
 #[test]

@@ -315,8 +315,21 @@ phase = "P08"
 status = "pending"
 baseline_source = "src/sanikey/leaflets.py"
 baseline_test = "tests/test_leaflets.py"
-rust_tests = []
-evidence = []
+rust_tests = [
+  "aifa::tests::distinguishes_unavailable_service_from_empty_catalog_response",
+  "aifa::tests::confirms_candidate_with_fingerprint_of_curated_fields",
+  "aifa::tests::persists_sorted_references_and_exclusions_as_loadable_toml",
+  "aifa::tests::downloads_and_records_only_a_complete_pdf_pair",
+  "aifa::tests::failed_document_keeps_the_existing_pair_and_cached_date",
+  "aifa::tests::rejects_non_pdf_bodies_and_extracts_aifa_error_details",
+  "aifa::tests::finds_cached_leaflet_files_for_offline_use",
+]
+evidence = [
+  "verification/2026-10-28-aifa-search.md",
+  "verification/2026-10-28-aifa-persistence.md",
+  "verification/2026-10-28-aifa-download.md",
+  "verification/2026-10-28-aifa-offline.md",
+]
 approved_deviations = []
 
 [[capability]]

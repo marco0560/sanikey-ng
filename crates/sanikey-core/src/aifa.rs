@@ -76,6 +76,15 @@ pub struct LeafletDownloadResult {
     pub failures: Vec<LeafletDownloadFailure>,
 }
 
+/// Percorsi locali dei fogli disponibili per una consultazione senza rete.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct LocalLeafletDocuments {
+    /// Percorso al foglio illustrativo locale, se presente.
+    pub leaflet_pdf: Option<PathBuf>,
+    /// Percorso al riassunto delle caratteristiche del prodotto locale, se presente.
+    pub rcp_pdf: Option<PathBuf>,
+}
+
 /// Crea un riferimento AIFA confermato esplicitamente per il farmaco curato.
 #[must_use]
 pub fn confirm_aifa_candidate(
@@ -270,6 +279,20 @@ pub fn leaflet_download_dates(build_root: &Path) -> BTreeMap<String, String> {
             Some((medication_id.clone(), date.as_str()?.to_owned()))
         })
         .collect()
+}
+
+/// Individua i PDF locali senza effettuare richieste di rete.
+#[must_use]
+pub fn local_leaflet_documents(build_root: &Path, medication_id: &str) -> LocalLeafletDocuments {
+    let directory = build_root.join("medication-leaflets").join(medication_id);
+    let path_if_file = |filename: &str| {
+        let path = directory.join(filename);
+        path.is_file().then_some(path)
+    };
+    LocalLeafletDocuments {
+        leaflet_pdf: path_if_file("foglio-illustrativo.pdf"),
+        rcp_pdf: path_if_file("rcp.pdf"),
+    }
 }
 
 fn download_confirmed_leaflets_with<F>(
