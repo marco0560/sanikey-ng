@@ -175,6 +175,37 @@ fn document_record(
     })
 }
 
+pub(crate) fn staged_document_record(
+    path: PathBuf,
+    root: &Path,
+    patient_id: &str,
+    container_id: &str,
+) -> Result<DocumentRecord, OperationError> {
+    let mut record = document_record(path, root, patient_id)?;
+    record.origin = "container".to_owned();
+    record.container_id = Some(container_id.to_owned());
+    record.internal_path = Some(
+        record
+            .path
+            .strip_prefix(root)
+            .map_err(|error| {
+                OperationError::new(
+                    ErrorCode::Configuration,
+                    format!("percorso membro fuori dallo staging: {error}"),
+                )
+            })?
+            .components()
+            .map(|component| component.as_os_str().to_string_lossy())
+            .collect::<Vec<_>>()
+            .join("/"),
+    );
+    Ok(record)
+}
+
+pub(crate) fn is_ingestion_excluded(config: &crate::config::IngestionConfig, path: &str) -> bool {
+    IngestionMatcher::new(config).is_excluded(path)
+}
+
 fn sha256_file(path: &Path) -> Result<String, OperationError> {
     let mut file = File::open(path)
         .map_err(|error| filesystem_error("impossibile aprire il documento", path, error))?;

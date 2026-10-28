@@ -3,6 +3,7 @@
 #![forbid(unsafe_code)]
 
 pub mod config;
+pub mod containers;
 pub mod inventory;
 pub mod metadata;
 mod office;
