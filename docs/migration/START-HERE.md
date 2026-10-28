@@ -33,6 +33,8 @@ ricerca, report tecnici e Markdown CommonMark sono confrontati su fixture
 sintetiche. Raw HTML è escapato e i link non sicuri restano testo inerte; vedi
 la [ricevuta P09.02](verification/2026-10-28-exports-checkpoint.md).
 La prossima attività è P09.03, completare il frontend offline.
+G2 ha approvato la semantica dell'identità USB; la qualifica degli adattatori
+multipiattaforma è ancora da fare ([ADR-0003](../decisions/0003-identita-usb.md)).
 P01.03 ha qualificato il campione in un checkout pulito e ha verificato il
 fetch remoto dello SHA fissato; non è stata eseguita una push del Python.
 

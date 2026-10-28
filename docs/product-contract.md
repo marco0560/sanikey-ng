@@ -26,6 +26,8 @@ della matrice iniziale di parità è già verificato in Rust.
 - La build e la distribuzione sono operazioni distinte e verificabili.
 - Il frontend esportato funziona offline da file:// senza servizi locali.
 - La chiavetta non richiede installazioni sul computer di consultazione.
+- `usb_uuid` identifica il filesystem o volume del target secondo la baseline;
+  un eventuale ID di deploy è distinto ([ADR-0003](decisions/0003-identita-usb.md)).
 - I riferimenti ai file esportati sono relativi e validabili.
 - Gli originali DICOM restano disponibili; le anteprime non sono diagnostiche.
 - Le immagini sorgente non ricevono OCR diretto; l'OCR PDF è una funzione distinta.

@@ -14,11 +14,12 @@ CommonMark tramite `pulldown-cmark 0.13.5`: HTML raw viene escapato, schemi URL
 non sicuri sono resi inerti e gli URL `data:` ammessi corrispondono alla
 allowlist della baseline.
 
-L'utente ha chiesto di terminare P09.02 dopo aver ricevuto la proposta G2 di
-aggiungere `pulldown-cmark` per la parità CommonMark. Tale richiesta è stata
-interpretata come approvazione di quella specifica dipendenza e del suo uso per
-questa scheda. Il punto G2 distinto sulla semantica di `usb_uuid` rimane aperto;
-nessuna decisione generale G2 o qualifica del servizio AIFA reale è implicata.
+Il manutentore ha precisato che la precedente richiesta di terminare P09.02 non
+costituiva approvazione. Il 2026-10-28 ha approvato esplicitamente la proposta
+G2 di usare `pulldown-cmark` per la parità CommonMark. Nello stesso giorno ha
+approvato la distinta proposta sull'identità USB, registrata in
+[ADR-0003](../../decisions/0003-identita-usb.md). Le approvazioni non qualificano
+il servizio AIFA reale né gli adattatori USB multipiattaforma.
 
 ## Verifiche
 
@@ -61,9 +62,8 @@ nessuna decisione generale G2 o qualifica del servizio AIFA reale è implicata.
 
 ## Commit e limiti
 
-Commit funzionali: `28b53ca`, `fe8f578`, `5d75ac8`, `69d8ba7`. La ricevuta e il
-ledger saranno committati insieme all'allineamento di START-HERE, architettura
-e matrice di parità.
+Commit funzionali: `28b53ca`, `fe8f578`, `5d75ac8`, `69d8ba7`; documentazione
+P09.02: `caec79a`.
 
 Non è stata effettuata una richiesta al servizio AIFA reale. Browser, sistemi
 Windows/macOS e frontend completo sono fuori dalla qualifica di questa scheda;

@@ -91,3 +91,11 @@ baseline e ha terminato con `ModuleNotFoundError`. È stato ripetuto con il venv
 e il `PYTHONPATH` fissati: lettura mount e spazio superata. Una verifica
 separata dello stato CI hosted non è riuscita per errore di rete GitHub API;
 non è stata dichiarata qualificazione multipiattaforma.
+
+## Decisione G2 successiva
+
+Il manutentore ha approvato il 2026-10-28 la semantica proposta in
+[ADR-0003](../../decisions/0003-identita-usb.md): `usb_uuid` resta l'identità
+filesystem/volume usata dalla baseline; un eventuale ID di deploy è separato.
+Questa decisione risolve l'ambiguità documentale, ma non implementa né
+qualifica gli adattatori USB per Windows/macOS o dispositivi reali.

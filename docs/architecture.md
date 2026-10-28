@@ -75,6 +75,9 @@ fuori dal perimetro; la qualifica multipiattaforma è ancora pending.
 directory, crea un manifest deterministico con checksum, verifica l'integrità
 e i link locali e finalizza l'albero tramite rename dallo staging. Non rileva né
 scrive su supporti fisici e non costituisce la capability USB completa.
+La distinzione tra identità filesystem/volume (`usb_uuid`) e ID di deploy è
+definita in [ADR-0003](decisions/0003-identita-usb.md); gli adattatori e la
+qualifica multipiattaforma restano da realizzare.
 
 `sanikey-core::exports::generate_exports` produce dati e script per il frontend
 offline, inclusi Markdown CommonMark con HTML raw escapato. I link con schemi
