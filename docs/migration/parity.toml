@@ -260,8 +260,12 @@ phase = "P08"
 status = "pending"
 baseline_source = "src/sanikey/parameter_rules.py"
 baseline_test = "tests/test_parameter_rules.py"
-rust_tests = []
-evidence = []
+rust_tests = [
+  "parameter_rules::tests::evaluates_exact_synonyms_and_emits_first_rejection_reason",
+  "parameter_rules::tests::rejects_ambiguous_rule_matches_and_ignores_disabled_rules",
+  "parameter_rules::tests::evaluates_specimen_category_context_and_qualifier_constraints",
+]
+evidence = ["verification/2026-10-28-parameter-rule-decisions.md"]
 approved_deviations = []
 
 [[capability]]

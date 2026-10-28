@@ -22,8 +22,10 @@ Il corpus sintetico P02.02 è pronto con expected fissati alla baseline.
 Il [ledger](ledger.md) riporta lo stato effettivo della pubblicazione.
 La scheda attiva è P08.02. I sottopassi P08.02a/b hanno portato la scoperta
 generica e i principali layout tabellari annotati/impilati; P08.02c carica e
-valida le regole curate. Il prossimo passo P08.02d applica tali regole ai
-candidati e produce decisioni esplicite, poi conversioni/report e segni vitali.
+valida le regole curate; P08.02d applica le regole ai candidati e produce
+decisioni esplicite. Il prossimo passo P08.02e applica politiche delle unità e
+conversioni esplicite, materializzando punti e serie; seguiranno report e segni
+vitali.
 P01.03 ha qualificato il campione in un checkout pulito e ha verificato il
 fetch remoto dello SHA fissato; non è stata eseguita una push del Python.
 
