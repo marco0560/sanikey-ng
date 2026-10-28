@@ -1,6 +1,7 @@
 //! Caricamento e validazione delle regole curate per i parametri clinici.
 
 use crate::config::SearchDictionary;
+use crate::metadata::{ObservationPoint, ObservationSeries};
 use crate::operation::{ErrorCode, OperationError};
 use crate::parameter_slices::{DiscoverySettings, ParameterCandidate, normalize_label};
 use rust_decimal::Decimal;
@@ -138,6 +139,152 @@ pub struct RuleDecision {
     pub reason_code: String,
 }
 
+/// Serie, punti derivati e decisioni delle regole per un insieme di candidati.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ParameterBuildResult {
+    /// Serie create dalle regole che hanno accettato almeno un candidato.
+    pub series: Vec<ObservationSeries>,
+    /// Punti con provenienza costruiti dai candidati accettati.
+    pub points: Vec<ObservationPoint>,
+    /// Decisioni positive o motivi di rifiuto per ciascuna regola valutata.
+    pub decisions: Vec<RuleDecision>,
+}
+
+/// Applica unità e conversioni configurate e materializza punti/serie.
+///
+/// Le conversioni e i controlli sui limiti usano numeri decimali esatti.
+/// Decisioni ambigue, valori senza una rappresentazione `Decimal` e conversioni
+/// fuori dal dominio decimale supportato sono rifiutati esplicitamente.
+#[must_use]
+pub fn build_parameter_slices(
+    candidates: &[ParameterCandidate],
+    rules: &ParameterRules,
+) -> ParameterBuildResult {
+    let mut result = ParameterBuildResult::default();
+    let mut resolved = BTreeMap::new();
+    let rules_by_id = rules
+        .rules
+        .iter()
+        .map(|rule| (rule.id.as_str(), rule))
+        .collect::<BTreeMap<_, _>>();
+    let candidates_by_id = candidates
+        .iter()
+        .map(|candidate| (candidate.stable_id.as_str(), candidate))
+        .collect::<BTreeMap<_, _>>();
+    result.decisions = evaluate_parameter_candidates(candidates, &rules.rules);
+
+    for decision in &mut result.decisions {
+        if !decision.accepted {
+            continue;
+        }
+        let Some(candidate) = candidates_by_id
+            .get(decision.candidate_id.as_str())
+            .copied()
+        else {
+            continue;
+        };
+        let rule = rules_by_id[decision.rule_id.as_str()];
+        match value_and_unit(candidate, rule) {
+            Ok((value, unit)) => {
+                let series_id = if unit
+                    .as_deref()
+                    .is_none_or(|unit| rule.canonical_unit.as_deref() == Some(unit))
+                {
+                    rule.series_id.clone()
+                } else {
+                    format!(
+                        "{}--{}",
+                        rule.series_id,
+                        unit_slug(unit.as_deref().unwrap_or(""))
+                    )
+                };
+                resolved.insert(
+                    decision.candidate_id.clone(),
+                    (rule, candidate, value, unit, series_id),
+                );
+            }
+            Err(reason) => {
+                decision.accepted = false;
+                decision.reason_code = reason.into();
+            }
+        }
+    }
+
+    for (rule, candidate, value, unit, series_id) in resolved.values() {
+        let Some(date) = candidate.document_date.as_deref() else {
+            continue;
+        };
+        let Some(numeric_value) = decimal_to_f64(*value) else {
+            if let Some(decision) = result.decisions.iter_mut().find(|decision| {
+                decision.candidate_id == candidate.stable_id && decision.rule_id == rule.id
+            }) {
+                decision.accepted = false;
+                decision.reason_code = "REJECTED_FLOAT_RANGE".into();
+            }
+            continue;
+        };
+        let point_id = format!(
+            "{:x}",
+            Sha256::digest(format!("{}\u{1f}{}", rule.id, candidate.stable_id).as_bytes())
+        );
+        result.points.push(ObservationPoint {
+            id: point_id,
+            series_id: series_id.clone(),
+            observation_date: date.into(),
+            source_type: "document-extraction".into(),
+            source_reference: candidate
+                .document_href
+                .clone()
+                .unwrap_or_else(|| candidate.document_title.clone()),
+            numeric_value: Some(numeric_value),
+            text_value: None,
+            systolic: None,
+            diastolic: None,
+            pulse: None,
+            note: None,
+            source_kind: "document-extraction".into(),
+            document_id: Some(candidate.document_id.clone()),
+            document_href: candidate.document_href.clone(),
+            document_title: Some(candidate.document_title.clone()),
+            document_category: Some(candidate.document_category.clone()),
+            source_text_digest: Some(candidate.source_text_digest.clone()),
+            original_line: Some(candidate.original_line.clone()),
+            line_number: i64::try_from(candidate.line_number).ok(),
+            page_number: candidate
+                .page_number
+                .and_then(|value| i64::try_from(value).ok()),
+            character_start: i64::try_from(candidate.character_start).ok(),
+            character_end: i64::try_from(candidate.character_end).ok(),
+            matched_label: Some(candidate.normalized_label.clone()),
+            raw_value: Some(candidate.raw_value.clone()),
+            parsed_value: candidate.parsed_value,
+            raw_unit: candidate.raw_unit.clone(),
+            normalized_unit: unit.clone(),
+            qualifier: candidate.qualifier.clone(),
+            rule_id: Some(rule.id.clone()),
+            rule_version: Some(rule.version),
+            rule_digest: Some(rule.digest.clone()),
+            reason_code: result
+                .decisions
+                .iter()
+                .find(|decision| {
+                    decision.candidate_id == candidate.stable_id && decision.rule_id == rule.id
+                })
+                .map(|decision| decision.reason_code.clone()),
+        });
+        resolved_series(&mut result.series, rule, unit.as_deref(), series_id);
+    }
+    result.points.sort_by(|left, right| {
+        (&left.series_id, &left.observation_date, &left.id).cmp(&(
+            &right.series_id,
+            &right.observation_date,
+            &right.id,
+        ))
+    });
+    result.series.sort_by(|left, right| left.id.cmp(&right.id));
+    result
+}
+
 /// Valuta candidati contro regole abilitate senza creare punti o applicare conversioni.
 ///
 /// Per ogni regola abilitata emette un rifiuto al primo controllo fallito o
@@ -267,6 +414,132 @@ fn evaluate_rule(candidate: &ParameterCandidate, rule: &ParameterRule) -> Option
 
 fn normalized_nfkc(value: &str) -> String {
     normalize_label(&value.nfkc().collect::<String>())
+}
+
+fn value_and_unit(
+    candidate: &ParameterCandidate,
+    rule: &ParameterRule,
+) -> Result<(Decimal, Option<String>), &'static str> {
+    let Some(format) = candidate.number_format.as_deref() else {
+        return Err("REJECTED_NUMBER_FORMAT");
+    };
+    let Some(value) = parse_decimal(&candidate.raw_value, format) else {
+        return Err("REJECTED_DECIMAL_PRECISION");
+    };
+    let unit = candidate.raw_unit.as_deref().map(normalize_unit);
+    let Some(unit) = unit else {
+        if rule.unit_policy == "required" {
+            return Err("REJECTED_MISSING_UNIT");
+        }
+        return check_range(value, rule.assumed_unit.clone(), rule);
+    };
+    let configured_unit = rule
+        .units
+        .iter()
+        .find(|configured| unit_key(configured) == unit_key(&unit));
+    if !rule.units.is_empty() && configured_unit.is_none() {
+        return Err("REJECTED_UNKNOWN_UNIT");
+    }
+    if let Some(conversion) = rule
+        .conversions
+        .iter()
+        .find(|conversion| unit_key(&unit) == unit_key(&conversion.from_unit))
+    {
+        let converted = value
+            .checked_mul(conversion.multiplier)
+            .and_then(|value| value.checked_add(conversion.offset))
+            .ok_or("REJECTED_CONVERSION_OVERFLOW")?;
+        return check_range(converted, Some(conversion.to_unit.clone()), rule);
+    }
+    let output_unit = configured_unit.cloned().unwrap_or(unit);
+    if rule
+        .canonical_unit
+        .as_deref()
+        .is_some_and(|canonical| unit_key(&output_unit) != unit_key(canonical))
+    {
+        return Err("REJECTED_UNKNOWN_UNIT");
+    }
+    check_range(value, Some(output_unit), rule)
+}
+
+fn check_range(
+    value: Decimal,
+    unit: Option<String>,
+    rule: &ParameterRule,
+) -> Result<(Decimal, Option<String>), &'static str> {
+    if rule.minimum.is_some_and(|minimum| value < minimum)
+        || rule.maximum.is_some_and(|maximum| value > maximum)
+    {
+        return Err("REJECTED_OUT_OF_RANGE");
+    }
+    Ok((value, unit))
+}
+
+fn parse_decimal(raw: &str, format: &str) -> Option<Decimal> {
+    let canonical = match format {
+        "integer" => raw.to_owned(),
+        "decimal-comma" => raw.replace(',', "."),
+        "decimal-point" => raw.to_owned(),
+        "grouped-comma-decimal-point" => raw.replace(',', ""),
+        "grouped-point-decimal-comma" => raw.replace('.', "").replace(',', "."),
+        _ => return None,
+    };
+    Decimal::from_str_exact(&canonical).ok()
+}
+
+fn unit_key(value: &str) -> String {
+    normalize_unit(value).to_lowercase()
+}
+
+fn unit_slug(value: &str) -> String {
+    let slug = value
+        .to_lowercase()
+        .chars()
+        .map(|character| {
+            if character.is_alphanumeric() {
+                character
+            } else {
+                '-'
+            }
+        })
+        .collect::<String>();
+    let slug = slug.trim_matches('-');
+    if slug.is_empty() {
+        "unknown".into()
+    } else {
+        slug.into()
+    }
+}
+
+fn decimal_to_f64(value: Decimal) -> Option<f64> {
+    let converted = value.to_string().parse::<f64>().ok()?;
+    converted.is_finite().then_some(converted)
+}
+
+fn resolved_series(
+    series: &mut Vec<ObservationSeries>,
+    rule: &ParameterRule,
+    unit: Option<&str>,
+    id: &str,
+) {
+    if series.iter().any(|item| item.id == id) {
+        return;
+    }
+    series.push(ObservationSeries {
+        id: id.into(),
+        name: rule.display_name.clone(),
+        value_type: rule.value_type.clone(),
+        unit: unit.map(str::to_owned),
+        description: None,
+        warn_duplicate_same_day: true,
+        synonyms: rule.synonyms.clone(),
+        parameter_rule_id: Some(rule.id.clone()),
+        parameter_rule_version: Some(rule.version),
+        parameter_rule_digest: Some(rule.digest.clone()),
+        unit_variant: unit
+            .filter(|unit| rule.canonical_unit.as_deref() != Some(*unit))
+            .map(str::to_owned),
+    });
 }
 
 /// Carica le regole TOML, risolvendo gli alias dal dizionario di ricerca.

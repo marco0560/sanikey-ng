@@ -1,5 +1,6 @@
 use super::{
-    RuleDecision, evaluate_parameter_candidates, load_parameter_rules, load_patient_parameter_rules,
+    ParameterBuildResult, RuleDecision, build_parameter_slices, evaluate_parameter_candidates,
+    load_parameter_rules, load_patient_parameter_rules,
 };
 use crate::config::SearchDictionary;
 use crate::operation::ErrorCode;
@@ -307,4 +308,123 @@ fn evaluates_specimen_category_context_and_qualifier_constraints() {
     assert_eq!(reasons["wrong-category"], "REJECTED_DOCUMENT_CATEGORY");
     assert_eq!(reasons["missing-date"], "REJECTED_DOCUMENT_DATE_MISSING");
     assert_eq!(reasons["invalid-number"], "REJECTED_INVALID_NUMBER_FORMAT");
+}
+
+#[test]
+fn builds_exact_converted_points_and_rejects_invalid_units_and_ranges() {
+    let directory = TestDirectory::new();
+    let path = directory.0.join("parameters.toml");
+    fs::write(&path, rule_toml("Emoglobina", 1)).expect("rule file");
+    let rules = load_parameter_rules(&path, &dictionary()).expect("valid rules");
+    let mut converted = candidate("hb", "Hb: 137 g/l");
+    converted.stable_id = "converted".into();
+    converted.raw_value = "137".into();
+    converted.parsed_value = Some(137.0);
+    converted.number_format = Some("integer".into());
+    converted.raw_unit = Some("g/l".into());
+    converted.document_href = Some("../documenti/referto.txt".into());
+    let mut missing_unit = converted.clone();
+    missing_unit.stable_id = "missing-unit".into();
+    missing_unit.raw_unit = None;
+    let mut unknown_unit = converted.clone();
+    unknown_unit.stable_id = "unknown-unit".into();
+    unknown_unit.raw_unit = Some("mg/dL".into());
+    let mut out_of_range = converted.clone();
+    out_of_range.stable_id = "out-of-range".into();
+    out_of_range.raw_value = "999".into();
+    out_of_range.parsed_value = Some(999.0);
+
+    let result = build_parameter_slices(
+        &[converted, missing_unit, unknown_unit, out_of_range],
+        &rules,
+    );
+
+    assert_eq!(result.series.len(), 1);
+    assert_eq!(result.series[0].id, "emoglobina");
+    assert_eq!(result.series[0].unit.as_deref(), Some("g/dL"));
+    assert_eq!(result.points.len(), 1);
+    assert_eq!(result.points[0].numeric_value, Some(13.7));
+    assert_eq!(result.points[0].parsed_value, Some(137.0));
+    assert_eq!(result.points[0].raw_unit.as_deref(), Some("g/l"));
+    assert_eq!(result.points[0].normalized_unit.as_deref(), Some("g/dL"));
+    assert!(result.series[0].warn_duplicate_same_day);
+    assert_eq!(
+        result.points[0].document_href.as_deref(),
+        Some("../documenti/referto.txt")
+    );
+    assert_eq!(
+        result.points[0].source_reference,
+        "../documenti/referto.txt"
+    );
+    assert_eq!(result.points[0].rule_id.as_deref(), Some("emoglobina"));
+    let reasons = result
+        .decisions
+        .iter()
+        .map(|decision| {
+            (
+                decision.candidate_id.as_str(),
+                decision.reason_code.as_str(),
+            )
+        })
+        .collect::<std::collections::BTreeMap<_, _>>();
+    assert_eq!(reasons["converted"], "ACCEPTED_CONFIGURED_SYNONYM");
+    assert_eq!(reasons["missing-unit"], "REJECTED_MISSING_UNIT");
+    assert_eq!(reasons["unknown-unit"], "REJECTED_UNKNOWN_UNIT");
+    assert_eq!(reasons["out-of-range"], "REJECTED_OUT_OF_RANGE");
+
+    let empty = build_parameter_slices(&[], &rules);
+    assert_eq!(empty, ParameterBuildResult::default());
+}
+
+#[test]
+fn normalizes_configured_unit_typography_and_applies_missing_unit_policies() {
+    let directory = TestDirectory::new();
+    let path = directory.0.join("parameters.toml");
+    fs::write(&path, rule_toml("Emoglobina", 1)).expect("rule file");
+    let loaded = load_parameter_rules(&path, &dictionary()).expect("valid rules");
+    let mut rule = loaded.rules[0].clone();
+    rule.units = vec!["g/dl".into()];
+    rule.canonical_unit = Some("g/dl".into());
+    rule.conversions.clear();
+    let mut candidate = candidate("hb", "Hb: 13,7 g/DL");
+    candidate.raw_unit = Some("g/DL".into());
+    let configured = build_parameter_slices(
+        &[candidate.clone()],
+        &super::ParameterRules {
+            discovery: loaded.discovery.clone(),
+            rules: vec![rule.clone()],
+        },
+    );
+    assert_eq!(
+        configured.points[0].normalized_unit.as_deref(),
+        Some("g/dl")
+    );
+    assert_eq!(configured.series[0].unit_variant, None);
+
+    candidate.raw_unit = None;
+    rule.unit_policy = "allowed-but-unknown".into();
+    rule.units.clear();
+    rule.canonical_unit = None;
+    rule.assumed_unit = None;
+    let optional = build_parameter_slices(
+        &[candidate.clone()],
+        &super::ParameterRules {
+            discovery: loaded.discovery.clone(),
+            rules: vec![rule.clone()],
+        },
+    );
+    assert_eq!(optional.points[0].normalized_unit, None);
+    assert_eq!(optional.points[0].series_id, "emoglobina");
+
+    rule.unit_policy = "assume-configured-unit".into();
+    rule.assumed_unit = Some("g/dL".into());
+    let assumed = build_parameter_slices(
+        &[candidate],
+        &super::ParameterRules {
+            discovery: loaded.discovery,
+            rules: vec![rule],
+        },
+    );
+    assert_eq!(assumed.points[0].normalized_unit.as_deref(), Some("g/dL"));
+    assert_eq!(assumed.series[0].id, "emoglobina--g-dl");
 }
