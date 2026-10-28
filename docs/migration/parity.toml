@@ -117,11 +117,19 @@ approved_deviations = []
 id = "inventory"
 description = "Inventario digest e filtri"
 phase = "P06"
-status = "pending"
+status = "implemented"
 baseline_source = "src/sanikey/documents.py"
 baseline_test = "tests/test_documents.py"
-rust_tests = []
-evidence = []
+rust_tests = [
+  "inventory::tests::inventory_creates_stable_records_and_preserves_original_bytes",
+  "inventory::tests::migration_corpus_inventory_matches_the_python_baseline",
+  "inventory::tests::inventory_classifies_service_categories_compound_suffixes_and_dicom_magic",
+  "inventory::tests::include_patterns_recover_excluded_files_before_hashing",
+  "inventory::tests::duplicate_documents_are_grouped_and_first_sorted_path_is_retained",
+  "inventory::tests::missing_or_non_directory_source_roots_produce_empty_inventories",
+  "inventory::tests::digest_read_errors_keep_a_configuration_error_and_path_context",
+]
+evidence = ["verification/2026-10-28-inventory.md"]
 approved_deviations = []
 
 [[capability]]

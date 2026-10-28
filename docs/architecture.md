@@ -26,6 +26,12 @@ solo un nuovo file nella stessa base dei percorsi relativi, rifiuta
 sovrascritture e verifica byte e configurazione riaprendo la copia; non richiede
 la directory corrente, Git o Python.
 
+`sanikey-core::inventory` visita in sola lettura la directory sorgente,
+applica precedenza include su exclude e crea record canonici con categoria,
+tipo, data, SHA-256 e identità del documento. La scansione completa conserva i
+duplicati per la diagnosi; la vista deduplicata mantiene la prima occorrenza
+nell'ordine dei percorsi.
+
 Organizzare inizialmente il core in moduli, evitando un crate per ogni file
 Python. Gli adattatori di sistema, conversione e rete hanno confini espliciti.
 Nuove separazioni in crate richiedono un bisogno concreto e una ADR.
