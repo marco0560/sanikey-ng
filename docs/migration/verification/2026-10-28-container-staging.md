@@ -55,10 +55,10 @@ un'immagine ISO valida; anche la fixture nested usa quel formato sintetico.
 Questi test verificano confinamento e flusso di estrazione, non la compatibilità
 con immagini disco reali.
 
-Il pre-commit si è inizialmente fermato perché i tre lockfile isolati dei
-prototipi GUI non includevano ancora le nuove dipendenze del core. Sono stati
-rigenerati offline eseguendo i tre test workspace senza `--locked`; il secondo
-pre-commit ha superato protocollo, egui e Slint.
+Il primo pre-commit si è fermato perché i tre lockfile isolati e tracciati dei
+prototipi GUI non includevano le nuove dipendenze del core. Sono stati
+rigenerati offline eseguendo i tre test workspace senza `--locked` e committati
+in `a8d287c`; il pre-commit successivo ha superato protocollo, egui e Slint.
 
 Codira è installato e dichiara l'analizzatore Rust. `uv run codira index
 --defer-embeddings --concurrency thread --jobs 2` è terminato con SIGSEGV/exit
@@ -83,4 +83,4 @@ continua a richiedere questi strumenti esterni per RAR e immagini.
 - XZ `0.1.7`: [`XzDecoder::new_multi_decoder`](https://docs.rs/xz2/0.1.7/xz2/read/struct.XzDecoder.html#method.new_multi_decoder); il binding usa liblzma.
 - Baseline e licenze/confezionamento: [ricevuta P04.02](2026-10-26-office-container-feasibility.md).
 
-Commit implementazione: `13ac794`.
+Commit implementazione: `13ac794`; lockfile GUI: `a8d287c`.
