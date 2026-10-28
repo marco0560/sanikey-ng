@@ -181,11 +181,29 @@ approved_deviations = []
 id = "containers"
 description = "Container e staging"
 phase = "P07"
-status = "pending"
+status = "implemented"
 baseline_source = "src/sanikey/containers.py"
 baseline_test = "tests/test_containers.py"
-rust_tests = []
-evidence = ["verification/2026-10-26-office-container-feasibility.md"]
+rust_tests = [
+  "containers::tests::stages_zip_members_and_writes_a_provenance_manifest",
+  "containers::tests::reads_python_zipfile_compression_methods",
+  "containers::tests::writes_an_empty_manifest_when_the_inventory_has_no_containers",
+  "containers::tests::rejects_zip_traversal_without_writing_outside_the_staging_root",
+  "containers::tests::recursively_stages_nested_archives_once_and_applies_ingestion_filters",
+  "containers::tests::skips_repeated_container_documents_by_content_identity",
+  "containers::tests::tar_xz_stages_regular_members_and_skips_links",
+  "containers::tests::stages_7z_members_with_the_validated_extraction_callback",
+  "containers::tests::stages_rar_members_through_stdout_without_using_archive_paths",
+  "containers::tests::invalid_rar_is_reported_without_aborting_the_manifest",
+  "containers::tests::disk_image_suffix_uses_external_listing_and_streamed_member_extraction",
+  "containers::tests::recursively_stages_nested_disk_image_members",
+  "containers::tests::corrupt_archive_emits_warning_and_still_writes_empty_manifest",
+  "containers::tests::member_paths_reject_posix_and_windows_traversal",
+]
+evidence = [
+  "verification/2026-10-26-office-container-feasibility.md",
+  "verification/2026-10-28-container-staging.md",
+]
 approved_deviations = []
 
 [[capability]]

@@ -7,13 +7,14 @@ La preparazione ha committato tutte le modifiche Python nel riferimento
 Ha predisposto repository e documentazione per il piano approvato.
 Il workspace Rust include CLI info/versione, gate CI, comparatori e pipeline
 di consultazione per TXT, PDF, Markdown, HTML, immagini JPEG/PNG e conversioni
-Office. P07.04 è completata con verifica locale Linux; la parità Office, il
-browser e Windows/macOS restano pending. La prossima scheda è P07.05, container
-e staging. Il prodotto GUI è pianificato per P11.
+Office. P07.05 ha portato container e staging con fixture sintetiche Linux;
+la capability è implementata ma IMG/ISO reali, alcuni codec e Windows/macOS
+restano pending. Anche parità Office e browser restano pending. La prossima
+scheda è P07.06, catalogazione DICOM. Il prodotto GUI è pianificato per P11.
 Il corpus sintetico P02.02 è pronto con expected fissati alla baseline.
 
 Il [ledger](ledger.md) riporta lo stato effettivo della pubblicazione.
-La prossima scheda è quella indicata nel [ledger](ledger.md): P07.05.
+La prossima scheda è quella indicata nel [ledger](ledger.md): P07.06.
 P01.03 ha qualificato il campione in un checkout pulito e ha verificato il
 fetch remoto dello SHA fissato; non è stata eseguita una push del Python.
 

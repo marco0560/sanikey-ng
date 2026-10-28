@@ -46,6 +46,18 @@ secondi o produce un PDF invalido, il catalogo conserva l'originale e registra
 un warning senza esporre stderr o contenuto privato. La prova completa dei
 formati e il confezionamento multipiattaforma restano pending.
 
+`sanikey-core::containers::stage_container_documents` riconosce i contenitori
+dalle estensioni della baseline e verifica il formato con il parser o il
+convertitore disponibile. Estrae ZIP e TAR.XZ con librerie Rust; 7z usa il
+parser Rust e ripiega su 7-Zip per metodi non supportati. RAR e immagini IMG/ISO
+usano UnRAR, 7-Zip o bsdtar quando presenti. Per questi
+strumenti esterni l'app scrive i byte dei singoli membri nello staging dopo
+aver validato il nome; non delega loro la scrittura di percorsi estratti. La
+ricorsione, i filtri di ingestione, il lock per persona e il manifest v1
+seguono il contratto Python. La parità di IMG/ISO validi, le varianti di codec
+e i sistemi Windows/macOS restano da qualificare. La baseline non definisce
+quote di dimensione o numero dei membri; il porting non ne aggiunge.
+
 `build_pdf_pipeline` estrae testo digitale con `lopdf` e, quando è
 insufficiente, renderizza ogni pagina PDF con PDFium e invia il raster PPM via
 stdin a Tesseract. Usa la soglia di 40 caratteri non whitespace della
