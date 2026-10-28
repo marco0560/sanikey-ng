@@ -1,9 +1,14 @@
 //! Ricerca dei candidati farmaco nel catalogo AIFA.
 
 use crate::metadata::Medication;
+use crate::metadata::{MedicationLeaflet, MedicationLeafletExclusion};
+use crate::operation::{ErrorCode, OperationError};
 use regex::Regex;
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
+use std::fs;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 const API_ROOT: &str = "https://api.aifa.gov.it/aifa-bdf-eif-be/1.0.0/";
@@ -45,6 +50,97 @@ pub struct AifaCandidateSearch {
     pub review: Vec<AifaCandidate>,
     /// Tutti i candidati restituiti dalle richieste riuscite.
     pub all_candidates: Vec<AifaCandidate>,
+}
+
+/// Crea un riferimento AIFA confermato esplicitamente per il farmaco curato.
+#[must_use]
+pub fn confirm_aifa_candidate(
+    medication: &Medication,
+    candidate: &AifaCandidate,
+) -> MedicationLeaflet {
+    MedicationLeaflet {
+        medication_id: medication.id.clone(),
+        codice_sis: candidate.codice_sis.clone(),
+        aic6: candidate.aic6.clone(),
+        downloaded_at: None,
+        source_fingerprint: Some(medication_fingerprint(medication)),
+    }
+}
+
+/// Calcola l'impronta stabile dei campi curati usati per la ricerca AIFA.
+#[must_use]
+pub fn medication_fingerprint(medication: &Medication) -> String {
+    let identity = [
+        medication.name.as_str(),
+        medication.active_ingredient.as_deref().unwrap_or_default(),
+        medication.form.as_deref().unwrap_or_default(),
+        medication.strength_per_unit.as_deref().unwrap_or_default(),
+    ]
+    .into_iter()
+    .map(|value| value.trim().to_lowercase())
+    .collect::<Vec<_>>()
+    .join("\u{1f}");
+    format!("{:x}", Sha256::digest(identity.as_bytes()))
+}
+
+/// Persiste riferimenti AIFA confermati e esclusioni curate in formato TOML.
+///
+/// Gli elementi sono ordinati per identificatore. La validazione dei riferimenti
+/// incrociati viene eseguita dal loader dei metadati durante la rilettura.
+pub fn write_confirmed_references(
+    metadata_directory: &Path,
+    references: &[MedicationLeaflet],
+    exclusions: &[MedicationLeafletExclusion],
+) -> Result<PathBuf, OperationError> {
+    let mut ordered_references = references.to_vec();
+    ordered_references.sort_by(|left, right| left.medication_id.cmp(&right.medication_id));
+    let mut ordered_exclusions = exclusions.to_vec();
+    ordered_exclusions.sort_by(|left, right| left.medication_id.cmp(&right.medication_id));
+
+    let mut root = toml::Table::new();
+    if !ordered_references.is_empty() {
+        let values = ordered_references
+            .into_iter()
+            .map(|reference| {
+                let mut table = toml::Table::new();
+                table.insert("medication_id".into(), reference.medication_id.into());
+                table.insert("codice_sis".into(), reference.codice_sis.into());
+                table.insert("aic6".into(), reference.aic6.into());
+                if let Some(fingerprint) = reference.source_fingerprint {
+                    table.insert("source_fingerprint".into(), fingerprint.into());
+                }
+                toml::Value::Table(table)
+            })
+            .collect();
+        root.insert("leaflet".into(), toml::Value::Array(values));
+    }
+    if !ordered_exclusions.is_empty() {
+        let values = ordered_exclusions
+            .into_iter()
+            .map(|exclusion| {
+                let mut table = toml::Table::new();
+                table.insert("medication_id".into(), exclusion.medication_id.into());
+                table.insert("reason".into(), exclusion.reason.into());
+                toml::Value::Table(table)
+            })
+            .collect();
+        root.insert("unavailable".into(), toml::Value::Array(values));
+    }
+    let serialized = toml::to_string(&toml::Value::Table(root)).map_err(|error| {
+        aifa_persistence_error(format!("serializzazione dei riferimenti AIFA: {error}"))
+    })?;
+    let target = metadata_directory.join("medication_leaflets.toml");
+    fs::create_dir_all(metadata_directory).map_err(|error| {
+        aifa_persistence_error(format!("creazione directory metadati: {error}"))
+    })?;
+    fs::write(&target, serialized).map_err(|error| {
+        aifa_persistence_error(format!("scrittura {}: {error}", target.display()))
+    })?;
+    Ok(target)
+}
+
+fn aifa_persistence_error(message: String) -> OperationError {
+    OperationError::new(ErrorCode::Configuration, message)
 }
 
 /// Client sincrono per interrogare il catalogo pubblico AIFA.

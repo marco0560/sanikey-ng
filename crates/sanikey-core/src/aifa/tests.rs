@@ -1,6 +1,14 @@
-use super::{AifaCandidateSearch, lookup_candidate_search_with};
-use crate::metadata::Medication;
+use super::{
+    AifaCandidate, AifaCandidateSearch, confirm_aifa_candidate, lookup_candidate_search_with,
+    medication_fingerprint, write_confirmed_references,
+};
+use crate::metadata::{Medication, MedicationLeafletExclusion};
 use serde_json::{Value, json};
+use std::fs;
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+static TEMP_SEQUENCE: AtomicUsize = AtomicUsize::new(0);
 
 struct SearchFixture {
     responses: std::vec::IntoIter<Option<Value>>,
@@ -40,6 +48,114 @@ fn response_with_candidates(items: Vec<Value>) -> Value {
 
 fn success(payload: Value) -> Option<Value> {
     Some(payload)
+}
+
+fn temporary_directory() -> PathBuf {
+    let sequence = TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    std::env::temp_dir().join(format!("sanikey-ng-aifa-{}-{sequence}", std::process::id()))
+}
+
+#[test]
+fn confirms_candidate_with_fingerprint_of_curated_fields() {
+    let medication = Medication {
+        id: "drug-a".into(),
+        name: " Drug A ".into(),
+        active_ingredient: Some("INGREDIENT".into()),
+        form: Some("Tablet".into()),
+        strength_per_unit: Some("10 MG".into()),
+    };
+    let candidate = AifaCandidate {
+        title: "Drug A".into(),
+        codice_sis: "123".into(),
+        aic6: "456".into(),
+        active_ingredients: vec![],
+        form: None,
+        strength: None,
+        company: None,
+        atc: vec![],
+        routes: vec![],
+        packages: vec![],
+        mismatches: vec![],
+    };
+
+    let reference = confirm_aifa_candidate(&medication, &candidate);
+
+    assert_eq!(reference.medication_id, "drug-a");
+    assert_eq!(reference.codice_sis, "123");
+    assert_eq!(reference.aic6, "456");
+    assert_eq!(
+        reference.source_fingerprint.as_deref(),
+        Some(medication_fingerprint(&medication).as_str())
+    );
+    assert_eq!(
+        medication_fingerprint(&medication),
+        "39a6161baf9e86a465f57f42a39875969c7da6363b41e05e9c8788c9dbf6e72d"
+    );
+    assert_eq!(
+        medication_fingerprint(&medication),
+        medication_fingerprint(&Medication {
+            id: "different-id".into(),
+            name: "drug a".into(),
+            active_ingredient: Some("ingredient".into()),
+            form: Some("tablet".into()),
+            strength_per_unit: Some("10 mg".into()),
+        })
+    );
+}
+
+#[test]
+fn persists_sorted_references_and_exclusions_as_loadable_toml() {
+    let directory = temporary_directory();
+    fs::create_dir_all(&directory).expect("creazione directory metadati");
+    fs::write(
+        directory.join("medications.toml"),
+        "[[medication]]\nid = \"a-drug\"\nname = \"A Drug\"\n\n[[medication]]\nid = \"z-drug\"\nname = \"Z Drug\"\n\n[[medication]]\nid = \"supplement\"\nname = \"Supplement\"\n",
+    )
+    .expect("scrittura farmaci sintetici");
+    let references = [
+        crate::metadata::MedicationLeaflet {
+            medication_id: "z-drug".into(),
+            codice_sis: "123".into(),
+            aic6: "456".into(),
+            downloaded_at: None,
+            source_fingerprint: Some("fingerprint-\"quoted\"".into()),
+        },
+        crate::metadata::MedicationLeaflet {
+            medication_id: "a-drug".into(),
+            codice_sis: "789".into(),
+            aic6: "012".into(),
+            downloaded_at: None,
+            source_fingerprint: None,
+        },
+    ];
+    let exclusions = [MedicationLeafletExclusion {
+        medication_id: "supplement".into(),
+        reason: "non_aifa".into(),
+    }];
+
+    let target = write_confirmed_references(&directory, &references, &exclusions)
+        .expect("scrittura TOML riferimenti");
+    let content = fs::read_to_string(&target).expect("lettura TOML riferimenti");
+    let parsed: toml::Value = toml::from_str(&content).expect("TOML valido");
+    let first_id = parsed["leaflet"][0]["medication_id"].as_str();
+
+    assert_eq!(first_id, Some("a-drug"));
+    assert_eq!(
+        parsed["leaflet"][1]["source_fingerprint"].as_str(),
+        Some("fingerprint-\"quoted\"")
+    );
+    assert_eq!(
+        parsed["unavailable"][0]["medication_id"].as_str(),
+        Some("supplement")
+    );
+    let loaded =
+        crate::metadata::load_curated_metadata(&directory).expect("rilettura metadati persistiti");
+    assert_eq!(
+        loaded.medication_leaflets,
+        [references[1].clone(), references[0].clone()]
+    );
+    assert_eq!(loaded.medication_leaflet_exclusions, exclusions);
+    fs::remove_dir_all(directory).expect("pulizia directory sintetica");
 }
 
 #[test]

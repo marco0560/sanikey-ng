@@ -22,10 +22,10 @@ Il corpus sintetico P02.02 è pronto con expected fissati alla baseline.
 Il [ledger](ledger.md) riporta lo stato effettivo della pubblicazione.
 P08.02 è completata: scoperta candidati, layout tabellari annotati e impilati,
 regole curate, conversioni, punti e serie, report diagnostici, segni vitali e
-celle descritte “valore in massa/percentuale”. P08.03a ha portato ricerca e
-classificazione dei candidati AIFA con risposte sintetiche. Il prossimo
-sottopasso P08.03b persiste la selezione esplicita e l'impronta della ricerca;
-seguono cache, download e verifica FI/RCP.
+celle descritte “valore in massa/percentuale”. P08.03a-b hanno portato ricerca e
+classificazione dei candidati AIFA con risposte sintetiche, conferma esplicita,
+impronta dei campi curati e persistenza TOML ricaricabile. Il prossimo
+sottopasso P08.03c porta cache, download e verifica FI/RCP.
 P01.03 ha qualificato il campione in un checkout pulito e ha verificato il
 fetch remoto dello SHA fissato; non è stata eseguita una push del Python.
 
