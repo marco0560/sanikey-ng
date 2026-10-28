@@ -36,10 +36,12 @@ di prodotto non ancora introdotto.
 | P05.01 | completata | 2026-10-28; parser TOML e validazione account con 22 corrispondenze dirette ai test baseline, ulteriori casi per chiavi chiuse e conflitti UUID; gate `cargo xtask check`, hook di commit e Codira index/cov/audit superati su Linux; Codira ha richiesto moduli più piccoli dopo SIGSEGV sui file grandi; commit `d783429`; la capability `configuration` resta pending fino a P05.03; [ricevuta](verification/2026-10-28-configuration.md) |
 | P05.02 | completata | 2026-10-28; modelli e loader metadata con validazione atomica; preflight privacy filesystem-only e guardia Git dev-only; originali invariati su fixture sintetica; `cargo xtask check`, hook di commit e Codira index/cov/audit superati su Linux; capability `metadata` e `privacy` implementate ma non ancora verificate; commit `da07e04`; [ricevuta](verification/2026-10-28-metadata-privacy.md) |
 | P05.03 | completata | 2026-10-28; importazione account legacy da percorso assoluto; copia TOML byte-per-byte in nuova destinazione sotto la stessa base, con no-overwrite, riapertura e verifica semantica; test con cwd cambiata, spazi, Unicode e riferimenti relativi; gate `cargo xtask check` e hook superati su Linux; Codira coverage completa, audit exit 0 con quattro rilievi rustdoc preesistenti fuori ambito; Windows/macOS non provati; capability `configuration` implementata, non ancora verificata multipiattaforma; commit `fbe1f33` e documentazione test `f3f5684`; [ricevuta](verification/2026-10-28-account-profiles.md) |
+| P06.01 | completata | 2026-10-28; inventario canonico, categorie, filtri include/exclude, SHA-256 e duplicati; corpus sintetico coincide con baseline e originali invariati; `cargo xtask check`, Codira index/cov/audit e hook pre-commit superati su Linux; Codira audit exit 0 con quattro rilievi rustdoc preesistenti; primo hook rileva lockfile obsoleti nei workspace GUI isolati, aggiornati offline e poi validati; Windows/macOS non provati; capability `inventory` implementata, non ancora verificata multipiattaforma; commit `913284d`; [ricevuta](verification/2026-10-28-inventory.md) |
 
-Le schede non registrate sopra sono da_eseguire; l'indice completo è in
-[tasks/README.md](tasks/README.md).
-La matrice di parità è iniziale e interamente pending.
+Le schede non registrate sopra sono da eseguire; l'indice completo è in
+[tasks/README.md](tasks/README.md). La parità per capability è mantenuta in
+[parity.toml](parity.toml); lo stato `implemented` richiede ancora verifiche
+sui sistemi non provati prima di dichiarare la parità completa.
 
 ## Risultati del campione
 
@@ -69,8 +71,8 @@ autorizzazione specifica.
 ## Prossima sessione
 
 Leggere [START-HERE.md](START-HERE.md). G1 approvato per egui/eframe 0.37.0;
-la prossima scheda è [P06.01](tasks/P06.01-portare-inventario-e-digest.md),
-dipendente da P05.03. Il crate desktop di prodotto resta pianificato per P11.
+la prossima scheda è [P06.02](tasks/P06.02-completare-il-nucleo-txt-fino-al-frontend.md),
+dipendente da P06.01. Il crate desktop di prodotto resta pianificato per P11.
 
 A ogni scheda aggiungere data, commit, comandi ed esiti effettivi, eventuali
 skip con motivazione, evidenze, blocchi e successiva attività.
