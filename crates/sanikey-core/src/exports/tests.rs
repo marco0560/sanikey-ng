@@ -1,4 +1,4 @@
-use super::generate_exports;
+use super::{generate_exports, render_markdown};
 use crate::config::{IngestionConfig, PersonConfig, SearchConfig, SearchDictionary, UiConfig};
 use crate::dicom::DicomStudy;
 use crate::metadata::{
@@ -587,5 +587,56 @@ fn exports_clinical_procedures_observations_and_hides_technical_dicom_documents(
             .any(|field| {
                 field["label"] == "Anomalia" && field["value"] == "anteprima non disponibile"
             })
+    );
+}
+
+#[test]
+fn markdown_exports_render_commonmark_and_escape_raw_html() {
+    let directory = TestDirectory::new();
+    let person = person(directory.path(), "patient-a");
+    let document = document(&person, "20260103 Summary.md");
+    fs::write(
+        &document.path,
+        "# Referto\n\n- Voce\n\n<script>alert(1)</script>",
+    )
+    .expect("Markdown sintetico");
+    let metadata = CuratedMetadata {
+        clinical_summary: Some(
+            "# Sintesi clinica\n\n- Ipertensione.\n\n<script>alert(1)</script>\n".to_owned(),
+        ),
+        ..CuratedMetadata::default()
+    };
+
+    let result = generate_exports(&person, &[document], &metadata, &[], &[])
+        .expect("export Markdown sintetico");
+    let documents: Value =
+        serde_json::from_slice(&fs::read(result.documents).expect("documenti JSON"))
+            .expect("documenti validi");
+    let summary: Value = serde_json::from_slice(&fs::read(result.summary).expect("sommario JSON"))
+        .expect("sommario valido");
+
+    assert_eq!(
+        documents[0]["markdown_html"],
+        "<h1>Referto</h1>\n<ul>\n<li>Voce</li>\n</ul>\n<p>&lt;script&gt;alert(1)&lt;/script&gt;</p>\n"
+    );
+    assert_eq!(
+        summary["clinical_summary_html"],
+        "<h1>Sintesi clinica</h1>\n<ul>\n<li>Ipertensione.</li>\n</ul>\n<p>&lt;script&gt;alert(1)&lt;/script&gt;</p>\n"
+    );
+}
+
+#[test]
+fn markdown_exports_remove_unsafe_link_and_image_destinations() {
+    assert_eq!(
+        render_markdown("[unsafe](javascript:alert(1))"),
+        "<p>unsafe</p>\n"
+    );
+    assert_eq!(
+        render_markdown("![unsafe](data:image/png;base64,AAAA)"),
+        "<p>unsafe</p>\n"
+    );
+    assert_eq!(
+        render_markdown("[safe](https://example.test)"),
+        "<p><a href=\"https://example.test\">safe</a></p>\n"
     );
 }

@@ -5,6 +5,7 @@ use crate::dicom::DicomStudy;
 use crate::metadata::{CuratedMetadata, DocumentRecord, TimelineEvent};
 use crate::operation::{ErrorCode, OperationError};
 use crate::pdf::ExtractedText;
+use pulldown_cmark::{Event, Parser, Tag, TagEnd};
 use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::fs;
@@ -256,7 +257,14 @@ fn document_payload(
         "container_id": document.container_id,
         "internal_path": document.internal_path,
         "tags": resolved_tags(document, metadata),
-        "markdown_html": if document.path.extension().is_some_and(|extension| extension.eq_ignore_ascii_case("md")) { Some(format!("<pre>{}</pre>", escape_html(&fs::read_to_string(&document.path).map_err(|error| export_error(format!("lettura Markdown {}: {error}", document.path.display())))?))) } else { None },
+        "markdown_html": if document.path.extension().is_some_and(|extension| extension.eq_ignore_ascii_case("md")) {
+            let bytes = fs::read(&document.path).map_err(|error| {
+                export_error(format!("lettura Markdown {}: {error}", document.path.display()))
+            })?;
+            Some(render_markdown(&String::from_utf8_lossy(&bytes)))
+        } else {
+            None
+        },
     });
     if let Some((study_id, viewer_href)) = viewer {
         payload["viewer_href"] = json!(viewer_href);
@@ -766,7 +774,58 @@ fn download_date(person: &PersonConfig, medication_id: &str) -> Option<String> {
         .map(str::to_owned)
 }
 fn markdown_summary(value: &str) -> String {
-    format!("<p>{}</p>", escape_html(value).replace('\n', "<br>"))
+    render_markdown(value)
+}
+
+fn render_markdown(markdown: &str) -> String {
+    let mut in_html_block = false;
+    let mut unsafe_links = Vec::new();
+    let events = Parser::new(markdown).filter_map(|event| match event {
+        Event::Start(Tag::HtmlBlock) => {
+            in_html_block = true;
+            Some(Event::Start(Tag::Paragraph))
+        }
+        Event::End(TagEnd::HtmlBlock) => {
+            in_html_block = false;
+            Some(Event::End(TagEnd::Paragraph))
+        }
+        Event::Html(html) => {
+            let text = if in_html_block {
+                html.trim_end_matches('\n').to_owned().into()
+            } else {
+                html
+            };
+            Some(Event::Text(text))
+        }
+        Event::InlineHtml(html) => Some(Event::Text(html)),
+        Event::Start(Tag::Link { dest_url, .. }) if unsafe_markdown_url(&dest_url) => {
+            unsafe_links.push(TagEnd::Link);
+            None
+        }
+        Event::Start(Tag::Image { dest_url, .. }) if unsafe_markdown_url(&dest_url) => {
+            unsafe_links.push(TagEnd::Image);
+            None
+        }
+        Event::End(tag_end) if unsafe_links.last() == Some(&tag_end) => {
+            unsafe_links.pop();
+            None
+        }
+        event => Some(event),
+    });
+    let mut html = String::new();
+    pulldown_cmark::html::push_html(&mut html, events);
+    html
+}
+
+fn unsafe_markdown_url(destination: &str) -> bool {
+    let normalized: String = destination
+        .chars()
+        .filter(|character| !character.is_ascii_whitespace() && !character.is_ascii_control())
+        .collect::<String>()
+        .to_ascii_lowercase();
+    ["javascript:", "vbscript:", "file:", "data:"]
+        .iter()
+        .any(|scheme| normalized.starts_with(scheme))
 }
 fn escape_html(value: &str) -> String {
     value
