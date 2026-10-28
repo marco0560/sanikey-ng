@@ -7,10 +7,10 @@ La sessione di bootstrap si è fermata dopo repository e documentazione;
 l'implementazione approvata è ripresa in seguito con P03.01.
 
 Baseline Python: `fdad1d93e56496cc6cb9933b3089729175d5b5b3`.
-Stato Rust: P07.05 completata; staging ZIP/7z/RAR/TAR.XZ e percorso
-IMG/ISO implementati e verificati su fixture sintetiche Linux. La capability
-containers è implemented ma non verified: immagini disco reali, alcuni codec
-e Windows/macOS restano da qualificare. La prossima scheda è P07.06.
+Stato Rust: P07.06 completata; staging contenitori e catalogazione DICOM
+implementati e verificati con fixture sintetiche Linux. Le capability
+containers e DICOM restano pending per qualifica di media reali, codec,
+anteprime, viewer e Windows/macOS. La prossima scheda è P07.07.
 Stato GUI: G1 approvato il 2026-10-27 per egui/eframe 0.37.0; crate desktop
 di prodotto non ancora introdotto.
 
