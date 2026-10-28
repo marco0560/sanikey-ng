@@ -779,53 +779,70 @@ fn markdown_summary(value: &str) -> String {
 
 fn render_markdown(markdown: &str) -> String {
     let mut in_html_block = false;
-    let mut unsafe_links = Vec::new();
-    let events = Parser::new(markdown).filter_map(|event| match event {
-        Event::Start(Tag::HtmlBlock) => {
-            in_html_block = true;
-            Some(Event::Start(Tag::Paragraph))
-        }
-        Event::End(TagEnd::HtmlBlock) => {
-            in_html_block = false;
-            Some(Event::End(TagEnd::Paragraph))
-        }
-        Event::Html(html) => {
-            let text = if in_html_block {
-                html.trim_end_matches('\n').to_owned().into()
-            } else {
-                html
-            };
-            Some(Event::Text(text))
-        }
-        Event::InlineHtml(html) => Some(Event::Text(html)),
-        Event::Start(Tag::Link { dest_url, .. }) if unsafe_markdown_url(&dest_url) => {
-            unsafe_links.push(TagEnd::Link);
-            None
-        }
-        Event::Start(Tag::Image { dest_url, .. }) if unsafe_markdown_url(&dest_url) => {
-            unsafe_links.push(TagEnd::Image);
-            None
-        }
-        Event::End(tag_end) if unsafe_links.last() == Some(&tag_end) => {
-            unsafe_links.pop();
-            None
-        }
-        event => Some(event),
-    });
+    let mut unsafe_destinations = Vec::new();
+    let events =
+        Parser::new(markdown)
+            .into_offset_iter()
+            .filter_map(|(event, range)| match event {
+                Event::Start(Tag::HtmlBlock) => {
+                    in_html_block = true;
+                    Some(Event::Start(Tag::Paragraph))
+                }
+                Event::End(TagEnd::HtmlBlock) => {
+                    in_html_block = false;
+                    Some(Event::End(TagEnd::Paragraph))
+                }
+                Event::Html(html) => {
+                    let text = if in_html_block {
+                        html.trim_end_matches('\n').to_owned().into()
+                    } else {
+                        html
+                    };
+                    Some(Event::Text(text))
+                }
+                Event::InlineHtml(html) => Some(Event::Text(html)),
+                Event::Start(Tag::Link { dest_url, .. })
+                    if unsafe_markdown_url(&dest_url, false) =>
+                {
+                    unsafe_destinations.push(TagEnd::Link);
+                    Some(Event::Text(markdown[range].to_owned().into()))
+                }
+                Event::Start(Tag::Image { dest_url, .. })
+                    if unsafe_markdown_url(&dest_url, true) =>
+                {
+                    unsafe_destinations.push(TagEnd::Image);
+                    Some(Event::Text(markdown[range].to_owned().into()))
+                }
+                Event::End(tag_end) if unsafe_destinations.last() == Some(&tag_end) => {
+                    unsafe_destinations.pop();
+                    None
+                }
+                _ if !unsafe_destinations.is_empty() => None,
+                event => Some(event),
+            });
     let mut html = String::new();
     pulldown_cmark::html::push_html(&mut html, events);
     html
 }
 
-fn unsafe_markdown_url(destination: &str) -> bool {
-    let normalized: String = destination
-        .chars()
-        .filter(|character| !character.is_ascii_whitespace() && !character.is_ascii_control())
-        .collect::<String>()
-        .to_ascii_lowercase();
-    ["javascript:", "vbscript:", "file:", "data:"]
+fn unsafe_markdown_url(destination: &str, image: bool) -> bool {
+    let normalized = destination.trim().to_ascii_lowercase();
+    if ["javascript:", "vbscript:", "file:"]
         .iter()
         .any(|scheme| normalized.starts_with(scheme))
+    {
+        return true;
+    }
+    normalized.starts_with("data:")
+        && !(image
+            && [
+                "data:image/gif;",
+                "data:image/png;",
+                "data:image/jpeg;",
+                "data:image/webp;",
+            ]
+            .iter()
+            .any(|prefix| normalized.starts_with(prefix)))
 }
 fn escape_html(value: &str) -> String {
     value

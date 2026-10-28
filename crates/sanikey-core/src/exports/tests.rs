@@ -629,11 +629,15 @@ fn markdown_exports_render_commonmark_and_escape_raw_html() {
 fn markdown_exports_remove_unsafe_link_and_image_destinations() {
     assert_eq!(
         render_markdown("[unsafe](javascript:alert(1))"),
-        "<p>unsafe</p>\n"
+        "<p>[unsafe](javascript:alert(1))</p>\n"
     );
     assert_eq!(
         render_markdown("![unsafe](data:image/png;base64,AAAA)"),
-        "<p>unsafe</p>\n"
+        "<p><img src=\"data:image/png;base64,AAAA\" alt=\"unsafe\" /></p>\n"
+    );
+    assert_eq!(
+        render_markdown("![unsafe](data:text/html;base64,AAAA)"),
+        "<p>![unsafe](data:text/html;base64,AAAA)</p>\n"
     );
     assert_eq!(
         render_markdown("[safe](https://example.test)"),
