@@ -862,6 +862,30 @@ mod tests {
         )
     }
 
+    fn focused_widget_after_key(key: egui::Key, modifiers: egui::Modifiers) -> Option<egui::Id> {
+        let mut app = DesktopApp::default();
+        let context = egui::Context::default();
+        let mut frame = eframe::Frame::_new_kittest();
+        for _ in 0..2 {
+            let output = run_app_frame(&mut app, &context, &mut frame, Vec::new());
+            output.drop_without_applying_deltas();
+        }
+        let output = run_app_frame(
+            &mut app,
+            &context,
+            &mut frame,
+            vec![egui::Event::Key {
+                key,
+                physical_key: Some(key),
+                pressed: true,
+                repeat: false,
+                modifiers,
+            }],
+        );
+        output.drop_without_applying_deltas();
+        context.memory(|memory| memory.focused())
+    }
+
     fn synthetic_result(person_id: &str) -> PatientBuildResult {
         PatientBuildResult {
             patient_id: person_id.to_owned(),
@@ -1207,25 +1231,14 @@ enabled = false
             assert_eq!(context.theme(), theme);
         }
 
-        let mut input = egui::RawInput {
-            events: vec![egui::Event::Key {
-                key: egui::Key::Tab,
-                physical_key: Some(egui::Key::Tab),
-                pressed: true,
-                repeat: false,
-                modifiers: egui::Modifiers::NONE,
-            }],
-            ..Default::default()
-        };
-        input.screen_rect = Some(egui::Rect::from_min_size(
-            egui::Pos2::ZERO,
-            egui::vec2(400.0, 280.0),
-        ));
-        let output = context.run_ui(input, |ui| {
-            eframe::App::ui(&mut app, ui, &mut frame);
-        });
-        output.drop_without_applying_deltas();
-        assert!(context.memory(|memory| memory.focused()).is_some());
+        let first_focus = focused_widget_after_key(egui::Key::Tab, egui::Modifiers::NONE)
+            .expect("Tab porta il focus a un controllo");
+        let last_focus = focused_widget_after_key(egui::Key::Tab, egui::Modifiers::SHIFT)
+            .expect("Shift+Tab porta il focus a un controllo");
+        assert_ne!(
+            first_focus, last_focus,
+            "Tab e Shift+Tab raggiungono controlli distinti alle estremita dell'ordine"
+        );
     }
 
     #[test]
