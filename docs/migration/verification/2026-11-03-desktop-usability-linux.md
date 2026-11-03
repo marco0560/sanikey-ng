@@ -13,7 +13,7 @@ Data: 2026-11-03. Qualifica parziale su Linux.
 - `warning_text_color_matches_light_and_dark_themes` verifica colori d'avviso chiari nel tema scuro e scuri nel tema chiaro; i tre messaggi colorati seguono ora la palette attiva.
 - `cargo fmt --all --check` e `CARGO_NET_OFFLINE=true cargo test --offline -p sanikey-desktop clicking_preflight_with_a_valid_profile_exposes_the_duplicate_review`: superati; il test mirato passa 1/1.
 - `CARGO_NET_OFFLINE=true cargo xtask check`: exit 0; 201 test core superati (2 ignorati), 3 CLI, 14 desktop, 1 Windows-volume, 2 macOS-volume, 8 xtask, 2 doctest, smoke CLI, pubblicabilità 295 file e rustdoc.
-- `uv run codira index`: aggiornamento riuscito, nessun fallimento; 12 file restano fuori copertura perché non hanno parser configurato.
+- `uv run codira index` dopo il commit del test preflight: 3 file indicizzati, 229 riusati, 0 fallimenti; 12 file restano fuori copertura perché non hanno parser configurato.
 
 ## Limiti ed esiti non qualificati
 
