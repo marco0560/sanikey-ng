@@ -443,6 +443,8 @@ rust_tests = [
   "usb_copy::tests::reports_progress_and_honors_cancellation_before_copying",
   "usb_copy::tests::rejects_symlinks_in_source_and_destination",
   "usb_copy::tests::rejects_source_target_overlap",
+  "usb_image::tests::assembles_and_validates_a_multi_person_usb_image",
+  "usb_image::tests::rejects_existing_targets_and_builds_missing_an_enabled_person",
   "linux_volume::tests::parses_findmnt_json_fields_and_missing_values",
   "linux_volume::tests::expected_uuid_prefers_global_and_requires_shared_enabled_person_uuid_on_media",
   "linux_volume::tests::detects_only_linux_removable_media_prefixes",
@@ -470,6 +472,7 @@ evidence = [
   "verification/2026-11-03-linux-volume-adapter.md",
   "verification/2026-11-03-macos-volume-adapter.md",
   "verification/2026-11-03-usb-validated-copy.md",
+  "verification/2026-11-03-desktop-usb-flow.md",
 ]
 approved_deviations = []
 
@@ -507,6 +510,7 @@ evidence = [
   "verification/2026-10-26-gui-toolkit-prototypes.md",
   "verification/2026-11-03-desktop-profile-ui.md",
   "verification/2026-11-03-desktop-build-flow.md",
+  "verification/2026-11-03-desktop-usb-flow.md",
 ]
 approved_deviations = []
 

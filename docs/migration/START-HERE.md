@@ -55,9 +55,15 @@ prima/dopo sul volume; la parità USB completa e la qualifica di rimozione
 fisica restano pending ([ricevuta P10.05](verification/2026-11-03-usb-validated-copy.md)).
 P11.01 ha introdotto la GUI desktop con importazione profili e selezione
 session-only. P11.02 collega preflight, revisione duplicati, build in thread,
-progresso, errori, annullamento tra persone e ripresa incrementale. Proseguire
-con P11.03 per collegare export e risultato; l'interazione grafica manuale
-resta da provare in un ambiente con compositor/display.
+progresso, errori, annullamento tra persone e ripresa incrementale. P11.03
+assembla e valida l'immagine multi-persona, collega la sincronizzazione alla
+cartella `SaniKey` su volume Linux e presenta conferma e report; gate e fixture
+sintetiche passano ([ricevuta](verification/2026-11-03-desktop-usb-flow.md)).
+L'interazione grafica manuale resta da provare: il modulo compositor headless
+non è installato e non è disponibile un display. La copia USB nel desktop è
+Linux-only; Windows e macOS restano da qualificare. Prossima scheda: P11.04,
+prova GUI su Linux appena sarà disponibile un display, poi test Windows del
+manutentore.
 G2 ha approvato la semantica dell'identità USB; la qualifica degli adattatori
 multipiattaforma è ancora da fare ([ADR-0003](../decisions/0003-identita-usb.md)).
 P01.03 ha qualificato il campione in un checkout pulito e ha verificato il

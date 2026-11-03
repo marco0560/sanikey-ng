@@ -8,6 +8,7 @@ use crate::operation::{
     run_operation,
 };
 use crate::simulated_export::validate_txt_simulation;
+use crate::usb_image::validate_usb_image;
 #[cfg(target_os = "linux")]
 use crate::{config::AccountsConfig, linux_volume::validate_linux_volume};
 use sha2::{Digest, Sha256};
@@ -94,6 +95,25 @@ pub fn mirror_validated_txt_image(
     })
 }
 
+/// Copia un'immagine USB completa, verificando manifest, checksum e link prima e dopo.
+///
+/// # Errors
+///
+/// Restituisce un esito `Failed` USB se la sorgente non è valida, la copia fallisce
+/// o il target non supera la convalida finale.
+pub fn mirror_validated_usb_image(
+    source: impl AsRef<Path>,
+    target: impl AsRef<Path>,
+    cancellation: &CancellationToken,
+) -> OperationRun<UsbCopyResult> {
+    run_operation("usb.copy.validate_image", cancellation, |context| {
+        if context.is_cancelled() {
+            return Ok(empty_result(target.as_ref().to_path_buf()));
+        }
+        mirror_validated_usb_image_inner(source.as_ref(), target.as_ref(), context)
+    })
+}
+
 /// Copia un'immagine TXT su un volume Linux già esistente e lo ricontrolla.
 ///
 /// Valida il manifest sorgente, calcola lo spazio richiesto, verifica volume,
@@ -112,7 +132,11 @@ pub fn mirror_validated_txt_image_on_linux_volume(
     cancellation: &CancellationToken,
 ) -> OperationRun<UsbCopyResult> {
     run_operation("usb.copy.validate_linux_volume", cancellation, |context| {
+        if context.is_cancelled() {
+            return Ok(empty_result(target.as_ref().to_path_buf()));
+        }
         let source_input = source.as_ref();
+        reject_symlink_image_root(source_input)?;
         let source = fs::canonicalize(source_input).map_err(|cause| {
             filesystem_error("immagine sorgente non leggibile", source_input, cause)
         })?;
@@ -156,6 +180,73 @@ pub fn mirror_validated_txt_image_on_linux_volume(
     })
 }
 
+/// Copia un'immagine USB completa su un volume Linux già esistente e ne ricontrolla l'identità.
+///
+/// # Errors
+///
+/// Restituisce un esito `Failed` USB quando una verifica o la copia fallisce.
+#[cfg(target_os = "linux")]
+pub fn mirror_validated_usb_image_on_linux_volume(
+    config: &AccountsConfig,
+    source: impl AsRef<Path>,
+    target: impl AsRef<Path>,
+    cancellation: &CancellationToken,
+) -> OperationRun<UsbCopyResult> {
+    run_operation(
+        "usb.copy.validate_image_linux_volume",
+        cancellation,
+        |context| {
+            if context.is_cancelled() {
+                return Ok(empty_result(target.as_ref().to_path_buf()));
+            }
+            let source_input = source.as_ref();
+            reject_symlink_image_root(source_input)?;
+            let source = fs::canonicalize(source_input).map_err(|cause| {
+                filesystem_error("immagine sorgente non leggibile", source_input, cause)
+            })?;
+            validate_usb_image(&source).map_err(|cause| {
+                usb_error(format!(
+                    "immagine USB sorgente non valida: {}",
+                    cause.message()
+                ))
+            })?;
+            let image_bytes = source_directory_bytes(&source)?;
+            let volume_root = target.as_ref();
+            let before =
+                validate_linux_volume(config, volume_root, image_bytes).map_err(|error| {
+                    usb_error(format!(
+                        "preflight volume Linux fallito: {}",
+                        error.message()
+                    ))
+                })?;
+            let image_target = volume_root.join("SaniKey");
+            let result = mirror_directory_inner(&source, &image_target, context)?;
+            if context.is_cancelled() {
+                return Ok(result);
+            }
+            context.set_phase(OperationPhase::Finalizing);
+            validate_usb_image(&result.root)
+                .map_err(|cause| usb_error(format!("copia USB non valida: {}", cause.message())))?;
+            let after = validate_linux_volume(config, volume_root, 0).map_err(|error| {
+                usb_error(format!(
+                    "verifica finale volume Linux fallita: {}",
+                    error.message()
+                ))
+            })?;
+            if before.mount_target != after.mount_target
+                || before.filesystem != after.filesystem
+                || before.uuid != after.uuid
+            {
+                return Err(usb_error(
+                    "mount o identità del volume Linux cambiati durante la copia USB",
+                ));
+            }
+            context.report_progress(1, Some(1));
+            Ok(result)
+        },
+    )
+}
+
 fn mirror_validated_txt_image_inner(
     source: &Path,
     target: &Path,
@@ -178,6 +269,42 @@ fn mirror_validated_txt_image_inner(
         .map_err(|cause| usb_error(format!("copia USB non valida: {}", cause.message())))?;
     context.report_progress(1, Some(1));
     Ok(result)
+}
+
+fn mirror_validated_usb_image_inner(
+    source: &Path,
+    target: &Path,
+    context: &mut OperationContext<'_>,
+) -> Result<UsbCopyResult, OperationError> {
+    reject_symlink_image_root(source)?;
+    let source = fs::canonicalize(source)
+        .map_err(|cause| filesystem_error("immagine sorgente non leggibile", source, cause))?;
+    validate_usb_image(&source).map_err(|cause| {
+        usb_error(format!(
+            "immagine USB sorgente non valida: {}",
+            cause.message()
+        ))
+    })?;
+    let result = mirror_directory_inner(&source, target, context)?;
+    if context.is_cancelled() {
+        return Ok(result);
+    }
+    context.set_phase(OperationPhase::Finalizing);
+    validate_usb_image(&result.root)
+        .map_err(|cause| usb_error(format!("copia USB non valida: {}", cause.message())))?;
+    context.report_progress(1, Some(1));
+    Ok(result)
+}
+
+fn reject_symlink_image_root(source: &Path) -> Result<(), OperationError> {
+    let metadata = fs::symlink_metadata(source)
+        .map_err(|cause| filesystem_error("immagine sorgente non leggibile", source, cause))?;
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err(usb_error(
+            "la radice dell'immagine sorgente deve essere una directory reale",
+        ));
+    }
+    Ok(())
 }
 
 #[cfg(target_os = "linux")]

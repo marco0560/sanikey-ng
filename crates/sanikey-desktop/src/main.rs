@@ -4,12 +4,26 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
 
+#[cfg(target_os = "linux")]
+use std::sync::atomic::{AtomicUsize, Ordering};
+#[cfg(target_os = "linux")]
+static NEXT_USB_IMAGE: AtomicUsize = AtomicUsize::new(0);
+
 use eframe::egui::{self, Key, Modifiers};
 use sanikey_core::build::{BuildOptions, PatientBuildResult, build_patient};
 use sanikey_core::config::{AccountsConfig, AccountsProfile, PersonConfig};
 use sanikey_core::inventory::{find_duplicate_documents, scan_document_inventory};
+#[cfg(target_os = "linux")]
+use sanikey_core::linux_volume::{LinuxVolumeInfo, inspect_linux_volume};
 use sanikey_core::metadata::prepare_people_metadata;
+#[cfg(target_os = "linux")]
+use sanikey_core::operation::OperationOutcome;
 use sanikey_core::operation::{CancellationToken, OperationEvent, OperationPhase, run_operation};
+#[cfg(target_os = "linux")]
+use sanikey_core::usb_copy::{UsbCopyResult, mirror_validated_usb_image_on_linux_volume};
+use sanikey_core::usb_image::UsbImageResult;
+#[cfg(target_os = "linux")]
+use sanikey_core::usb_image::assemble_usb_image;
 
 #[derive(Clone, Debug)]
 struct PersonSelection {
@@ -29,6 +43,11 @@ struct ReviewSummary {
 enum DesktopEvent {
     Preflight(Result<ReviewSummary, String>),
     PatientBuilt(PatientBuildResult),
+    ImagePrepared(Result<UsbImageResult, String>),
+    #[cfg(target_os = "linux")]
+    TargetInspected(Result<LinuxVolumeInfo, String>),
+    #[cfg(target_os = "linux")]
+    UsbCopied(OperationOutcome<UsbCopyResult>),
     Progress(OperationEvent),
     Terminal(OperationEvent),
 }
@@ -43,6 +62,16 @@ struct DesktopApp {
     review: Option<ReviewSummary>,
     progress: Option<f32>,
     completed_people: Vec<String>,
+    completed_builds: Vec<PatientBuildResult>,
+    usb_image: Option<UsbImageResult>,
+    #[cfg(target_os = "linux")]
+    usb_target: Option<PathBuf>,
+    #[cfg(target_os = "linux")]
+    usb_volume: Option<LinuxVolumeInfo>,
+    #[cfg(target_os = "linux")]
+    confirm_usb_target: bool,
+    #[cfg(target_os = "linux")]
+    usb_copy: Option<UsbCopyResult>,
 }
 
 /// Inizializza la schermata in attesa dell'importazione di un profilo.
@@ -58,6 +87,16 @@ impl Default for DesktopApp {
             review: None,
             progress: Some(0.0),
             completed_people: Vec::new(),
+            completed_builds: Vec::new(),
+            usb_image: None,
+            #[cfg(target_os = "linux")]
+            usb_target: None,
+            #[cfg(target_os = "linux")]
+            usb_volume: None,
+            #[cfg(target_os = "linux")]
+            confirm_usb_target: false,
+            #[cfg(target_os = "linux")]
+            usb_copy: None,
         }
     }
 }
@@ -79,6 +118,15 @@ impl DesktopApp {
                 self.profile = Some(profile);
                 self.review = None;
                 self.completed_people.clear();
+                self.completed_builds.clear();
+                self.usb_image = None;
+                #[cfg(target_os = "linux")]
+                {
+                    self.usb_target = None;
+                    self.usb_volume = None;
+                    self.usb_copy = None;
+                    self.confirm_usb_target = false;
+                }
             }
             Err(error) => {
                 self.profile = None;
@@ -144,6 +192,15 @@ impl DesktopApp {
         self.receiver = Some(receiver);
         self.review = None;
         self.completed_people.clear();
+        self.completed_builds.clear();
+        self.usb_image = None;
+        #[cfg(target_os = "linux")]
+        {
+            self.usb_target = None;
+            self.usb_volume = None;
+            self.usb_copy = None;
+            self.confirm_usb_target = false;
+        }
         self.status = "Controllo privacy, metadati, documenti e duplicati…".to_owned();
         thread::spawn(move || {
             let result = review_profile(&config, &root);
@@ -171,10 +228,96 @@ impl DesktopApp {
         self.cancellation = Some(cancellation.clone());
         self.progress = Some(0.0);
         self.completed_people.clear();
+        self.completed_builds.clear();
+        self.usb_image = None;
+        #[cfg(target_os = "linux")]
+        {
+            self.usb_copy = None;
+        }
         self.status =
             "Build in corso; l'annullamento viene applicato al termine della persona corrente."
                 .to_owned();
         thread::spawn(move || build_selected_people(selected, cancellation, sender));
+    }
+
+    #[cfg(target_os = "linux")]
+    fn prepare_usb_image(&mut self) {
+        let Some(config) = self.effective_config() else {
+            return;
+        };
+        if self.completed_builds.len() != config.enabled_people().count() {
+            self.status =
+                "Completa tutte le build selezionate prima di preparare l'immagine USB.".to_owned();
+            return;
+        }
+        let builds = self.completed_builds.clone();
+        let Some(first) = config.enabled_people().next() else {
+            return;
+        };
+        let parent = first.local_build.parent().unwrap_or(&first.local_build);
+        let destination = parent.join(format!(
+            ".sanikey-usb-image-{}-{}",
+            std::process::id(),
+            NEXT_USB_IMAGE.fetch_add(1, Ordering::Relaxed)
+        ));
+        let (sender, receiver) = mpsc::channel();
+        self.receiver = Some(receiver);
+        self.progress = None;
+        self.status = "Preparazione e validazione dell'immagine USB multi-persona…".to_owned();
+        thread::spawn(move || {
+            let result = assemble_usb_image(&config, &builds, destination)
+                .map_err(|error| format!("{}: {}", error.code().as_str(), error.message()));
+            let _ = sender.send(DesktopEvent::ImagePrepared(result));
+        });
+    }
+
+    #[cfg(target_os = "linux")]
+    fn choose_usb_target(&mut self) {
+        let Some(target) = rfd::FileDialog::new().pick_folder() else {
+            return;
+        };
+        let worker_target = target.clone();
+        let (sender, receiver) = mpsc::channel();
+        self.receiver = Some(receiver);
+        self.progress = None;
+        self.status = "Lettura del filesystem e dello spazio libero del volume…".to_owned();
+        thread::spawn(move || {
+            let result = inspect_linux_volume(&worker_target)
+                .map_err(|error| format!("{}: {}", error.code().as_str(), error.message()));
+            let _ = sender.send(DesktopEvent::TargetInspected(result));
+        });
+        self.usb_target = Some(target);
+        self.usb_volume = None;
+        self.confirm_usb_target = false;
+        self.usb_copy = None;
+    }
+
+    #[cfg(target_os = "linux")]
+    fn copy_usb_image(&mut self) {
+        let (Some(config), Some(image), Some(target)) = (
+            self.effective_config(),
+            self.usb_image.clone(),
+            self.usb_target.clone(),
+        ) else {
+            return;
+        };
+        if !self.confirm_usb_target {
+            self.status = "Conferma esplicitamente la destinazione prima della copia.".to_owned();
+            return;
+        }
+        let (sender, receiver) = mpsc::channel();
+        self.receiver = Some(receiver);
+        self.progress = None;
+        self.status = "Copia USB in corso; verifica finale in attesa…".to_owned();
+        thread::spawn(move || {
+            let run = mirror_validated_usb_image_on_linux_volume(
+                &config,
+                &image.root,
+                &target,
+                &CancellationToken::default(),
+            );
+            let _ = sender.send(DesktopEvent::UsbCopied(run.outcome));
+        });
     }
 
     fn receive_worker_events(&mut self) {
@@ -210,7 +353,54 @@ impl DesktopApp {
                     self.review = None;
                 }
                 DesktopEvent::PatientBuilt(result) => {
-                    self.completed_people.push(result.patient_id);
+                    self.completed_people.push(result.patient_id.clone());
+                    self.completed_builds.push(result);
+                }
+                DesktopEvent::ImagePrepared(Ok(image)) => {
+                    self.status = format!(
+                        "Immagine pronta e validata: {} persone, {} file, {} byte.",
+                        image.patients, image.files, image.bytes
+                    );
+                    self.usb_image = Some(image);
+                    self.receiver = None;
+                }
+                DesktopEvent::ImagePrepared(Err(error)) => {
+                    self.status = format!("Preparazione immagine fallita: {error}");
+                    self.receiver = None;
+                }
+                #[cfg(target_os = "linux")]
+                DesktopEvent::TargetInspected(Ok(volume)) => {
+                    self.status =
+                        "Volume Linux letto. Verifica target e conferma prima della copia."
+                            .to_owned();
+                    self.usb_volume = Some(volume);
+                    self.receiver = None;
+                }
+                #[cfg(target_os = "linux")]
+                DesktopEvent::TargetInspected(Err(error)) => {
+                    self.status = format!("Target USB non disponibile: {error}");
+                    self.usb_target = None;
+                    self.receiver = None;
+                }
+                #[cfg(target_os = "linux")]
+                DesktopEvent::UsbCopied(OperationOutcome::Succeeded(result)) => {
+                    self.status = "Copia completata e immagine USB validata sul volume.".to_owned();
+                    self.usb_copy = Some(result);
+                    self.receiver = None;
+                }
+                #[cfg(target_os = "linux")]
+                DesktopEvent::UsbCopied(OperationOutcome::Cancelled) => {
+                    self.status = "Copia annullata; il target può essere parziale e può essere riallineato ripetendo la copia.".to_owned();
+                    self.receiver = None;
+                }
+                #[cfg(target_os = "linux")]
+                DesktopEvent::UsbCopied(OperationOutcome::Failed(error)) => {
+                    self.status = format!(
+                        "Copia USB fallita ({}): {}",
+                        error.code().as_str(),
+                        error.message()
+                    );
+                    self.receiver = None;
                 }
                 DesktopEvent::Progress(event) => match event {
                     OperationEvent::Started { .. } => {
@@ -467,6 +657,61 @@ impl eframe::App for DesktopApp {
                 self.status = "Annullamento richiesto; attendo il punto sicuro.".to_owned();
             }
         });
+
+        #[cfg(target_os = "linux")]
+        if !self.completed_builds.is_empty() && self.receiver.is_none() {
+            ui.separator();
+            ui.heading("Export USB Linux");
+            if let Some(image) = &self.usb_image {
+                ui.label(format!(
+                    "Immagine verificata: {} persone · {} file · {} byte",
+                    image.patients, image.files, image.bytes
+                ));
+                ui.monospace(image.root.display().to_string());
+            } else if ui.button("Prepara e valida immagine USB").clicked() {
+                self.prepare_usb_image();
+            }
+            if self.usb_image.is_some() {
+                if ui.button("Scegli volume Linux…").clicked() {
+                    self.choose_usb_target();
+                }
+                if let Some(target) = &self.usb_target {
+                    ui.label(format!(
+                        "Volume selezionato: {} · cartella di export: {}",
+                        target.display(),
+                        target.join("SaniKey").display()
+                    ));
+                }
+                if let Some(volume) = &self.usb_volume {
+                    ui.label(format!(
+                        "Mount: {} · filesystem: {} · UUID: {} · liberi: {} byte",
+                        volume
+                            .mount_target
+                            .as_deref()
+                            .unwrap_or(Path::new("sconosciuto"))
+                            .display(),
+                        volume.filesystem.as_deref().unwrap_or("sconosciuto"),
+                        volume.uuid.as_deref().unwrap_or("sconosciuto"),
+                        volume.available_bytes
+                    ));
+                    ui.colored_label(egui::Color32::DARK_RED,
+                        "La copia aggiorna la cartella SaniKey nel volume e rimuove da quella cartella i file che non appartengono all'immagine. Gli altri file del volume restano intatti.");
+                    ui.checkbox(&mut self.confirm_usb_target, "Confermo che il volume mostrato è quello corretto e autorizzo l'aggiornamento della cartella SaniKey.");
+                    if ui
+                        .add_enabled(
+                            self.confirm_usb_target && self.receiver.is_none(),
+                            egui::Button::new("Copia, verifica e mostra il risultato"),
+                        )
+                        .clicked()
+                    {
+                        self.copy_usb_image();
+                    }
+                }
+                if let Some(copy) = &self.usb_copy {
+                    ui.label(format!("Report copia: {} copiati · {} riutilizzati · {} rimossi · {} byte scritti · target validato.", copy.copied_files, copy.reused_files, copy.removed_files, copy.bytes_copied));
+                }
+            }
+        }
 
         if let Some(review) = &self.review {
             ui.heading("Riepilogo preflight");
