@@ -88,6 +88,13 @@ fuori dal perimetro; la qualifica multipiattaforma è ancora pending.
 directory, crea un manifest deterministico con checksum, verifica l'integrità
 e i link locali e finalizza l'albero tramite rename dallo staging. Non rileva né
 scrive su supporti fisici e non costituisce la capability USB completa.
+`sanikey-core::usb_copy::mirror_directory` sincronizza una directory immagine
+esistente su una destinazione: valida entrambi gli alberi, rifiuta overlap e
+link simbolici, riusa i file con digest uguale, verifica le copie atomiche e
+rimuove gli obsoleti dopo le copie riuscite. Emette progresso e osserva
+l'annullamento tra file; rieseguire l'operazione completa un aggiornamento
+interrotto. L'API non assembla ancora l'immagine prodotto e non identifica o
+convalida volumi fisici.
 La distinzione tra identità filesystem/volume (`usb_uuid`) e ID di deploy è
 definita in [ADR-0003](decisions/0003-identita-usb.md); gli adattatori e la
 qualifica multipiattaforma restano da realizzare.

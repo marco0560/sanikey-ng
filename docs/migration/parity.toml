@@ -435,10 +435,19 @@ status = "pending"
 baseline_source = "src/sanikey/usb.py"
 baseline_test = "tests/test_usb.py"
 rust_tests = [
+  "usb_copy::tests::mirrors_a_manifest_verified_image_and_reuses_unchanged_files",
+  "usb_copy::tests::rejects_unsafe_targets_before_modifying_them_and_recovers_after_correction",
+  "usb_copy::tests::reports_progress_and_honors_cancellation_before_copying",
+  "usb_copy::tests::rejects_symlinks_in_source_and_destination",
+  "usb_copy::tests::rejects_source_target_overlap",
   "simulated_export::tests::simulated_export_is_repeatable_detects_tampering_and_preserves_originals",
   "simulated_export::tests::simulated_export_rejects_existing_targets_and_input_overlaps",
 ]
-evidence = ["verification/2026-10-26-volume-identity-feasibility.md", "verification/2026-10-28-simulated-export.md"]
+evidence = [
+  "verification/2026-10-26-volume-identity-feasibility.md",
+  "verification/2026-10-28-simulated-export.md",
+  "verification/2026-11-03-portable-usb-copy.md",
+]
 approved_deviations = []
 
 [[capability]]
