@@ -557,6 +557,15 @@ fn choose_folder(ui: &mut egui::Ui, label_text: &str, path: &mut PathBuf) {
     });
 }
 
+/// Sceglie un rosso leggibile sia sul fondo chiaro sia su quello scuro.
+fn warning_text_color(dark_mode: bool) -> egui::Color32 {
+    if dark_mode {
+        egui::Color32::LIGHT_RED
+    } else {
+        egui::Color32::DARK_RED
+    }
+}
+
 /// Collega gli eventi del core ai controlli e allo stato visuale.
 impl eframe::App for DesktopApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
@@ -603,7 +612,7 @@ impl DesktopApp {
             ));
             if !self.selections.iter().any(|person| person.selected) {
                 ui.colored_label(
-                    egui::Color32::DARK_RED,
+                    warning_text_color(ui.visuals().dark_mode),
                     "Nessuna persona selezionata: selezionane almeno una.",
                 );
             }
@@ -627,7 +636,10 @@ impl DesktopApp {
                 });
             });
         } else {
-            ui.colored_label(egui::Color32::DARK_RED, "Profilo non caricato.");
+            ui.colored_label(
+                warning_text_color(ui.visuals().dark_mode),
+                "Profilo non caricato.",
+            );
         }
 
         ui.separator();
@@ -701,7 +713,7 @@ impl DesktopApp {
                         volume.uuid.as_deref().unwrap_or("sconosciuto"),
                         volume.available_bytes
                     ));
-                    ui.colored_label(egui::Color32::DARK_RED,
+                    ui.colored_label(warning_text_color(ui.visuals().dark_mode),
                         "La copia aggiorna la cartella SaniKey nel volume e rimuove da quella cartella i file che non appartengono all'immagine. Gli altri file del volume restano intatti.");
                     ui.checkbox(&mut self.confirm_usb_target, "Confermo che il volume mostrato è quello corretto e autorizzo l'aggiornamento della cartella SaniKey.");
                     if ui
@@ -777,7 +789,8 @@ fn main() -> eframe::Result {
 #[cfg(test)]
 mod tests {
     use super::{
-        DesktopApp, DesktopEvent, build_selected_people, build_selected_people_with, review_profile,
+        DesktopApp, DesktopEvent, build_selected_people, build_selected_people_with,
+        review_profile, warning_text_color,
     };
     use eframe::egui;
     use sanikey_core::build::{BuildCounts, PatientBuildResult};
@@ -1335,5 +1348,11 @@ enabled = false
             "Completa tutti i percorsi delle persone selezionate prima del preflight."
         );
         assert!(error_is_accessible);
+    }
+
+    #[test]
+    fn warning_text_color_matches_light_and_dark_themes() {
+        assert_eq!(warning_text_color(true), egui::Color32::LIGHT_RED);
+        assert_eq!(warning_text_color(false), egui::Color32::DARK_RED);
     }
 }
