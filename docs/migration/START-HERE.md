@@ -50,7 +50,10 @@ Il manutentore ha chiesto il 2026-11-03 di completare prima le verifiche
 disponibili su Linux e passare ai test Windows solo dopo. P10.03 resta pendente
 per la qualifica Windows. P10.04 ha aggiunto l'adattatore macOS e i controlli
 sintetici eseguibili su Linux; compilazione e qualifica macOS restano pendenti.
-La prossima scheda è P10.05 ([ricevuta P10.04](verification/2026-11-03-macos-volume-adapter.md)).
+P10.05 aggiunge la copia verificata del sottoinsieme TXT e il controllo Linux
+prima/dopo sul volume; la parità USB completa e la qualifica di rimozione
+fisica restano pending ([ricevuta P10.05](verification/2026-11-03-usb-validated-copy.md)).
+La prossima scheda indipendente è P11.01, GUI egui/eframe approvata.
 G2 ha approvato la semantica dell'identità USB; la qualifica degli adattatori
 multipiattaforma è ancora da fare ([ADR-0003](../decisions/0003-identita-usb.md)).
 P01.03 ha qualificato il campione in un checkout pulito e ha verificato il

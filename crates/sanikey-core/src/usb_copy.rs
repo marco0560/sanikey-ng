@@ -7,6 +7,9 @@ use crate::operation::{
     CancellationToken, ErrorCode, OperationContext, OperationError, OperationPhase, OperationRun,
     run_operation,
 };
+use crate::simulated_export::validate_txt_simulation;
+#[cfg(target_os = "linux")]
+use crate::{config::AccountsConfig, linux_volume::validate_linux_volume};
 use sha2::{Digest, Sha256};
 use std::collections::HashSet;
 use std::fs::{self, File, OpenOptions};
@@ -67,6 +70,128 @@ pub fn mirror_directory(
 ) -> OperationRun<UsbCopyResult> {
     run_operation("usb.copy", cancellation, |context| {
         mirror_directory_inner(source.as_ref(), target.as_ref(), context)
+    })
+}
+
+/// Copia un'immagine TXT già costruita, convalida manifest e link prima e dopo.
+///
+/// La verifica iniziale impedisce di pubblicare un'immagine sorgente corrotta;
+/// quella finale garantisce che il target contenga l'immagine verificata.
+/// L'annullamento resta distinto dal successo e può lasciare un target parziale
+/// da riallineare con una successiva esecuzione.
+///
+/// # Errors
+///
+/// Restituisce un esito `Failed` USB se la sorgente non è valida, la copia
+/// fallisce o il target non supera la convalida finale.
+pub fn mirror_validated_txt_image(
+    source: impl AsRef<Path>,
+    target: impl AsRef<Path>,
+    cancellation: &CancellationToken,
+) -> OperationRun<UsbCopyResult> {
+    run_operation("usb.copy.validate", cancellation, |context| {
+        mirror_validated_txt_image_inner(source.as_ref(), target.as_ref(), context)
+    })
+}
+
+/// Copia un'immagine TXT su un volume Linux già esistente e lo ricontrolla.
+///
+/// Valida il manifest sorgente, calcola lo spazio richiesto, verifica volume,
+/// identità, filesystem e spazio prima della copia, poi valida checksum e link
+/// sul target e rilegge il volume. Un cambio di mount o identità durante la
+/// copia fallisce l'operazione. Non crea il target.
+///
+/// # Errors
+///
+/// Restituisce un esito `Failed` USB quando una verifica o la copia fallisce.
+#[cfg(target_os = "linux")]
+pub fn mirror_validated_txt_image_on_linux_volume(
+    config: &AccountsConfig,
+    source: impl AsRef<Path>,
+    target: impl AsRef<Path>,
+    cancellation: &CancellationToken,
+) -> OperationRun<UsbCopyResult> {
+    run_operation("usb.copy.validate_linux_volume", cancellation, |context| {
+        let source_input = source.as_ref();
+        let source = fs::canonicalize(source_input).map_err(|cause| {
+            filesystem_error("immagine sorgente non leggibile", source_input, cause)
+        })?;
+        validate_txt_simulation(&source).map_err(|cause| {
+            usb_error(format!(
+                "immagine USB sorgente non valida: {}",
+                cause.message()
+            ))
+        })?;
+        let image_bytes = source_directory_bytes(&source)?;
+        let target = target.as_ref();
+        let before = validate_linux_volume(config, target, image_bytes).map_err(|error| {
+            usb_error(format!(
+                "preflight volume Linux fallito: {}",
+                error.message()
+            ))
+        })?;
+        let result = mirror_directory_inner(&source, target, context)?;
+        if context.is_cancelled() {
+            return Ok(result);
+        }
+        context.set_phase(OperationPhase::Finalizing);
+        validate_txt_simulation(&result.root)
+            .map_err(|cause| usb_error(format!("copia USB non valida: {}", cause.message())))?;
+        let after = validate_linux_volume(config, target, 0).map_err(|error| {
+            usb_error(format!(
+                "verifica finale volume Linux fallita: {}",
+                error.message()
+            ))
+        })?;
+        if before.mount_target != after.mount_target
+            || before.filesystem != after.filesystem
+            || before.uuid != after.uuid
+        {
+            return Err(usb_error(
+                "mount o identità del volume Linux cambiati durante la copia USB",
+            ));
+        }
+        context.report_progress(1, Some(1));
+        Ok(result)
+    })
+}
+
+fn mirror_validated_txt_image_inner(
+    source: &Path,
+    target: &Path,
+    context: &mut OperationContext<'_>,
+) -> Result<UsbCopyResult, OperationError> {
+    let source = fs::canonicalize(source)
+        .map_err(|cause| filesystem_error("immagine sorgente non leggibile", source, cause))?;
+    validate_txt_simulation(&source).map_err(|cause| {
+        usb_error(format!(
+            "immagine USB sorgente non valida: {}",
+            cause.message()
+        ))
+    })?;
+    let result = mirror_directory_inner(&source, target, context)?;
+    if context.is_cancelled() {
+        return Ok(result);
+    }
+    context.set_phase(OperationPhase::Finalizing);
+    validate_txt_simulation(&result.root)
+        .map_err(|cause| usb_error(format!("copia USB non valida: {}", cause.message())))?;
+    context.report_progress(1, Some(1));
+    Ok(result)
+}
+
+#[cfg(target_os = "linux")]
+fn source_directory_bytes(source: &Path) -> Result<u64, OperationError> {
+    let mut tree = SourceTree::default();
+    collect_source_tree(source, source, &mut tree)?;
+    tree.files.iter().try_fold(0_u64, |total, relative| {
+        let path = source.join(relative);
+        let length = fs::metadata(&path)
+            .map_err(|cause| filesystem_error("file immagine non leggibile", &path, cause))?
+            .len();
+        total
+            .checked_add(length)
+            .ok_or_else(|| usb_error("dimensione immagine USB fuori intervallo"))
     })
 }
 

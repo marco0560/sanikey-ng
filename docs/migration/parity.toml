@@ -436,6 +436,9 @@ baseline_source = "src/sanikey/usb.py"
 baseline_test = "tests/test_usb.py"
 rust_tests = [
   "usb_copy::tests::mirrors_a_manifest_verified_image_and_reuses_unchanged_files",
+  "usb_copy::tests::validated_copy_repairs_target_tampering_and_rejects_invalid_source_without_changes",
+  "usb_copy::tests::validated_copy_reports_cancellation_without_success_or_target_creation",
+  "usb_copy::tests::linux_volume_copy_validates_existing_mount_before_and_after_transfer",
   "usb_copy::tests::rejects_unsafe_targets_before_modifying_them_and_recovers_after_correction",
   "usb_copy::tests::reports_progress_and_honors_cancellation_before_copying",
   "usb_copy::tests::rejects_symlinks_in_source_and_destination",
@@ -466,6 +469,7 @@ evidence = [
   "verification/2026-11-03-portable-usb-copy.md",
   "verification/2026-11-03-linux-volume-adapter.md",
   "verification/2026-11-03-macos-volume-adapter.md",
+  "verification/2026-11-03-usb-validated-copy.md",
 ]
 approved_deviations = []
 
