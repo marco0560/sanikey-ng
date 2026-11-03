@@ -1195,4 +1195,52 @@ enabled = false
         output.drop_without_applying_deltas();
         assert!(context.memory(|memory| memory.focused()).is_some());
     }
+
+    #[test]
+    fn accessibility_tree_exposes_form_names_and_invalid_profile_status() {
+        let directory = TestDirectory::new();
+        let profile_path = directory.0.join("invalid.toml");
+        fs::write(&profile_path, "[global]\nconfig_version = 999\n")
+            .expect("profilo sintetico non valido");
+        let mut app = DesktopApp::default();
+        app.import_profile(&profile_path);
+
+        let context = egui::Context::default();
+        context.enable_accesskit();
+        let mut frame = eframe::Frame::_new_kittest();
+        let output = context.run_ui(egui::RawInput::default(), |ui| {
+            eframe::App::ui(&mut app, ui, &mut frame);
+        });
+        let tree = output
+            .platform_output
+            .accesskit_update
+            .as_ref()
+            .expect("albero AccessKit prodotto dal frame");
+        let labels = tree
+            .nodes
+            .iter()
+            .filter_map(|(_, node)| node.label())
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        let input_name = tree
+            .nodes
+            .iter()
+            .find(|(_, node)| node.role() == egui::accesskit::Role::TextInput)
+            .and_then(|(_, node)| node.labelled_by().first())
+            .and_then(|label_id| tree.nodes.iter().find(|(node_id, _)| node_id == label_id))
+            .and_then(|(_, node)| node.value())
+            .map(str::to_owned);
+        let status_is_accessible = tree
+            .nodes
+            .iter()
+            .any(|(_, node)| node.value() == Some(app.status.as_str()));
+
+        output.drop_without_applying_deltas();
+        assert_eq!(input_name.as_deref(), Some("Profilo account"));
+        assert!(
+            labels.iter().any(|label| label == "Apri profilo… (Ctrl+O)"),
+            "{labels:?}"
+        );
+        assert!(status_is_accessible);
+    }
 }

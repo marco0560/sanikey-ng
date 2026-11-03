@@ -63,10 +63,11 @@ La finestra si avvia sul compositor Plasma dell'host. Le prove headless Linux
 coprono Tab/focus, temi chiaro/scuro, scaling 1×/2× e viewport stretto. Una
 prova nativa a 460×360 ha rilevato il taglio del pulsante profilo; le righe
 sono state rese a capo e il test verifica che la label resti nel rettangolo di
-clip. La nuova schermata non è stata ricatturata in modo affidabile dopo la
-correzione; tastiera fisica, errori interattivi e tecnologie assistive restano
-pending. La copia USB nel desktop è Linux-only; Windows e macOS restano da
-qualificare. Il manutentore proseguirà con i test Windows.
+clip. I test controllano inoltre i nomi del campo e del pulsante, e il messaggio
+d'errore nel tree AccessKit. La nuova schermata non è stata ricatturata in modo
+affidabile dopo la correzione; tastiera fisica, screen reader e flussi di errore
+interattivi restano pending. La copia USB nel desktop è Linux-only; Windows e
+macOS restano da qualificare. Il manutentore proseguirà con i test Windows.
 G2 ha approvato la semantica dell'identità USB; la qualifica degli adattatori
 multipiattaforma è ancora da fare ([ADR-0003](../decisions/0003-identita-usb.md)).
 P01.03 ha qualificato il campione in un checkout pulito e ha verificato il
