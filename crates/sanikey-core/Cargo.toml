@@ -32,5 +32,8 @@ unicode-normalization = "=0.1.25"
 xz2 = "0.1.7"
 zip = { version = "=8.6.0", default-features = false, features = ["bzip2", "deflate", "lzma"] }
 
+[target.'cfg(target_os = "linux")'.dependencies]
+rustix = { version = "=1.1.5", features = ["fs"] }
+
 [dev-dependencies]
 sevenz-rust2 = { version = "=0.24.0", default-features = false, features = ["compress"] }
