@@ -494,11 +494,19 @@ baseline_test = ""
 rust_tests = [
   "crates/sanikey-desktop/src/main.rs::tests::import_keeps_profile_unchanged_and_selects_only_enabled_people",
   "crates/sanikey-desktop/src/main.rs::tests::invalid_profile_clears_loaded_state_and_reports_error",
+  "crates/sanikey-desktop/src/main.rs::tests::preflight_lists_duplicate_document_paths_for_review",
+  "crates/sanikey-desktop/src/main.rs::tests::build_emits_progress_success_and_incremental_resume_results",
+  "crates/sanikey-desktop/src/main.rs::tests::build_reports_failure_and_stops_at_a_pre_requested_cancellation",
+  "crates/sanikey-desktop/src/main.rs::tests::terminal_events_set_distinct_success_failure_and_cancel_states",
+  "crates/sanikey-desktop/src/main.rs::tests::cancellation_requested_during_a_person_stops_at_the_next_person_boundary",
+  "crates/sanikey-desktop/src/main.rs::tests::manually_entered_relative_paths_use_the_profile_base",
+  "crates/sanikey-desktop/src/main.rs::tests::preflight_rejects_empty_selected_folder_paths",
 ]
 evidence = [
   "verification/2026-10-26-gui-toolkit-candidates.md",
   "verification/2026-10-26-gui-toolkit-prototypes.md",
   "verification/2026-11-03-desktop-profile-ui.md",
+  "verification/2026-11-03-desktop-build-flow.md",
 ]
 approved_deviations = []
 

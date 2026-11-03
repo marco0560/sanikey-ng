@@ -1,12 +1,13 @@
 # Architettura prevista
 
-Stato: piano approvato; il workspace P03.01 contiene i crate iniziali
-`sanikey-core`, `sanikey-cli` e `xtask`. P03.02 aggiunge al core errori
+Stato: piano approvato; il workspace contiene `sanikey-core`, `sanikey-cli`,
+`sanikey-desktop` e `xtask`. P03.02 aggiunge al core errori
 categorizzati, eventi tipizzati e annullamento cooperativo; la CLI implementa
 informazioni/versione. Le fasi P06–P09 hanno aggiunto pipeline documentali,
 database, export, frontend offline e orchestrazione di build completa e
-incrementale; l'integrazione CLI e la GUI restano da realizzare.
-Il crate desktop attende G1, approvato per egui/eframe 0.37.0.
+incrementale; la GUI importa profili e collega il preflight e la build. CLI di
+build ed export nella GUI restano da realizzare. G1 ha approvato egui/eframe
+0.37.0.
 
 ## Componenti
 
@@ -131,7 +132,10 @@ copia USB e validazione.
 GUI e CLI chiamano gli stessi servizi. L'avanzamento è costituito da eventi
 tipizzati; il testo italiano è una rappresentazione per l'utente.
 Le operazioni lunghe devono mantenere reattiva la GUI e dichiarare i propri
-punti sicuri di annullamento e ripresa.
+punti sicuri di annullamento e ripresa. La GUI esegue preflight e build su
+thread di lavoro; la build segnala l'avanzamento fra le persone e osserva
+l'annullamento dopo la persona corrente. Gli artefatti completati restano
+riutilizzabili tramite la modalità incrementale.
 
 Il core mantiene separati i codici macchina dei fallimenti dai messaggi
 italiani. Ogni operazione emette un solo evento terminale dopo gli eventi di

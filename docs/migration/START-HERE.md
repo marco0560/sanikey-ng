@@ -53,9 +53,11 @@ sintetici eseguibili su Linux; compilazione e qualifica macOS restano pendenti.
 P10.05 aggiunge la copia verificata del sottoinsieme TXT e il controllo Linux
 prima/dopo sul volume; la parità USB completa e la qualifica di rimozione
 fisica restano pending ([ricevuta P10.05](verification/2026-11-03-usb-validated-copy.md)).
-P11.01 ha introdotto la GUI desktop Linux con importazione dei profili,
-selezione persone e cartelle session-only. Proseguire con P11.02 per collegare
-i controlli alla generazione; l'interazione grafica manuale resta da provare.
+P11.01 ha introdotto la GUI desktop con importazione profili e selezione
+session-only. P11.02 collega preflight, revisione duplicati, build in thread,
+progresso, errori, annullamento tra persone e ripresa incrementale. Proseguire
+con P11.03 per collegare export e risultato; l'interazione grafica manuale
+resta da provare in un ambiente con compositor/display.
 G2 ha approvato la semantica dell'identità USB; la qualifica degli adattatori
 multipiattaforma è ancora da fare ([ADR-0003](../decisions/0003-identita-usb.md)).
 P01.03 ha qualificato il campione in un checkout pulito e ha verificato il
