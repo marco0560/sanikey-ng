@@ -38,8 +38,10 @@ aperta perché il target Windows non è installato e manca una VM/host Windows.
 Il 2026-11-03 il manutentore ha chiesto di completare prima le verifiche
 disponibili su Linux e fare i test Windows solo dopo; la sequenza non dichiara
 superate le qualifiche Windows o macOS.
-Stato GUI: G1 approvato il 2026-10-27 per egui/eframe 0.37.0; crate desktop
-di prodotto non ancora introdotto.
+Stato GUI: G1 approvato il 2026-10-27 per egui/eframe 0.37.0; P11.01
+introduce la GUI desktop con importazione profilo, selezione persone e scelta
+session-only delle cartelle. Le schede successive collegano generazione ed
+export; l'interazione grafica resta da qualificare manualmente.
 
 | Scheda | Stato | Evidenza |
 | --- | --- | --- |
@@ -88,6 +90,7 @@ di prodotto non ancora introdotto.
 | P10.03 | implementazione presente; qualificazione Windows pending | Aggiunto crate Win32 con FFI isolato e validator core; GUID globale/per-persona, mismatch, exFAT e spazio hanno 3 test sintetici Linux; conversione UTF-16 1 test; Codira index e gate `cargo xtask check` passano (192 core, 2 ignored, 8 xtask, 3 CLI, 1 crate Windows, 2 doctest, pubblicabilità 281 file); hook pre-commit superati con i tre prototipi GUI; target check Windows non disponibile (`can't find crate for core`), nessun runtime Windows/VM; scheda non completata; commit funzionale `12d8f27`; [ricevuta](verification/2026-11-03-windows-volume-adapter.md) |
 | P10.04 | implementazione presente; qualificazione macOS pending | Crate `sanikey-macos-volume` isola `statfs`, usa `diskutil info -plist` per VolumeUUID e mantiene esplicito il caso senza UUID; test sintetici: 2 parser + 4 policy; `cargo xtask check` exit 0 (196 core, 2 ignored, 8 xtask, 3 CLI, 2 crate volume, 2 doctest, pubblicabilità 286 file); tre prototipi GUI controllati e lockfile aggiornati; Codira index 1 indicizzato, 219 riusati, 0 errori; target Apple non installato (`can't find crate for core`), nessun runtime macOS; [ricevuta](verification/2026-11-03-macos-volume-adapter.md) |
 | P10.05 | sottoinsieme TXT implementato; parità USB e prove fisiche pending | `mirror_validated_txt_image` valida sorgente e target con manifest/checksum/link; flusso Linux esegue preflight e confronto mount/filesystem/UUID dopo copia; 8 test `usb_copy` superati, incluso target tamper repair e sorgente invalida senza scritture; `cargo xtask check` exit 0 (199 core, 2 ignored, 8 xtask, 3 CLI, 2 crate macOS-volume, 1 Windows-volume, 2 doctest, pubblicabilità 287 file, rustdoc); Codira 4 indicizzati, 220 riusati, 0 errori; nessun hardware; baseline Python solo letta; [ricevuta](verification/2026-11-03-usb-validated-copy.md) |
+| P11.01 | implementata su Linux; prova grafica e altri OS pending | `sanikey-desktop` usa egui/eframe 0.37.0 e `rfd` già usato dal prototipo; importa `AccountsProfile` nel core, abilita selezione persone e cartelle per sessione senza modificare il profilo; Ctrl+O, label accessibili e stati profilo/persona invalidi; test sintetici import valido e TOML invalido 2/2; `cargo xtask check` superato (199 core, 2 ignored, 3 CLI, 2 desktop, 1 Windows-volume, 2 macOS-volume, 8 xtask, 2 doctest, pubblicabilità 290 file, rustdoc); Codira 2 indicizzati, 223 riusati, 0 errori; avvio GUI non possibile nell'ambiente: Wayland senza compositor, X11 senza display; [ricevuta](verification/2026-11-03-desktop-profile-ui.md) |
 
 Le schede non registrate sopra sono da eseguire; l'indice completo è in
 [tasks/README.md](tasks/README.md). La parità per capability è mantenuta in
@@ -121,10 +124,10 @@ autorizzazione specifica.
 
 ## Prossima sessione
 
-Leggere [START-HERE.md](START-HERE.md). Proseguire da P11.01, che dipende da
-G1/P05.03/P03.02 ed è indipendente dalle qualifiche runtime Windows/macOS e
-dalla qualifica fisica USB, tutte ancora pending. Il manutentore eseguirà i
-test Windows dopo le verifiche Linux.
+Leggere [START-HERE.md](START-HERE.md). P11.01 è implementata su Linux; la
+prossima scheda è P11.02, collegamento controlli e generazione. La prova
+grafica manuale e le qualifiche runtime Windows/macOS e USB fisica restano
+pending. Il manutentore eseguirà i test Windows dopo le verifiche Linux.
 G1 approvato per egui/eframe 0.37.0. P08.03 è completata al livello
 core; la capability AIFA resta pending finché il servizio reale non viene
 qualificato. P09.01 fornisce il builder completo; P09.02 esporta i dati e i

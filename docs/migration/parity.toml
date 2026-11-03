@@ -41,7 +41,7 @@ browser_file_url_qualification = true
 id = "configuration"
 description = "Configurazione e profili"
 phase = "P05"
-status = "implemented"
+status = "pending"
 baseline_source = "src/sanikey/config.py"
 baseline_test = "tests/test_config.py"
 rust_tests = [
@@ -488,13 +488,17 @@ approved_deviations = []
 id = "desktop"
 description = "GUI del generatore"
 phase = "P11"
-status = "pending"
+status = "implemented"
 baseline_source = ""
 baseline_test = ""
-rust_tests = []
+rust_tests = [
+  "crates/sanikey-desktop/src/main.rs::tests::import_keeps_profile_unchanged_and_selects_only_enabled_people",
+  "crates/sanikey-desktop/src/main.rs::tests::invalid_profile_clears_loaded_state_and_reports_error",
+]
 evidence = [
   "verification/2026-10-26-gui-toolkit-candidates.md",
   "verification/2026-10-26-gui-toolkit-prototypes.md",
+  "verification/2026-11-03-desktop-profile-ui.md",
 ]
 approved_deviations = []
 

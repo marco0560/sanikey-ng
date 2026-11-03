@@ -2,6 +2,7 @@
 members = [
     "crates/sanikey-core",
     "crates/sanikey-cli",
+    "crates/sanikey-desktop",
     "crates/sanikey-windows-volume",
     "crates/sanikey-macos-volume",
     "xtask",
