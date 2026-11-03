@@ -1,5 +1,10 @@
 [workspace]
-members = ["crates/sanikey-core", "crates/sanikey-cli", "xtask"]
+members = [
+    "crates/sanikey-core",
+    "crates/sanikey-cli",
+    "crates/sanikey-windows-volume",
+    "xtask",
+]
 resolver = "3"
 
 [workspace.package]

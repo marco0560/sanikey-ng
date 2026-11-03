@@ -4038,6 +4038,7 @@ dependencies = [
  "rusqlite",
  "rust_decimal",
  "rustix 1.1.5",
+ "sanikey-windows-volume",
  "serde_json",
  "sevenz-rust2",
  "sha2 0.10.9",
@@ -4064,6 +4065,13 @@ name = "sanikey-prototype-gui-protocol"
 version = "0.1.0"
 dependencies = [
  "sanikey-core",
+]
+
+[[package]]
+name = "sanikey-windows-volume"
+version = "0.1.0"
+dependencies = [
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

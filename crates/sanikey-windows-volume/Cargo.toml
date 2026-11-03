@@ -1,0 +1,15 @@
+[package]
+name = "sanikey-windows-volume"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-sys = {
+    version = "=0.61.2",
+    features = ["Win32_Foundation", "Win32_Storage_FileSystem"],
+}

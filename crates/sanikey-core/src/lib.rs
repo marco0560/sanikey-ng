@@ -26,6 +26,7 @@ pub mod simulated_export;
 pub mod txt_pipeline;
 pub mod usb_copy;
 pub mod vital_signs;
+pub mod windows_volume;
 
 use operation::{CancellationToken, OperationRun, run_operation};
 
