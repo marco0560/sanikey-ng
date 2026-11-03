@@ -22,6 +22,7 @@ pub mod pdf;
 pub mod privacy;
 pub mod simulated_export;
 pub mod txt_pipeline;
+pub mod usb_copy;
 pub mod vital_signs;
 
 use operation::{CancellationToken, OperationRun, run_operation};
