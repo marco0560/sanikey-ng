@@ -59,11 +59,14 @@ progresso, errori, annullamento tra persone e ripresa incrementale. P11.03
 assembla e valida l'immagine multi-persona, collega la sincronizzazione alla
 cartella `SaniKey` su volume Linux e presenta conferma e report; gate e fixture
 sintetiche passano ([ricevuta](verification/2026-11-03-desktop-usb-flow.md)).
-La finestra si avvia sul compositor Plasma dell'host, ma non sono ancora state
-provate tastiera, focus, DPI, temi, schermate strette o flussi di errore; la
-sandbox stessa non raggiunge il socket Wayland. La copia USB nel desktop è
-Linux-only; Windows e macOS restano da qualificare. P11.04 registra le prove
-GUI Linux ancora da completare; poi il manutentore eseguirà i test Windows.
+La finestra si avvia sul compositor Plasma dell'host. Le prove headless Linux
+coprono Tab/focus, temi chiaro/scuro, scaling 1×/2× e viewport stretto. Una
+prova nativa a 460×360 ha rilevato il taglio del pulsante profilo; le righe
+sono state rese a capo e il test verifica che la label resti nel rettangolo di
+clip. La nuova schermata non è stata ricatturata in modo affidabile dopo la
+correzione; tastiera fisica, errori interattivi e tecnologie assistive restano
+pending. La copia USB nel desktop è Linux-only; Windows e macOS restano da
+qualificare. Il manutentore proseguirà con i test Windows.
 G2 ha approvato la semantica dell'identità USB; la qualifica degli adattatori
 multipiattaforma è ancora da fare ([ADR-0003](../decisions/0003-identita-usb.md)).
 P01.03 ha qualificato il campione in un checkout pulito e ha verificato il

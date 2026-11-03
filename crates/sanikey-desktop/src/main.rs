@@ -542,7 +542,7 @@ fn selection_from_person(person: &PersonConfig) -> PersonSelection {
 }
 
 fn choose_folder(ui: &mut egui::Ui, label_text: &str, path: &mut PathBuf) {
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         let label = ui.label(label_text);
         let mut text = path.display().to_string();
         let response = ui.text_edit_singleline(&mut text).labelled_by(label.id);
@@ -560,6 +560,13 @@ fn choose_folder(ui: &mut egui::Ui, label_text: &str, path: &mut PathBuf) {
 /// Collega gli eventi del core ai controlli e allo stato visuale.
 impl eframe::App for DesktopApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        egui::ScrollArea::vertical().show(ui, |ui| self.show_contents(ui));
+    }
+}
+
+/// Rende l'intera vista desktop scorrevole sui viewport ridotti.
+impl DesktopApp {
+    fn show_contents(&mut self, ui: &mut egui::Ui) {
         self.receive_worker_events();
         let busy = self.receiver.is_some();
         if !busy
@@ -575,7 +582,7 @@ impl eframe::App for DesktopApp {
         let can_edit = !busy && self.review.is_none();
         let mut open_profile = false;
         ui.add_enabled_ui(can_edit, |ui| {
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
                 let label = ui.label("Profilo account");
                 ui.text_edit_singleline(&mut self.profile_path)
                     .labelled_by(label.id);
@@ -624,7 +631,7 @@ impl eframe::App for DesktopApp {
         }
 
         ui.separator();
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             let selected = self.selections.iter().any(|person| person.selected);
             if ui
                 .add_enabled(
@@ -772,6 +779,7 @@ mod tests {
     use super::{
         DesktopApp, DesktopEvent, build_selected_people, build_selected_people_with, review_profile,
     };
+    use eframe::egui;
     use sanikey_core::build::{BuildCounts, PatientBuildResult};
     use sanikey_core::config::AccountsProfile;
     use sanikey_core::operation::{CancellationToken, OperationEvent};
@@ -1113,5 +1121,78 @@ enabled = false
                 .iter()
                 .any(|event| matches!(event, DesktopEvent::Terminal(OperationEvent::Cancelled)))
         );
+    }
+
+    #[test]
+    fn desktop_ui_renders_with_keyboard_focus_themes_scaling_and_narrow_viewports() {
+        let mut app = DesktopApp::default();
+        let context = egui::Context::default();
+        let mut frame = eframe::Frame::_new_kittest();
+
+        for (width, height, pixels_per_point, theme) in [
+            (800.0, 600.0, 1.0, egui::Theme::Light),
+            (400.0, 280.0, 2.0, egui::Theme::Dark),
+        ] {
+            context.set_theme(egui::ThemePreference::System);
+            let mut input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(width, height),
+                )),
+                system_theme: Some(theme),
+                ..Default::default()
+            };
+            input
+                .viewports
+                .get_mut(&egui::ViewportId::ROOT)
+                .expect("viewport principale")
+                .native_pixels_per_point = Some(pixels_per_point);
+            let output = context.run_ui(input, |ui| {
+                eframe::App::ui(&mut app, ui, &mut frame);
+            });
+            if width == 400.0 {
+                let button = output
+                    .shapes
+                    .iter()
+                    .find_map(|clipped| match &clipped.shape {
+                        egui::epaint::Shape::Text(text)
+                            if text.galley.text().contains("Apri profilo") =>
+                        {
+                            Some((clipped.clip_rect, text.visual_bounding_rect()))
+                        }
+                        _ => None,
+                    });
+                let (clip_rect, text_rect) =
+                    button.expect("etichetta pulsante profilo renderizzata");
+                assert!(
+                    clip_rect.contains_rect(text_rect),
+                    "etichetta pulsante profilo tagliata nel viewport stretto"
+                );
+            }
+            output.drop_without_applying_deltas();
+
+            assert_eq!(context.pixels_per_point(), pixels_per_point);
+            assert_eq!(context.theme(), theme);
+        }
+
+        let mut input = egui::RawInput {
+            events: vec![egui::Event::Key {
+                key: egui::Key::Tab,
+                physical_key: Some(egui::Key::Tab),
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            }],
+            ..Default::default()
+        };
+        input.screen_rect = Some(egui::Rect::from_min_size(
+            egui::Pos2::ZERO,
+            egui::vec2(400.0, 280.0),
+        ));
+        let output = context.run_ui(input, |ui| {
+            eframe::App::ui(&mut app, ui, &mut frame);
+        });
+        output.drop_without_applying_deltas();
+        assert!(context.memory(|memory| memory.focused()).is_some());
     }
 }

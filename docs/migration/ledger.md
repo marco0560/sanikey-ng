@@ -95,7 +95,7 @@ display.
 | P11.01 | implementata su Linux; prova grafica e altri OS pending | `sanikey-desktop` usa egui/eframe 0.37.0 e `rfd` già usato dal prototipo; importa `AccountsProfile` nel core, abilita selezione persone e cartelle per sessione senza modificare il profilo; Ctrl+O, label accessibili e stati profilo/persona invalidi; test sintetici import valido e TOML invalido 2/2; `cargo xtask check` superato (199 core, 2 ignored, 3 CLI, 2 desktop, 1 Windows-volume, 2 macOS-volume, 8 xtask, 2 doctest, pubblicabilità 290 file, rustdoc); Codira 2 indicizzati, 223 riusati, 0 errori; avvio GUI non possibile nell'ambiente: Wayland senza compositor, X11 senza display; [ricevuta](verification/2026-11-03-desktop-profile-ui.md) |
 | P11.02 | implementata su Linux; interazione grafica manuale pending | Preflight core per privacy/metadati e scansione duplicati con revisione esplicita; build core per persona su thread, progresso indeterminato durante la persona e contatore tra persone, annullamento al confine della persona e rerun incrementale; 9 test desktop; `cargo xtask check` exit 0 (199 core, 2 ignored, 3 CLI, 9 desktop, 1 Windows-volume, 2 macOS-volume, 8 xtask, 2 doctest, pubblicabilità 291 file, rustdoc); Codira 1 indicizzato, 226 riusati, 0 fallimenti, nessun rilievo desktop; [ricevuta](verification/2026-11-03-desktop-build-flow.md) |
 | P11.03 | implementata su Linux; prova grafica, USB fisica e parità completa pending | Immagine USB multi-persona con manifest, SHA-256, link e file-tree validati; UI desktop collega build, volume Linux, conferma e report della cartella dedicata `SaniKey`; test sintetici core 203 totali (2 ignorati), desktop 9, USB immagine 2, copia 8; `cargo xtask check` exit 0, pubblicabilità 294 file, rustdoc; Codira 3 indicizzati, 225 riusati, 0 fallimenti; volume sintetico verificato, nessuna USB fisica; avvio Plasma host riuscito per 6 s, interazione GUI non eseguita; [ricevuta](verification/2026-11-03-desktop-usb-flow.md) |
-| P11.04 | parzialmente verificata su Linux; test interattivi pending | GUI vuota avviata sul compositor Plasma per 6 s senza errori; codice usa label visibili associate ai campi e controlli egui standard. Tastiera/focus, DPI, temi, viewport stretto, errori interattivi e tecnologie assistive non sono stati testati; socket display non raggiungibile dalla sandbox e non sono disponibili strumenti di input/cattura GUI; [ricevuta](verification/2026-11-03-desktop-usability-linux.md) |
+| P11.04 | qualifica Linux parziale; prove native interattive e altre piattaforme pending | GUI Plasma avviata e ridimensionata a 460×360; rilevato taglio del pulsante profilo, corretti a capo delle righe e scroll verticale generale; test egui sintetico verifica Tab/focus, temi chiaro/scuro, scaling 1×/2× e viewport stretto con etichetta interamente visibile; test desktop 10/10, `cargo xtask check` superato (203 core, 2 ignorati, 3 CLI, 10 desktop, 1 Windows-volume, 2 macOS-volume, 8 xtask, 2 doctest, pubblicabilità 295 file, rustdoc); non ottenuta una seconda schermata nativa affidabile dopo la correzione; errori interattivi, tecnologie assistive, Windows/macOS e USB fisica pending; [ricevuta](verification/2026-11-03-desktop-usability-linux.md) |
 
 Le schede non registrate sopra sono da eseguire; l'indice completo è in
 [tasks/README.md](tasks/README.md). La parità per capability è mantenuta in
@@ -130,10 +130,10 @@ autorizzazione specifica.
 ## Prossima sessione
 
 Leggere [START-HERE.md](START-HERE.md). P11.01–P11.03 sono implementate e
-verificate automaticamente su Linux; P11.04 ha verificato il solo avvio della
-finestra e resta aperta per input e resa visiva manuali. La qualifica Windows,
-macOS e USB fisica resta pending. Completate le prove GUI Linux, il manutentore
-eseguirà i test Windows.
+verificate automaticamente su Linux. P11.04 ha una qualifica Linux parziale,
+con un difetto di layout corretto e coperto da un test di clip headless; il
+manutentore eseguirà ora i test Windows. Restano pending le prove interattive
+native Linux, macOS, tecnologie assistive e USB fisica.
 G1 approvato per egui/eframe 0.37.0. P08.03 è completata al livello
 core; la capability AIFA resta pending finché il servizio reale non viene
 qualificato. P09.01 fornisce il builder completo; P09.02 esporta i dati e i

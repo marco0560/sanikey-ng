@@ -504,6 +504,7 @@ rust_tests = [
   "crates/sanikey-desktop/src/main.rs::tests::cancellation_requested_during_a_person_stops_at_the_next_person_boundary",
   "crates/sanikey-desktop/src/main.rs::tests::manually_entered_relative_paths_use_the_profile_base",
   "crates/sanikey-desktop/src/main.rs::tests::preflight_rejects_empty_selected_folder_paths",
+  "crates/sanikey-desktop/src/main.rs::tests::desktop_ui_renders_with_keyboard_focus_themes_scaling_and_narrow_viewports",
 ]
 evidence = [
   "verification/2026-10-26-gui-toolkit-candidates.md",
