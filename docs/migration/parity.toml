@@ -440,6 +440,13 @@ rust_tests = [
   "usb_copy::tests::reports_progress_and_honors_cancellation_before_copying",
   "usb_copy::tests::rejects_symlinks_in_source_and_destination",
   "usb_copy::tests::rejects_source_target_overlap",
+  "linux_volume::tests::parses_findmnt_json_fields_and_missing_values",
+  "linux_volume::tests::expected_uuid_prefers_global_and_requires_shared_enabled_person_uuid_on_media",
+  "linux_volume::tests::detects_only_linux_removable_media_prefixes",
+  "linux_volume::tests::inspects_repository_filesystem_without_modifying_it",
+  "linux_volume::tests::validates_synthetic_volume_uuid_filesystem_and_space_constraints",
+  "linux_volume::tests::missing_mount_metadata_is_allowed_only_without_global_mount_requirements",
+  "linux_volume::tests::volume_info_keeps_unavailable_mount_fields_explicit",
   "simulated_export::tests::simulated_export_is_repeatable_detects_tampering_and_preserves_originals",
   "simulated_export::tests::simulated_export_rejects_existing_targets_and_input_overlaps",
 ]
@@ -447,6 +454,7 @@ evidence = [
   "verification/2026-10-26-volume-identity-feasibility.md",
   "verification/2026-10-28-simulated-export.md",
   "verification/2026-11-03-portable-usb-copy.md",
+  "verification/2026-11-03-linux-volume-adapter.md",
 ]
 approved_deviations = []
 

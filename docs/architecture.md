@@ -93,11 +93,17 @@ esistente su una destinazione: valida entrambi gli alberi, rifiuta overlap e
 link simbolici, riusa i file con digest uguale, verifica le copie atomiche e
 rimuove gli obsoleti dopo le copie riuscite. Emette progresso e osserva
 l'annullamento tra file; rieseguire l'operazione completa un aggiornamento
-interrotto. L'API non assembla ancora l'immagine prodotto e non identifica o
-convalida volumi fisici.
+interrotto. Questa API non assembla ancora l'immagine prodotto né identifica i
+volumi fisici. Su Linux `sanikey_core::linux_volume` legge in sola
+lettura lo spazio filesystem con `rustix::statvfs` e i metadati del mount con
+`findmnt`, quindi applica UUID globale/persona, exFAT e margine minimo. Il
+target deve già esistere; `findmnt` mancante o senza risultato resta tollerato
+solo quando UUID globale ed exFAT non sono richiesti. L'adattatore Linux non è
+ancora provato su supporti USB reali e gli adattatori Windows/macOS restano da
+realizzare.
 La distinzione tra identità filesystem/volume (`usb_uuid`) e ID di deploy è
-definita in [ADR-0003](decisions/0003-identita-usb.md); gli adattatori e la
-qualifica multipiattaforma restano da realizzare.
+definita in [ADR-0003](decisions/0003-identita-usb.md); gli adattatori Windows
+e macOS e la qualifica multipiattaforma restano da realizzare.
 
 `sanikey-core::exports::generate_exports` produce dati e script per il frontend
 offline, inclusi Markdown CommonMark con HTML raw escapato. I link con schemi

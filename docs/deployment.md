@@ -18,6 +18,13 @@ P04 valuterà PDF/OCR, Office, archivi, DICOM e accesso ai volumi.
 I casi non coperti devono mantenere stato pendente o aprire G2;
 non diventano facoltativi senza una decisione esplicita.
 
+L'adattatore volumi Linux usa `rustix` incluso nel binario e il comando
+`findmnt` fornito da util-linux per leggere mount, filesystem e UUID. `findmnt`
+può mancare solo se non sono richiesti UUID globale ed exFAT; la misura dello
+spazio continua a usare l'API filesystem. L'adattatore è in sola lettura e
+richiede una directory target esistente. La verifica su questo host non
+qualifica supporti USB reali; la matrice Windows/macOS è ancora da realizzare.
+
 ## Aree locali
 
 Le directory local-data, patients, generated, config, exports, logs,
