@@ -8,6 +8,7 @@ pub mod containers;
 pub mod database;
 pub mod dicom;
 pub mod exports;
+pub mod frontend;
 pub mod inventory;
 pub mod metadata;
 pub mod observation_imports;

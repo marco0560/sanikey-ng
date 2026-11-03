@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SaniKey - __SANIKEY_DISPLAY_NAME__</title>
+  <link rel="stylesheet" href="assets/material-web.css">
+  <link rel="stylesheet" href="style.css">
+  <script src="assets/material-web.js"></script>
+</head>
+<body>
+  <header>
+    <div class="header-primary">
+      <div class="header-title">
+        <div class="header-branding">
+          <h1>__SANIKEY_DISPLAY_NAME__</h1>
+          <button class="header-logo-button" type="button" id="usb-info-button" aria-label="Apri informazioni tecniche della chiavetta"><img class="header-logo" src="assets/sanikey-logo-horizontal-transparent.svg" alt="SaniKey"></button>
+        </div>
+        <p>__SANIKEY_SUBTITLE__</p>
+      </div>
+      <nav class="header-actions" aria-label="Sezioni archivio">
+        <span class="nav-control">
+          <md-text-button type="button" data-section-button="documents" data-pane-target="left">Documenti</md-text-button>
+          <md-icon-button type="button" data-section-button="documents" data-pane-target="right" aria-label="Apri Documenti a destra">&gt;</md-icon-button>
+        </span>
+        <span class="nav-control">
+          <md-text-button type="button" data-section-button="timeline" data-pane-target="left">Timeline</md-text-button>
+          <md-icon-button type="button" data-section-button="timeline" data-pane-target="right" aria-label="Apri Timeline a destra">&gt;</md-icon-button>
+        </span>
+        <span class="nav-control">
+          <md-text-button type="button" data-section-button="summary" data-pane-target="left">Sintesi Clinica</md-text-button>
+          <md-icon-button type="button" data-section-button="summary" data-pane-target="right" aria-label="Apri Sintesi Clinica a destra">&gt;</md-icon-button>
+        </span>
+        <span class="nav-control" data-therapy-control hidden>
+          <md-text-button type="button" data-section-button="therapies" data-pane-target="left">Terapia</md-text-button>
+          <md-icon-button type="button" data-section-button="therapies" data-pane-target="right" aria-label="Apri Terapia a destra">&gt;</md-icon-button>
+        </span>
+        <span class="nav-control" data-observation-control="parameters" hidden>
+          <md-text-button type="button" data-section-button="parameters" data-pane-target="left">Parametri</md-text-button>
+        </span>
+        <span class="nav-control" data-dicom-control hidden>
+          <md-text-button type="button" data-section-button="dicom" data-pane-target="left">Studi DICOM</md-text-button>
+          <md-icon-button type="button" data-section-button="dicom" data-pane-target="right" aria-label="Apri Studi DICOM a destra">&gt;</md-icon-button>
+        </span>
+      </nav>
+    </div>
+    <div class="search-panel" data-search-mode="basic">
+      <div class="search-toolbar" role="group" aria-label="Modalita' ricerca">
+        <span class="search-mode-control">
+          <md-filled-tonal-button type="button" id="basic-toggle">Ricerca base</md-filled-tonal-button>
+          <md-icon-button type="button" id="basic-help-button" aria-label="Aiuto ricerca base">?</md-icon-button>
+        </span>
+        <span class="search-mode-control">
+          <md-outlined-button type="button" id="advanced-toggle">Ricerca avanzata</md-outlined-button>
+          <md-icon-button type="button" id="advanced-help-button" aria-label="Aiuto ricerca avanzata">?</md-icon-button>
+        </span>
+      </div>
+      <div class="search-control" data-search-panel="basic">
+        <label for="search">Cerca nell'archivio</label>
+        <input id="search" type="search" placeholder="Cerca documenti, categorie o tag">
+      </div>
+      <div class="search-control" data-search-panel="advanced">
+        <label for="advanced-search">Cerca nel testo OCR e contenuto estratto</label>
+        <input id="advanced-search" type="search" placeholder='Esempio: creatinina AND (2024 OR 2025) NOT "urine"'>
+      </div>
+    </div>
+  </header>
+  <main data-default-section="__SANIKEY_DEFAULT_TAB__">
+    <section id="documents" data-section-panel="documents" aria-label="Documenti"></section>
+    <section id="advanced" data-section-panel="advanced" aria-label="Ricerca avanzata">
+      <div id="advanced-results" class="advanced-results"></div>
+    </section>
+    <section id="timeline" data-section-panel="timeline" aria-label="Timeline"></section>
+    <section id="summary" data-section-panel="summary" aria-label="Sintesi Clinica"></section>
+    <section id="therapies" data-section-panel="therapies" aria-label="Terapia"></section>
+    <section id="parameters" data-section-panel="parameters" aria-label="Parametri" hidden></section>
+    <section id="parameter-detail" data-section-panel="parameter-detail" aria-label="Dettaglio parametro" hidden></section>
+    <section id="dicom" data-section-panel="dicom" aria-label="Studi DICOM"></section>
+  </main>
+  <footer class="app-footer"><a class="footer-repository" href="https://github.com/marco0560/sanikey" target="_blank" rel="noopener"><img class="footer-logo" src="assets/sanikey-logo-horizontal-transparent.svg" alt="Apri il repository SaniKey su GitHub"></a></footer>
+  <dialog id="basic-help-dialog" class="help-dialog">
+    <article>
+      <h2>Aiuto ricerca base</h2>
+      <p>Scrivi una o piu' parole presenti in titolo, categoria, tag, tipo,
+      percorso o data. Esempi: <code>cardiologo 2024</code>,
+      <code>analisi pdf</code>, <code>risonanza</code>.</p>
+      <button type="button" class="dialog-close" data-close-dialog="basic-help-dialog">Chiudi</button>
+    </article>
+  </dialog>
+  <dialog id="advanced-help-dialog" class="help-dialog">
+    <article>
+      <h2>Aiuto ricerca avanzata</h2>
+      <p>Usa parole, frasi tra virgolette, <code>AND</code>, <code>OR</code>,
+      <code>NOT</code> e parentesi. Le parole adiacenti valgono come
+      <code>AND</code>. La ricerca non distingue maiuscole, minuscole o
+      accenti e applica sinonimi configurati.</p>
+      <button type="button" class="dialog-close" data-close-dialog="advanced-help-dialog">Chiudi</button>
+    </article>
+  </dialog>
+  <dialog id="usb-info-dialog" class="help-dialog">
+    <article>
+      <h2>Informazioni tecniche della chiavetta</h2>
+      <dl id="usb-info-details"></dl>
+      <button type="button" class="dialog-close" data-close-dialog="usb-info-dialog">Chiudi</button>
+    </article>
+  </dialog>
+  <script src="data.js"></script>
+  <script src="usb-info.js"></script>
+  <script src="assets/ui-helper.js"></script>
+  <script src="assets/chart.umd.min.js"></script>
+  <script src="assets/chart-navigation.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

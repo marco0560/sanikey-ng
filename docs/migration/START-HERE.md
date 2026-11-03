@@ -32,7 +32,10 @@ campione. P09.02 è completata: export JSON/JavaScript, dati clinici e DICOM,
 ricerca, report tecnici e Markdown CommonMark sono confrontati su fixture
 sintetiche. Raw HTML è escapato e i link non sicuri restano testo inerte; vedi
 la [ricevuta P09.02](verification/2026-10-28-exports-checkpoint.md).
-La prossima attività è P09.03, completare il frontend offline.
+P09.03 ha completato il generatore e gli asset del frontend offline. I flussi
+principali sono stati provati con Chromium su Linux tramite `file://`; la
+qualifica browser su Windows/macOS resta da eseguire. La prossima attività è
+P09.04, build e cache incrementali.
 G2 ha approvato la semantica dell'identità USB; la qualifica degli adattatori
 multipiattaforma è ancora da fare ([ADR-0003](../decisions/0003-identita-usb.md)).
 P01.03 ha qualificato il campione in un checkout pulito e ha verificato il

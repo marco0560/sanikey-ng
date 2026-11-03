@@ -1,0 +1,52 @@
+:root {
+  --md-sys-color-primary: #1f5f8b;
+  --md-sys-color-on-primary: #ffffff;
+  --md-sys-color-secondary-container: #d7e8f4;
+  --md-sys-color-on-secondary-container: #12384f;
+  --md-sys-color-outline: #b8c7d4;
+}
+
+md-filled-button,
+md-filled-tonal-button,
+md-outlined-button,
+md-text-button,
+md-icon-button {
+  align-items: center;
+  border-radius: 999px;
+  cursor: pointer;
+  display: inline-flex;
+  font: inherit;
+  font-weight: 700;
+  justify-content: center;
+  min-height: 2.4rem;
+  padding: 0.35rem 0.85rem;
+  text-decoration: none;
+  user-select: none;
+}
+
+md-filled-button {
+  background: var(--md-sys-color-primary);
+  color: var(--md-sys-color-on-primary);
+}
+
+md-filled-tonal-button {
+  background: var(--md-sys-color-secondary-container);
+  color: var(--md-sys-color-on-secondary-container);
+}
+
+md-outlined-button {
+  border: 1px solid var(--md-sys-color-outline);
+  color: var(--md-sys-color-primary);
+}
+
+md-text-button {
+  color: var(--md-sys-color-primary);
+}
+
+md-icon-button {
+  aspect-ratio: 1;
+  border: 1px solid var(--md-sys-color-outline);
+  color: var(--md-sys-color-primary);
+  padding: 0;
+  width: 2.4rem;
+}

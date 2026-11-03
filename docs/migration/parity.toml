@@ -35,7 +35,7 @@ ignored_content = []
 [comparison.frontend]
 method = "same relative file paths; JSON structurally, text as UTF-8, other files by SHA-256"
 normalizations = ["format-specific JSON and line-ending rules"]
-browser_file_url_qualification = false
+browser_file_url_qualification = true
 
 [[capability]]
 id = "configuration"
@@ -386,10 +386,15 @@ approved_deviations = []
 id = "frontend"
 description = "Consultazione statica offline"
 phase = "P09"
-status = "pending"
+status = "implemented"
 baseline_source = "src/sanikey/frontend.py"
 baseline_test = "tests/test_frontend.py"
 rust_tests = [
+  "frontend::tests::frontend_generator_writes_offline_pages_assets_and_vendor_license",
+  "frontend::tests::frontend_generator_escapes_dynamic_values_without_reprocessing_them",
+  "frontend::tests::frontend_generator_copies_background_and_serializes_usb_info",
+  "frontend::tests::vendored_frontend_assets_match_the_pinned_python_baseline",
+  "frontend::tests::chromium_opens_offline_pages_and_exercises_chart_flows (ignored; run with SANIKEY_CHROMIUM_BIN)",
   "txt_pipeline::tests::txt_pipeline_matches_the_synthetic_baseline_and_builds_searchable_outputs",
   "txt_pipeline::tests::txt_pipeline_replaces_invalid_utf8_and_escapes_html_and_urls",
   "txt_pipeline::tests::consultation_pipeline_copies_openable_sources_without_ocr_on_images",
@@ -397,6 +402,7 @@ rust_tests = [
   "txt_pipeline::tests::consultation_pipeline_keeps_office_original_when_converter_is_unavailable",
 ]
 evidence = [
+  "verification/2026-11-03-offline-frontend.md",
   "verification/2026-10-28-txt-pipeline.md",
   "verification/2026-10-28-simple-consultation.md",
   "verification/2026-10-28-office-conversion.md",

@@ -7,7 +7,7 @@ La sessione di bootstrap si è fermata dopo repository e documentazione;
 l'implementazione approvata è ripresa in seguito con P03.01.
 
 Baseline Python: `fdad1d93e56496cc6cb9933b3089729175d5b5b3`.
-Stato Rust: P08.01, P08.02, P08.03, P09.01 e P09.02 completate. P08.03 ha
+Stato Rust: P08.01, P08.02, P08.03, P09.01, P09.02 e P09.03 completate. P08.03 ha
 portato ricerca, classificazione, conferma e persistenza esplicite, download in
 coppia con diagnostiche e lookup filesystem-only dei PDF locali; P09.02 collega
 FI/RCP locali ed URL AIFA agli export. Ricevute P08.03:
@@ -20,8 +20,9 @@ layout tabellari, caricamento/applicazione regole, punti, serie e report); impor
 verificate con fixture sintetiche Linux. Staging contenitori, catalogazione DICOM,
 media e anteprime sono implementati e verificati con fixture sintetiche Linux. Le
 capability containers e DICOM restano pending per media mancanti/non standard,
-integrazione frontend e qualifica di codec, viewer e Windows/macOS. La prossima
-attività è P09.03: completare il frontend offline.
+integrazione frontend e qualifica di codec, viewer e Windows/macOS. P09.03 ha
+portato il generatore offline e i suoi asset, con test Chromium `file://` su
+Linux. La prossima attività è P09.04: build e cache incrementali.
 Stato GUI: G1 approvato il 2026-10-27 per egui/eframe 0.37.0; crate desktop
 di prodotto non ancora introdotto.
 
@@ -65,6 +66,7 @@ di prodotto non ancora introdotto.
 | P08.03 | completata; capability AIFA pending | P08.03a: client HTTP AIFA `ureq 2.12.1`/TLS rustls, ricerca e classificazione; fixture sintetiche, baseline `tests/test_leaflets.py` 12/12, Rust 6/6, gate (149 core), hook superato; commit `2afbe8d`. P08.03b: conferma esplicita, fingerprint e writer TOML ricaricabile; baseline 12/12, Rust 8/8, gate (151 core), hook superato; commit `6f8752c`, doc `83cbbbc`. P08.03c: download FI/RCP in coppia, validazione firma, errori e cache; baseline 12/12, Rust 11/11, gate (154 core), hook superato; nessuna richiesta reale; commit `ac5c03d`, doc `bfb1ace`. P08.03d: percorsi filesystem-only dei PDF locali e fallback vuoto se assenti; baseline export 8/8, Rust AIFA 12/12, gate (155 core, 1 ignored, 8 xtask, 3 CLI, 2 doctest, pubblicabilità 245 file, rustdoc); hook superato; commit `973023e`. P09.02 collega FI/RCP e URL AIFA negli export; la qualifica del servizio reale resta pending. [ricevuta ricerca](verification/2026-10-28-aifa-search.md), [ricevuta persistenza](verification/2026-10-28-aifa-persistence.md), [ricevuta download](verification/2026-10-28-aifa-download.md), [ricevuta uso offline](verification/2026-10-28-aifa-offline.md) |
 | P09.01 | completata; capability SQLite implemented | Baseline `tests/test_database.py` 4/4; builder Rust con schema equivalente, FTS5, 12 tabelle, metadati clinici, provenienza, DICOM e sostituzione transazionale; test mirati 2/2, confronto SQLite cross-language exit 0 su fixture sintetica (`Blood`, `hemoglobin`); `cargo xtask check` exit 0 (157 core, 1 ignored, 8 xtask, 3 CLI, 2 doctest, pubblicabilità 248 file, rustdoc); primo gate fallito per Clippy `cloned_ref_to_slice_refs`, corretto e gate ripetuto con successo; commit `ec0b1e4`; [ricevuta](verification/2026-10-28-sqlite-database.md) |
 | P09.02 | completata; capability exports implemented | Baseline fissata `fdad1d9` 8/8; Rust export 10/10; confronto frontend cross-language exit 0 con Markdown, raw HTML, link sicuri/non sicuri, data image, FI/RCP, AIFA, DICOM e dati clinici; `cargo xtask check` exit 0 (167 core, 1 ignored, 8 xtask, 3 CLI, 2 doctest, pubblicabilità 252 file, rustdoc); hook superati; Codira index exit 0; commit `28b53ca`, `fe8f578`, `5d75ac8`, `69d8ba7`; [checkpoint](verification/2026-10-28-exports-checkpoint.md) |
+| P09.03 | completata; capability frontend implemented | Asset statici fissati agli hash della baseline Python; generazione offline, escape HTML, USB info, sfondo e licenza coperti da test Rust; Chromium 151.0.7922.34 Linux ha aperto index e grafico esteso da `file://` con ricerca, link documenti, valori mancanti, polso/asse secondario, intervallo vuoto, filtri senza dati e smontaggio; gate completo e hook da registrare dopo esecuzione; [ricevuta](verification/2026-11-03-offline-frontend.md) |
 
 Le schede non registrate sopra sono da eseguire; l'indice completo è in
 [tasks/README.md](tasks/README.md). La parità per capability è mantenuta in
@@ -99,16 +101,17 @@ autorizzazione specifica.
 ## Prossima sessione
 
 Leggere [START-HERE.md](START-HERE.md). La prossima scheda è
-[P09.03](tasks/P09.03-completare-il-frontend-offline.md), frontend statico
-offline. G1 approvato per egui/eframe 0.37.0. P08.03 è completata al livello
+[P09.04](tasks/P09.04-completare-build-e-cache-incrementale.md), build e cache
+incrementali. G1 approvato per egui/eframe 0.37.0. P08.03 è completata al livello
 core; la capability AIFA resta pending finché il servizio reale non viene
 qualificato. P09.01 fornisce il builder completo; P09.02 esporta i dati e i
-report richiesti; P09.04 collegherà l'orchestrazione incrementale.
+report richiesti; P09.03 genera il frontend offline e P09.04 collegherà
+l'orchestrazione incrementale.
 P08.02 è completata, incluse estrazione dei segni
 vitali, merge e celle descritte per tipo di valore.
-Le pipeline PDF e Office sono implementate e verificate su Linux, ma la parità
-Office completa, la parità containers completa, il browser e il
-confezionamento multipiattaforma restano da verificare. Il crate desktop di
+Le pipeline PDF e Office sono implementate e verificate su Linux; la qualifica
+browser P09.03 è stata eseguita su Linux. La parità Office completa, la parità
+containers completa e il confezionamento multipiattaforma restano da verificare. Il crate desktop di
 prodotto resta pianificato per P11. P07.06 ha portato la catalogazione DICOM;
 P07.07 ha portato media, viewer HTML statici e anteprime non diagnostiche. La
 capability DICOM rimane pending per i limiti indicati nella ricevuta.

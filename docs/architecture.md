@@ -4,7 +4,8 @@ Stato: piano approvato; il workspace P03.01 contiene i crate iniziali
 `sanikey-core`, `sanikey-cli` e `xtask`. P03.02 aggiunge al core errori
 categorizzati, eventi tipizzati e annullamento cooperativo; la CLI implementa
 informazioni/versione. Le fasi P06–P09 hanno aggiunto pipeline documentali,
-database ed export offline; il frontend completo e la GUI restano da realizzare.
+database, export e generatore del frontend offline; la build incrementale e la
+GUI restano da realizzare.
 Il crate desktop attende G1, approvato per egui/eframe 0.37.0.
 
 ## Componenti
@@ -126,8 +127,11 @@ la qualifica Windows/macOS restano da verificare.
 Una libreria C/C++ incorporata va inventariata anche quando non richiede
 installazione separata. Autocontenuto non significa necessariamente statico.
 
-Il frontend USB resta HTML/CSS/JavaScript e asset locali. Il passaggio a Rust
-riguarda il generatore e non richiede la conversione del frontend in Rust.
+Il frontend USB resta HTML/CSS/JavaScript e asset locali. Il generatore Rust
+produce le pagine e copia tutti gli asset vendorizzati per l'uso offline; la
+verifica browser `file://` è stata eseguita con Chromium su Linux. La qualifica
+browser Windows/macOS resta da eseguire. Il frontend non richiede un server e
+non converte HTML, CSS o JavaScript in Rust.
 
 ## Confini del campione
 

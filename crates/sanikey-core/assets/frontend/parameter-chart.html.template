@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Grafici parametri - __SANIKEY_DISPLAY_NAME__</title>
+  <link rel="stylesheet" href="assets/material-web.css">
+  <link rel="stylesheet" href="style.css">
+  <script src="assets/material-web.js"></script>
+</head>
+<body class="extended-chart-page">
+  <main class="extended-chart-main">
+    <p><a href="index.html">Torna all'archivio</a></p>
+    <h1>Grafici parametri: __SANIKEY_DISPLAY_NAME__</h1>
+    <p class="muted">Seleziona una o piu' serie. Due unita' condividono un grafico con doppia scala; ulteriori unita' vengono separate.</p>
+    <fieldset class="extended-chart-filters">
+      <legend>Periodo</legend>
+      <label>Da <input type="date" data-extended-filter="from"></label>
+      <label>A <input type="date" data-extended-filter="to"></label>
+    </fieldset>
+    <fieldset class="extended-series-list">
+      <legend>Serie</legend>
+      <div data-extended-series></div>
+    </fieldset>
+    <div data-extended-charts></div>
+  </main>
+  <script src="data.js"></script>
+  <script src="assets/chart.umd.min.js"></script>
+  <script src="assets/chart-navigation.js"></script>
+  <script src="parameter-chart.js"></script>
+</body>
+</html>
