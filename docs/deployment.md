@@ -25,6 +25,12 @@ spazio continua a usare l'API filesystem. L'adattatore è in sola lettura e
 richiede una directory target esistente. La verifica su questo host non
 qualifica supporti USB reali; la matrice Windows/macOS è ancora da realizzare.
 
+L'adattatore Windows usa `windows-sys` per le API di `kernel32.dll`, senza
+eseguibili esterni; le chiamate FFI sono isolate in `sanikey-windows-volume`.
+Legge il Volume GUID path, il filesystem e lo spazio disponibile senza scrivere
+sul target. L'adattatore non è stato compilato o eseguito su Windows in questa
+sessione e richiede qualifica su un host reale o VM Windows.
+
 ## Aree locali
 
 Le directory local-data, patients, generated, config, exports, logs,

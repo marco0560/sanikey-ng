@@ -43,7 +43,10 @@ obsoleti, avanzamento e ripresa; non assembla ancora l'immagine USB completa.
 P10.02 ha aggiunto l'adattatore Linux in sola lettura per spazio, mount, UUID e
 filesystem; i test usano fixture sintetiche e una lettura del checkout host,
 senza target USB fisici ([ricevuta P10.02](verification/2026-11-03-linux-volume-adapter.md)).
-La prossima scheda è P10.03, adattatore Windows dei volumi.
+P10.03 ha implementato il confine Win32 e la verifica del Volume GUID approvata
+il 2026-11-03, ma la scheda resta incompleta: manca una compilazione ed
+esecuzione su Windows reale o VM ([ricevuta P10.03](verification/2026-11-03-windows-volume-adapter.md)).
+La prossima attività resta la qualifica P10.03 su Windows.
 G2 ha approvato la semantica dell'identità USB; la qualifica degli adattatori
 multipiattaforma è ancora da fare ([ADR-0003](../decisions/0003-identita-usb.md)).
 P01.03 ha qualificato il campione in un checkout pulito e ha verificato il

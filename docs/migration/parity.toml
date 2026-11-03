@@ -447,6 +447,10 @@ rust_tests = [
   "linux_volume::tests::validates_synthetic_volume_uuid_filesystem_and_space_constraints",
   "linux_volume::tests::missing_mount_metadata_is_allowed_only_without_global_mount_requirements",
   "linux_volume::tests::volume_info_keeps_unavailable_mount_fields_explicit",
+  "windows_volume::tests::global_windows_volume_guid_takes_precedence_and_is_compared_literally",
+  "windows_volume::tests::shared_enabled_person_volume_guid_is_used_when_no_global_value_exists",
+  "windows_volume::tests::rejects_windows_volume_mismatch_filesystem_and_insufficient_space",
+  "sanikey_windows_volume::tests::decodes_null_terminated_utf16_and_rejects_malformed_output",
   "simulated_export::tests::simulated_export_is_repeatable_detects_tampering_and_preserves_originals",
   "simulated_export::tests::simulated_export_rejects_existing_targets_and_input_overlaps",
 ]

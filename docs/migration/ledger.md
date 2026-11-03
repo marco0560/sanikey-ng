@@ -31,8 +31,10 @@ manifest, riuso SHA-256, rimozione obsoleti, progresso e ripresa. Export USB
 completo e adattatori Windows/macOS restano pending. La suite Python
 `tests/test_usb.py` passa 20/20 con uno skip; il gate Rust/documentale passa.
 P10.02 aggiunge l'adattatore Linux read-only per spazio, mount, UUID ed exFAT;
-nessun supporto USB fisico è stato qualificato. La prossima attività è P10.03:
-adattatore Windows dei volumi.
+nessun supporto USB fisico è stato qualificato. P10.03 ha implementato
+l'adattatore Windows con Volume GUID approvato il 2026-11-03; la scheda resta
+aperta perché il target Windows non è installato e manca una VM/host Windows.
+La prossima attività resta la qualifica P10.03 su Windows.
 Stato GUI: G1 approvato il 2026-10-27 per egui/eframe 0.37.0; crate desktop
 di prodotto non ancora introdotto.
 
@@ -80,6 +82,7 @@ di prodotto non ancora introdotto.
 | P09.04 | completata; API core implemented | Build singola e multi-persona, cache identità SHA-256, modalità full/incremental/validation, report, duplicati, preflight iniziale e ripresa dopo errore; test baseline Python 25/25; `cargo xtask check` exit 0 (177 core, 2 ignored, 8 xtask, 3 CLI, 2 doctest, pubblicabilità 270 file, rustdoc); hook commit funzionale superato con i tre prototipi GUI; i comandi CLI di build restano da collegare; commit funzionale `b88d3bc`; [ricevuta](verification/2026-11-03-build-cache.md) |
 | P10.01 | completata; capability USB ancora pending | `usb_copy::mirror_directory` sincronizza immagini esistenti senza rsync, riusa file SHA-256 invariati, rimuove obsoleti dopo copie verificate, rifiuta overlap, link e collisioni, emette progresso e si può rieseguire dopo errori; baseline `tests/test_usb.py` 20 passed, 1 skipped; `cargo xtask check` exit 0 (182 core, 2 ignored, 8 xtask, 3 CLI, 2 doctest, pubblicabilità 273 file, rustdoc); hook pre-commit superato con tre prototipi GUI; assemblaggio dell'immagine, validazione completa e adattatori volume restano pending; commit funzionale `4e3127e`; [ricevuta](verification/2026-11-03-portable-usb-copy.md) |
 | P10.02 | completata; qualifica USB pending | Adattatore Linux read-only con `rustix::statvfs` e `findmnt`; 7 test mirati passano, fixture sintetiche per policy UUID/filesystem/spazio e lettura metadata sul filesystem checkout; i tre lockfile GUI aggiornati e `cargo check --locked` passati; `cargo xtask check` exit 0 (189 core, 2 ignored, 8 xtask, 3 CLI, 2 doctest, pubblicabilità 276 file, rustdoc); hook pre-commit superati con workspace e tre prototipi GUI; nessuna USB fisica; commit funzionale `ccdadba`; [ricevuta](verification/2026-11-03-linux-volume-adapter.md) |
+| P10.03 | implementazione presente; qualificazione Windows pending | Aggiunto crate Win32 con FFI isolato e validator core; GUID globale/per-persona, mismatch, exFAT e spazio hanno 3 test sintetici Linux; conversione UTF-16 1 test; Codira index e gate `cargo xtask check` passano (192 core, 2 ignored, 8 xtask, 3 CLI, 1 crate Windows, 2 doctest, pubblicabilità 281 file); hook pre-commit superati con i tre prototipi GUI; target check Windows non disponibile (`can't find crate for core`), nessun runtime Windows/VM; scheda non completata; commit funzionale `12d8f27`; [ricevuta](verification/2026-11-03-windows-volume-adapter.md) |
 
 Le schede non registrate sopra sono da eseguire; l'indice completo è in
 [tasks/README.md](tasks/README.md). La parità per capability è mantenuta in
@@ -114,8 +117,8 @@ autorizzazione specifica.
 ## Prossima sessione
 
 Leggere [START-HERE.md](START-HERE.md). La prossima scheda è
-[P10.03](tasks/P10.03-implementare-adattatore-windows-dei-volumi.md), adattatore
-Windows dei volumi. G1 approvato per egui/eframe 0.37.0. P08.03 è completata al livello
+Qualificare P10.03 su Windows reale o VM seguendo la [scheda](tasks/P10.03-implementare-adattatore-windows-dei-volumi.md).
+G1 approvato per egui/eframe 0.37.0. P08.03 è completata al livello
 core; la capability AIFA resta pending finché il servizio reale non viene
 qualificato. P09.01 fornisce il builder completo; P09.02 esporta i dati e i
 report richiesti; P09.03 genera il frontend offline e P09.04 aggiunge

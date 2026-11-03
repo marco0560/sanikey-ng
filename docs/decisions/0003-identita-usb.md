@@ -29,6 +29,16 @@ identità disponibile; non devono equiparare UUID filesystem, volume GUID,
 seriale e VolumeUUID senza una regola verificata. La verifica multipiattaforma
 resta da implementare e qualificare.
 
+### Specifica Windows approvata il 2026-11-03
+
+Per Windows, `usb_uuid` contiene il Volume GUID path nativo restituito da
+`GetVolumeNameForVolumeMountPointW` (forma `\\?\Volume{...}\`). L'adattatore lo
+conserva come `WindowsVolumeGuidPath` e lo confronta letteralmente con il
+valore configurato. Non lo converte né lo equipara all'UUID Linux o al seriale
+filesystem restituito da `GetVolumeInformationW`. Il manutentore ha approvato
+questa specifica il 2026-11-03 per P10.03; la qualifica Windows runtime resta
+da eseguire.
+
 Il manutentore ha approvato questa proposta G2 il 2026-10-28. L'approvazione
 risolve l'ambiguità contrattuale; non dichiara completata la capability USB né
 la sua verifica su dispositivi reali o sui tre sistemi operativi.

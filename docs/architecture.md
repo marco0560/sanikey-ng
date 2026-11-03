@@ -101,9 +101,14 @@ target deve già esistere; `findmnt` mancante o senza risultato resta tollerato
 solo quando UUID globale ed exFAT non sono richiesti. L'adattatore Linux non è
 ancora provato su supporti USB reali e gli adattatori Windows/macOS restano da
 realizzare.
+Su Windows, `sanikey_windows_volume` isola le chiamate Win32 al di fuori del
+core che vieta `unsafe`; il modulo core verifica GUID configurato, filesystem
+e spazio disponibile. `usb_uuid` contiene il Volume GUID path Windows esatto,
+senza conversione in UUID Linux o seriale. Il codice è implementato, ma non è
+ancora compilato per target Windows né qualificato su quel sistema.
 La distinzione tra identità filesystem/volume (`usb_uuid`) e ID di deploy è
-definita in [ADR-0003](decisions/0003-identita-usb.md); gli adattatori Windows
-e macOS e la qualifica multipiattaforma restano da realizzare.
+definita in [ADR-0003](decisions/0003-identita-usb.md); l'adattatore macOS e
+la qualifica multipiattaforma restano da realizzare.
 
 `sanikey-core::exports::generate_exports` produce dati e script per il frontend
 offline, inclusi Markdown CommonMark con HTML raw escapato. I link con schemi
