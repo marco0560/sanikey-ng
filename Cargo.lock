@@ -1772,6 +1772,7 @@ dependencies = [
  "rusqlite",
  "rust_decimal",
  "rustix",
+ "sanikey-macos-volume",
  "sanikey-windows-volume",
  "serde_json",
  "sevenz-rust2",
@@ -1782,6 +1783,14 @@ dependencies = [
  "ureq",
  "xz2",
  "zip",
+]
+
+[[package]]
+name = "sanikey-macos-volume"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "quick-xml",
 ]
 
 [[package]]

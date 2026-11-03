@@ -36,6 +36,11 @@ stato compilato né eseguito su Windows o VM. Nessun volume Windows o suo GUID
 reale è stato letto. Il criterio di accettazione P10.03 richiede Windows reale
 o VM idonea: la scheda resta incompleta finché tale qualifica non sarà eseguita.
 
+Il 2026-11-03 il manutentore ha disposto di completare prima le verifiche
+disponibili su Linux e rinviare i test Windows al termine di tale lavoro. La
+sequenza non modifica i risultati sopra: compilazione ed esecuzione Windows
+restano pendenti, così come la qualifica P10.03.
+
 Il commit funzionale `12d8f27` (`feat(core): add Windows volume adapter`) ha
 superato gli hook pre-commit: diff staged, formattazione e test del workspace,
 più formattazione/test dei tre prototipi GUI. Il protocollo GUI ha passato 1

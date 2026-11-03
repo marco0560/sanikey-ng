@@ -28,13 +28,16 @@ baseline Python `tests/test_build.py` passa 25/25 e il gate Rust/documentale
 passa. I comandi CLI di build restano da collegare. P10.01 ha aggiunto la
 sincronizzazione portabile di un'immagine esistente, con controllo del
 manifest, riuso SHA-256, rimozione obsoleti, progresso e ripresa. Export USB
-completo e adattatori Windows/macOS restano pending. La suite Python
+completo resta pending; gli adattatori Windows/macOS sono implementati, ma
+attendono la compilazione e qualifica runtime sui rispettivi sistemi. La suite Python
 `tests/test_usb.py` passa 20/20 con uno skip; il gate Rust/documentale passa.
 P10.02 aggiunge l'adattatore Linux read-only per spazio, mount, UUID ed exFAT;
 nessun supporto USB fisico è stato qualificato. P10.03 ha implementato
 l'adattatore Windows con Volume GUID approvato il 2026-11-03; la scheda resta
 aperta perché il target Windows non è installato e manca una VM/host Windows.
-La prossima attività resta la qualifica P10.03 su Windows.
+Il 2026-11-03 il manutentore ha chiesto di completare prima le verifiche
+disponibili su Linux e fare i test Windows solo dopo; la sequenza non dichiara
+superate le qualifiche Windows o macOS.
 Stato GUI: G1 approvato il 2026-10-27 per egui/eframe 0.37.0; crate desktop
 di prodotto non ancora introdotto.
 
@@ -83,6 +86,7 @@ di prodotto non ancora introdotto.
 | P10.01 | completata; capability USB ancora pending | `usb_copy::mirror_directory` sincronizza immagini esistenti senza rsync, riusa file SHA-256 invariati, rimuove obsoleti dopo copie verificate, rifiuta overlap, link e collisioni, emette progresso e si può rieseguire dopo errori; baseline `tests/test_usb.py` 20 passed, 1 skipped; `cargo xtask check` exit 0 (182 core, 2 ignored, 8 xtask, 3 CLI, 2 doctest, pubblicabilità 273 file, rustdoc); hook pre-commit superato con tre prototipi GUI; assemblaggio dell'immagine, validazione completa e adattatori volume restano pending; commit funzionale `4e3127e`; [ricevuta](verification/2026-11-03-portable-usb-copy.md) |
 | P10.02 | completata; qualifica USB pending | Adattatore Linux read-only con `rustix::statvfs` e `findmnt`; 7 test mirati passano, fixture sintetiche per policy UUID/filesystem/spazio e lettura metadata sul filesystem checkout; i tre lockfile GUI aggiornati e `cargo check --locked` passati; `cargo xtask check` exit 0 (189 core, 2 ignored, 8 xtask, 3 CLI, 2 doctest, pubblicabilità 276 file, rustdoc); hook pre-commit superati con workspace e tre prototipi GUI; nessuna USB fisica; commit funzionale `ccdadba`; [ricevuta](verification/2026-11-03-linux-volume-adapter.md) |
 | P10.03 | implementazione presente; qualificazione Windows pending | Aggiunto crate Win32 con FFI isolato e validator core; GUID globale/per-persona, mismatch, exFAT e spazio hanno 3 test sintetici Linux; conversione UTF-16 1 test; Codira index e gate `cargo xtask check` passano (192 core, 2 ignored, 8 xtask, 3 CLI, 1 crate Windows, 2 doctest, pubblicabilità 281 file); hook pre-commit superati con i tre prototipi GUI; target check Windows non disponibile (`can't find crate for core`), nessun runtime Windows/VM; scheda non completata; commit funzionale `12d8f27`; [ricevuta](verification/2026-11-03-windows-volume-adapter.md) |
+| P10.04 | implementazione presente; qualificazione macOS pending | Crate `sanikey-macos-volume` isola `statfs`, usa `diskutil info -plist` per VolumeUUID e mantiene esplicito il caso senza UUID; test sintetici: 2 parser + 4 policy; `cargo xtask check` exit 0 (196 core, 2 ignored, 8 xtask, 3 CLI, 2 crate volume, 2 doctest, pubblicabilità 286 file); tre prototipi GUI controllati e lockfile aggiornati; Codira index 1 indicizzato, 219 riusati, 0 errori; target Apple non installato (`can't find crate for core`), nessun runtime macOS; [ricevuta](verification/2026-11-03-macos-volume-adapter.md) |
 
 Le schede non registrate sopra sono da eseguire; l'indice completo è in
 [tasks/README.md](tasks/README.md). La parità per capability è mantenuta in
@@ -116,8 +120,9 @@ autorizzazione specifica.
 
 ## Prossima sessione
 
-Leggere [START-HERE.md](START-HERE.md). La prossima scheda è
-Qualificare P10.03 su Windows reale o VM seguendo la [scheda](tasks/P10.03-implementare-adattatore-windows-dei-volumi.md).
+Leggere [START-HERE.md](START-HERE.md). Proseguire da P10.05 e completare le
+verifiche Linux disponibili; le qualifiche runtime Windows e macOS restano
+pendenti. Il manutentore eseguirà i test Windows dopo le verifiche Linux.
 G1 approvato per egui/eframe 0.37.0. P08.03 è completata al livello
 core; la capability AIFA resta pending finché il servizio reale non viene
 qualificato. P09.01 fornisce il builder completo; P09.02 esporta i dati e i

@@ -23,6 +23,7 @@ regex = "1.13.1"
 rusqlite = { version = "0.38.0", features = ["bundled"] }
 rust_decimal = "=1.43.0"
 sanikey-windows-volume = { path = "../sanikey-windows-volume" }
+sanikey-macos-volume = { path = "../sanikey-macos-volume" }
 serde_json = "1.0.154"
 sevenz-rust2 = { version = "=0.24.0", default-features = false, features = ["aes256", "bzip2", "ppmd", "util"] }
 sha2 = "0.10.9"

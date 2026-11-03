@@ -46,7 +46,11 @@ senza target USB fisici ([ricevuta P10.02](verification/2026-11-03-linux-volume-
 P10.03 ha implementato il confine Win32 e la verifica del Volume GUID approvata
 il 2026-11-03, ma la scheda resta incompleta: manca una compilazione ed
 esecuzione su Windows reale o VM ([ricevuta P10.03](verification/2026-11-03-windows-volume-adapter.md)).
-La prossima attività resta la qualifica P10.03 su Windows.
+Il manutentore ha chiesto il 2026-11-03 di completare prima le verifiche
+disponibili su Linux e passare ai test Windows solo dopo. P10.03 resta pendente
+per la qualifica Windows. P10.04 ha aggiunto l'adattatore macOS e i controlli
+sintetici eseguibili su Linux; compilazione e qualifica macOS restano pendenti.
+La prossima scheda è P10.05 ([ricevuta P10.04](verification/2026-11-03-macos-volume-adapter.md)).
 G2 ha approvato la semantica dell'identità USB; la qualifica degli adattatori
 multipiattaforma è ancora da fare ([ADR-0003](../decisions/0003-identita-usb.md)).
 P01.03 ha qualificato il campione in un checkout pulito e ha verificato il

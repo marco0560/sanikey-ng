@@ -13,6 +13,7 @@ pub mod frontend;
 pub mod inventory;
 #[cfg(target_os = "linux")]
 pub mod linux_volume;
+pub mod macos_volume;
 pub mod metadata;
 pub mod observation_imports;
 mod office;

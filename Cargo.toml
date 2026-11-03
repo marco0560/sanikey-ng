@@ -3,6 +3,7 @@ members = [
     "crates/sanikey-core",
     "crates/sanikey-cli",
     "crates/sanikey-windows-volume",
+    "crates/sanikey-macos-volume",
     "xtask",
 ]
 resolver = "3"
