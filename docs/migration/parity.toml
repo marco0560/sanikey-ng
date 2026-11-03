@@ -413,11 +413,18 @@ approved_deviations = []
 id = "build"
 description = "Build cache e multipaziente"
 phase = "P09"
-status = "pending"
+status = "implemented"
 baseline_source = "src/sanikey/build.py"
 baseline_test = "tests/test_build.py"
-rust_tests = []
-evidence = []
+rust_tests = [
+  "build::tests::incremental_build_reuses_extraction_and_invalidates_changed_sources",
+  "build::tests::build_all_runs_enabled_people_in_configuration_order",
+  "build::tests::build_all_keeps_completed_output_and_resumes_after_a_later_failure",
+  "build::tests::invalid_cache_and_forced_ocr_mode_reextract_instead_of_reusing_entries",
+  "build::tests::duplicate_source_content_is_built_once_and_reported",
+  "build::tests::invalid_parameter_rules_fail_before_creating_build_output",
+]
+evidence = ["verification/2026-11-03-build-cache.md"]
 approved_deviations = []
 
 [[capability]]

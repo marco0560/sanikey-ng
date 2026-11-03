@@ -7,7 +7,7 @@ La sessione di bootstrap si è fermata dopo repository e documentazione;
 l'implementazione approvata è ripresa in seguito con P03.01.
 
 Baseline Python: `fdad1d93e56496cc6cb9933b3089729175d5b5b3`.
-Stato Rust: P08.01, P08.02, P08.03, P09.01, P09.02 e P09.03 completate. P08.03 ha
+Stato Rust: P08.01, P08.02, P08.03, P09.01, P09.02, P09.03 e P09.04 completate. P08.03 ha
 portato ricerca, classificazione, conferma e persistenza esplicite, download in
 coppia con diagnostiche e lookup filesystem-only dei PDF locali; P09.02 collega
 FI/RCP locali ed URL AIFA agli export. Ricevute P08.03:
@@ -22,7 +22,11 @@ media e anteprime sono implementati e verificati con fixture sintetiche Linux. L
 capability containers e DICOM restano pending per media mancanti/non standard,
 integrazione frontend e qualifica di codec, viewer e Windows/macOS. P09.03 ha
 portato il generatore offline e i suoi asset, con test Chromium `file://` su
-Linux. La prossima attività è P09.04: build e cache incrementali.
+Linux. P09.04 ha aggiunto build core complete e incrementali per singoli e
+multi-persona, cache derivata, report e ripresa dopo un errore parziale; la
+baseline Python `tests/test_build.py` passa 25/25 e il gate Rust/documentale
+passa. I comandi CLI di build restano da collegare. La prossima attività è
+P10.01: copia e aggiornamento portabili.
 Stato GUI: G1 approvato il 2026-10-27 per egui/eframe 0.37.0; crate desktop
 di prodotto non ancora introdotto.
 
@@ -67,6 +71,7 @@ di prodotto non ancora introdotto.
 | P09.01 | completata; capability SQLite implemented | Baseline `tests/test_database.py` 4/4; builder Rust con schema equivalente, FTS5, 12 tabelle, metadati clinici, provenienza, DICOM e sostituzione transazionale; test mirati 2/2, confronto SQLite cross-language exit 0 su fixture sintetica (`Blood`, `hemoglobin`); `cargo xtask check` exit 0 (157 core, 1 ignored, 8 xtask, 3 CLI, 2 doctest, pubblicabilità 248 file, rustdoc); primo gate fallito per Clippy `cloned_ref_to_slice_refs`, corretto e gate ripetuto con successo; commit `ec0b1e4`; [ricevuta](verification/2026-10-28-sqlite-database.md) |
 | P09.02 | completata; capability exports implemented | Baseline fissata `fdad1d9` 8/8; Rust export 10/10; confronto frontend cross-language exit 0 con Markdown, raw HTML, link sicuri/non sicuri, data image, FI/RCP, AIFA, DICOM e dati clinici; `cargo xtask check` exit 0 (167 core, 1 ignored, 8 xtask, 3 CLI, 2 doctest, pubblicabilità 252 file, rustdoc); hook superati; Codira index exit 0; commit `28b53ca`, `fe8f578`, `5d75ac8`, `69d8ba7`; [checkpoint](verification/2026-10-28-exports-checkpoint.md) |
 | P09.03 | completata; capability frontend implemented | Asset statici fissati agli hash della baseline Python; generazione offline, escape HTML, USB info, sfondo e licenza coperti da test Rust; Chromium 151.0.7922.34 Linux ha aperto index e grafico esteso da `file://` con ricerca, link documenti, valori mancanti, polso/asse secondario, intervallo vuoto, filtri senza dati e smontaggio; `cargo xtask check` exit 0 (171 core, 2 ignored, 8 xtask, 3 CLI, 2 doctest, pubblicabilità 268 file, rustdoc); hook pre-commit superati; commit `9f580da`; [ricevuta](verification/2026-11-03-offline-frontend.md) |
+| P09.04 | completata; API core implemented | Build singola e multi-persona, cache identità SHA-256, modalità full/incremental/validation, report, duplicati, preflight iniziale e ripresa dopo errore; test baseline Python 25/25; `cargo xtask check` exit 0 (177 core, 2 ignored, 8 xtask, 3 CLI, 2 doctest, pubblicabilità 270 file, rustdoc); hook commit funzionale superato con i tre prototipi GUI; i comandi CLI di build restano da collegare; commit funzionale `b88d3bc`; [ricevuta](verification/2026-11-03-build-cache.md) |
 
 Le schede non registrate sopra sono da eseguire; l'indice completo è in
 [tasks/README.md](tasks/README.md). La parità per capability è mantenuta in
@@ -101,12 +106,12 @@ autorizzazione specifica.
 ## Prossima sessione
 
 Leggere [START-HERE.md](START-HERE.md). La prossima scheda è
-[P09.04](tasks/P09.04-completare-build-e-cache-incrementale.md), build e cache
-incrementali. G1 approvato per egui/eframe 0.37.0. P08.03 è completata al livello
+[P10.01](tasks/P10.01-implementare-copia-e-aggiornamento-portabili.md), copia e
+aggiornamento portabili. G1 approvato per egui/eframe 0.37.0. P08.03 è completata al livello
 core; la capability AIFA resta pending finché il servizio reale non viene
 qualificato. P09.01 fornisce il builder completo; P09.02 esporta i dati e i
-report richiesti; P09.03 genera il frontend offline e P09.04 collegherà
-l'orchestrazione incrementale.
+report richiesti; P09.03 genera il frontend offline e P09.04 aggiunge
+l'orchestrazione incrementale nel core.
 P08.02 è completata, incluse estrazione dei segni
 vitali, merge e celle descritte per tipo di valore.
 Le pipeline PDF e Office sono implementate e verificate su Linux; la qualifica

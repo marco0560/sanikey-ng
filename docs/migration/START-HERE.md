@@ -34,8 +34,11 @@ sintetiche. Raw HTML è escapato e i link non sicuri restano testo inerte; vedi
 la [ricevuta P09.02](verification/2026-10-28-exports-checkpoint.md).
 P09.03 ha completato il generatore e gli asset del frontend offline. I flussi
 principali sono stati provati con Chromium su Linux tramite `file://`; la
-qualifica browser su Windows/macOS resta da eseguire. La prossima attività è
-P09.04, build e cache incrementali.
+qualifica browser su Windows/macOS resta da eseguire. P09.04 ha aggiunto le API
+core per build singole e multi-persona, cache derivata, report e ripresa dopo
+esiti parziali ([ricevuta](verification/2026-11-03-build-cache.md)); i comandi
+CLI di build restano da collegare. La prossima scheda è P10.01, copia e
+aggiornamento portabili.
 G2 ha approvato la semantica dell'identità USB; la qualifica degli adattatori
 multipiattaforma è ancora da fare ([ADR-0003](../decisions/0003-identita-usb.md)).
 P01.03 ha qualificato il campione in un checkout pulito e ha verificato il

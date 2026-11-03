@@ -4,8 +4,8 @@ Stato: piano approvato; il workspace P03.01 contiene i crate iniziali
 `sanikey-core`, `sanikey-cli` e `xtask`. P03.02 aggiunge al core errori
 categorizzati, eventi tipizzati e annullamento cooperativo; la CLI implementa
 informazioni/versione. Le fasi P06–P09 hanno aggiunto pipeline documentali,
-database, export e generatore del frontend offline; la build incrementale e la
-GUI restano da realizzare.
+database, export, frontend offline e orchestrazione di build completa e
+incrementale; l'integrazione CLI e la GUI restano da realizzare.
 Il crate desktop attende G1, approvato per egui/eframe 0.37.0.
 
 ## Componenti
@@ -46,6 +46,18 @@ e linkato separatamente. Se il convertitore manca, termina male, supera 120
 secondi o produce un PDF invalido, il catalogo conserva l'originale e registra
 un warning senza esporre stderr o contenuto privato. La prova completa dei
 formati e il confezionamento multipiattaforma restano pending.
+
+`sanikey-core::build::build_patient` orchestra i servizi per una persona:
+valida regole e metadati, scarica i fogli AIFA confermati, ispeziona e prepara
+contenitori e DICOM, estrae testo, unisce osservazioni, quindi scrive database,
+export, frontend, manifest, report e checksum. `build_all` esegue prima il
+preflight privacy e metadata di tutte le persone e poi procede nell'ordine
+della configurazione; se una build fallisce conserva gli output già completati
+per la ripresa incrementale. La cache JSON del testo estratto è derivata e
+resta sotto la directory locale di build della singola persona. Full,
+validation e OCR forzato non riusano la cache. Le API core sono implementate e
+verificate con fixture sintetiche Linux; i comandi CLI di build restano da
+collegare.
 
 `sanikey-core::containers::stage_container_documents` riconosce i contenitori
 dalle estensioni della baseline e verifica il formato con il parser o il
