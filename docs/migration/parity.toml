@@ -506,6 +506,7 @@ rust_tests = [
   "crates/sanikey-desktop/src/main.rs::tests::preflight_rejects_empty_selected_folder_paths",
   "crates/sanikey-desktop/src/main.rs::tests::desktop_ui_renders_with_keyboard_focus_themes_scaling_and_narrow_viewports",
   "crates/sanikey-desktop/src/main.rs::tests::accessibility_tree_exposes_form_names_and_invalid_profile_status",
+  "crates/sanikey-desktop/src/main.rs::tests::clicking_preflight_with_an_empty_path_shows_accessible_error",
 ]
 evidence = [
   "verification/2026-10-26-gui-toolkit-candidates.md",

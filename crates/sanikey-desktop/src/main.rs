@@ -830,6 +830,25 @@ mod tests {
         receiver.into_iter().collect()
     }
 
+    fn run_app_frame(
+        app: &mut DesktopApp,
+        context: &egui::Context,
+        frame: &mut eframe::Frame,
+        events: Vec<egui::Event>,
+    ) -> egui::FullOutput {
+        context.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(800.0, 600.0),
+                )),
+                events,
+                ..Default::default()
+            },
+            |ui| eframe::App::ui(app, ui, frame),
+        )
+    }
+
     fn synthetic_result(person_id: &str) -> PatientBuildResult {
         PatientBuildResult {
             patient_id: person_id.to_owned(),
@@ -1242,5 +1261,79 @@ enabled = false
             "{labels:?}"
         );
         assert!(status_is_accessible);
+    }
+
+    #[test]
+    fn clicking_preflight_with_an_empty_path_shows_accessible_error() {
+        let directory = TestDirectory::new();
+        let profile = profile_with_document(&directory);
+        let mut app = DesktopApp::default();
+        app.import_profile(profile.source_path());
+        app.selections[0].source_documents = PathBuf::new();
+
+        let context = egui::Context::default();
+        context.enable_accesskit();
+        let mut frame = eframe::Frame::_new_kittest();
+        let initial = run_app_frame(&mut app, &context, &mut frame, Vec::new());
+        let button_position = initial
+            .shapes
+            .iter()
+            .find_map(|clipped| match &clipped.shape {
+                egui::epaint::Shape::Text(text)
+                    if text.galley.text() == "Controlla preflight e anomalie" =>
+                {
+                    Some(text.visual_bounding_rect().center())
+                }
+                _ => None,
+            })
+            .expect("pulsante preflight renderizzato");
+        initial.drop_without_applying_deltas();
+
+        let moved = run_app_frame(
+            &mut app,
+            &context,
+            &mut frame,
+            vec![egui::Event::PointerMoved(button_position)],
+        );
+        moved.drop_without_applying_deltas();
+        let pressed = run_app_frame(
+            &mut app,
+            &context,
+            &mut frame,
+            vec![egui::Event::PointerButton {
+                pos: button_position,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            }],
+        );
+        pressed.drop_without_applying_deltas();
+        let released = run_app_frame(
+            &mut app,
+            &context,
+            &mut frame,
+            vec![egui::Event::PointerButton {
+                pos: button_position,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::NONE,
+            }],
+        );
+        let error_is_accessible = released
+            .platform_output
+            .accesskit_update
+            .as_ref()
+            .is_some_and(|tree| {
+                tree.nodes
+                    .iter()
+                    .any(|(_, node)| node.value() == Some(app.status.as_str()))
+            });
+        released.drop_without_applying_deltas();
+
+        assert_eq!(
+            app.status,
+            "Completa tutti i percorsi delle persone selezionate prima del preflight."
+        );
+        assert!(error_is_accessible);
     }
 }
