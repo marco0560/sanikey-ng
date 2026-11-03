@@ -66,4 +66,7 @@ Il primo passaggio del gate, avviato prima che la ricevuta fosse creata, ha
 fallito solo per il collegamento locale mancante; il gate completo ripetuto dopo
 la creazione della ricevuta è passato.
 
-Commit atomico P09.03: da registrare nel ledger dopo la creazione.
+Commit atomico P09.03: `9f580da` (`feat(core): generate offline frontend assets`).
+Gli hook pre-commit hanno superato diff staged, rustfmt, test del workspace
+(171 core, 2 ignorati; 8 xtask; 3 CLI; 2 doctest) e i controlli dei tre
+prototipi GUI.
