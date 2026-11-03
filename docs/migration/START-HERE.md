@@ -59,11 +59,11 @@ progresso, errori, annullamento tra persone e ripresa incrementale. P11.03
 assembla e valida l'immagine multi-persona, collega la sincronizzazione alla
 cartella `SaniKey` su volume Linux e presenta conferma e report; gate e fixture
 sintetiche passano ([ricevuta](verification/2026-11-03-desktop-usb-flow.md)).
-L'interazione grafica manuale resta da provare: il modulo compositor headless
-non è installato e non è disponibile un display. La copia USB nel desktop è
-Linux-only; Windows e macOS restano da qualificare. Prossima scheda: P11.04,
-prova GUI su Linux appena sarà disponibile un display, poi test Windows del
-manutentore.
+La finestra si avvia sul compositor Plasma dell'host, ma non sono ancora state
+provate tastiera, focus, DPI, temi, schermate strette o flussi di errore; la
+sandbox stessa non raggiunge il socket Wayland. La copia USB nel desktop è
+Linux-only; Windows e macOS restano da qualificare. P11.04 registra le prove
+GUI Linux ancora da completare; poi il manutentore eseguirà i test Windows.
 G2 ha approvato la semantica dell'identità USB; la qualifica degli adattatori
 multipiattaforma è ancora da fare ([ADR-0003](../decisions/0003-identita-usb.md)).
 P01.03 ha qualificato il campione in un checkout pulito e ha verificato il

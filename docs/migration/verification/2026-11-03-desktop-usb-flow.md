@@ -17,7 +17,7 @@ Data: 2026-11-03. Implementazione e verifiche automatizzate su Linux.
 - `cargo clippy -p sanikey-core -p sanikey-desktop --all-targets --offline -- -D warnings`: exit 0.
 - `CARGO_NET_OFFLINE=true cargo xtask check`: exit 0; 203 test core con 2 ignorati, 3 CLI, 9 desktop, 1 Windows-volume, 2 macOS-volume, 8 xtask, 2 doctest, build/smoke CLI, pubblicabilità 294 file e rustdoc.
 - `uv run codira index`: 3 indicizzati, 225 riusati, 0 fallimenti. L'audit non ha rilievi sui nuovi moduli USB o sul desktop; segnala i 12 formati senza parser e rilievi Rustdoc già presenti in altri moduli.
-- La GUI non è stata provata interattivamente: `weston` è installato ma il modulo backend headless richiesto (`headless-backend.so`) manca; l'ambiente non espone un display X11 o compositor Wayland. Nessun volume USB fisico è stato scritto o qualificato.
+- L'avvio GUI isolato nella sandbox fallisce con `WaylandError(Connection(NoCompositor))`. Fuori dalla sandbox, sul compositor Plasma dell'host, la finestra vuota è rimasta attiva per 6 secondi senza errori ed è stata chiusa dal timeout (`exit=124`); non sono stati caricati profili. Nessun input GUI, layout, DPI o tema è stato qualificato e nessun volume USB fisico è stato scritto.
 - Tentativi intermedi registrati: la prima separazione dei validatori applicava quello dell'immagine completa ai fixture TXT e ha fallito 4 test preesistenti; la compatibilità TXT è stata ripristinata con API distinte. Clippy ha segnalato un borrow non necessario, corretto prima del gate finale.
 
 ## Limiti e prossimo passo
