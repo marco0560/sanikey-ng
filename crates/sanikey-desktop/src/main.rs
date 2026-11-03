@@ -1351,6 +1351,88 @@ enabled = false
     }
 
     #[test]
+    fn clicking_preflight_with_a_valid_profile_exposes_the_duplicate_review() {
+        let directory = TestDirectory::new();
+        let profile = profile_with_document(&directory);
+        let profile_path = profile.source_path().to_path_buf();
+        let mut app = DesktopApp::default();
+        app.import_profile(&profile_path);
+
+        let context = egui::Context::default();
+        context.enable_accesskit();
+        let mut frame = eframe::Frame::_new_kittest();
+        let initial = run_app_frame(&mut app, &context, &mut frame, Vec::new());
+        let button_position = initial
+            .shapes
+            .iter()
+            .find_map(|clipped| match &clipped.shape {
+                egui::epaint::Shape::Text(text)
+                    if text.galley.text() == "Controlla preflight e anomalie" =>
+                {
+                    Some(text.visual_bounding_rect().center())
+                }
+                _ => None,
+            })
+            .expect("pulsante preflight renderizzato");
+        initial.drop_without_applying_deltas();
+
+        for event in [
+            egui::Event::PointerMoved(button_position),
+            egui::Event::PointerButton {
+                pos: button_position,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            },
+            egui::Event::PointerButton {
+                pos: button_position,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ] {
+            let output = run_app_frame(&mut app, &context, &mut frame, vec![event]);
+            output.drop_without_applying_deltas();
+        }
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while app.review.is_none() && std::time::Instant::now() < deadline {
+            let output = run_app_frame(&mut app, &context, &mut frame, Vec::new());
+            output.drop_without_applying_deltas();
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(app.review.is_some(), "preflight completato entro 5 secondi");
+        assert_eq!(app.review.as_ref().expect("riepilogo").document_count, 2);
+        assert_eq!(
+            app.review
+                .as_ref()
+                .expect("riepilogo")
+                .duplicate_groups
+                .len(),
+            1
+        );
+
+        let output = run_app_frame(&mut app, &context, &mut frame, Vec::new());
+        let tree = output
+            .platform_output
+            .accesskit_update
+            .as_ref()
+            .expect("albero AccessKit dopo il preflight");
+        let review_is_accessible = tree
+            .nodes
+            .iter()
+            .any(|(_, node)| node.value() == Some("Riepilogo preflight"));
+        let status_is_accessible = tree
+            .nodes
+            .iter()
+            .any(|(_, node)| node.value() == Some(app.status.as_str()));
+        output.drop_without_applying_deltas();
+
+        assert!(review_is_accessible);
+        assert!(status_is_accessible);
+    }
+
+    #[test]
     fn warning_text_color_matches_light_and_dark_themes() {
         assert_eq!(warning_text_color(true), egui::Color32::LIGHT_RED);
         assert_eq!(warning_text_color(false), egui::Color32::DARK_RED);
