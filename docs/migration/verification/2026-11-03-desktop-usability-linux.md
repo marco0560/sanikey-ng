@@ -16,7 +16,7 @@ Data: 2026-11-03. Qualifica parziale su Linux.
 
 ## Limiti ed esiti non qualificati
 
-- Le correzioni di layout e colore sono verificate dai test headless. I tentativi di cattura post-fix hanno acquisito finestre diverse da SaniKey (dialogo del portale desktop e Konsole); i file sono stati eliminati e nessuna finestra altrui è stata manipolata. Non c'è una schermata nativa post-fix affidabile.
+- Le correzioni di layout e colore sono verificate dai test headless. I tentativi di cattura post-fix hanno acquisito finestre diverse da SaniKey (dialogo del portale desktop e Konsole); il manutentore ha precisato di aver minimizzato SaniKey perché interferiva col desktop, prima della cattura finale. I file sono stati eliminati e nessuna finestra altrui è stata manipolata. Non c'è una schermata nativa post-fix affidabile.
 - Tab e focus sono stati verificati tramite eventi sintetici egui, non con una tastiera fisica. DPI e temi sono varianti di rendering headless; la schermata host è stata osservata nel tema scuro corrente.
 - Il flusso di profilo invalido e il click di preflight con percorso mancante sono verificati con frame/eventi sintetici e il messaggio compare nell'albero AccessKit; non sono stati provati con uno screen reader reale né con input nativo. Non sono stati esplorati tutti i flussi d'errore. Nessuna prova USB fisica.
 - Windows e macOS non sono qualificati. Il manutentore proseguirà con i test Windows dopo la verifica Linux.
