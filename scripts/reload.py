@@ -436,12 +436,12 @@ def _require_rsync() -> None:
 def _synchronize_local_data(
     people: tuple[PersonPaths, ...], pairs: tuple[tuple[Path, Path], ...]
 ) -> None:
-    """Synchronize configured documents and metadata, preserving other data.
+    """Synchronize inputs and clear configured generated build directories.
 
     Parameters
     ----------
     people : tuple[PersonPaths, ...]
-        Enabled people whose local build directories must exist.
+        Enabled people whose generated build directories must be empty.
     pairs : tuple[tuple[pathlib.Path, pathlib.Path], ...]
         Validated source-to-destination pairs.
 
@@ -460,8 +460,34 @@ def _synchronize_local_data(
     for source, destination in pairs:
         destination.mkdir(parents=True, exist_ok=True)
         _rsync(source, destination)
+    _empty_generated(people)
+
+
+def _empty_generated(people: tuple[PersonPaths, ...]) -> None:
+    """Remove contents of configured generated directories, keeping roots.
+
+    Parameters
+    ----------
+    people : tuple[PersonPaths, ...]
+        Enabled people whose generated outputs should be cleared.
+
+    Returns
+    -------
+    None
+
+    Raises
+    ------
+    OSError
+        If a generated entry cannot be removed or its directory created.
+    """
+
     for person in people:
         person.local_build.mkdir(parents=True, exist_ok=True)
+        for entry in person.local_build.iterdir():
+            if entry.is_dir() and not entry.is_symlink():
+                shutil.rmtree(entry)
+            else:
+                entry.unlink()
 
 
 def _refresh_generated(people: tuple[PersonPaths, ...]) -> None:
