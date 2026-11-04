@@ -3,6 +3,15 @@
 /prototypes/**/target/
 /dist/
 /site/
+# -------------------------------
+# Codex
+# -------------------------------
+.codex
+
+# -------------------------------
+# Local Data
+# -------------------------------
+/immagini/*.png
 /local-data/
 /patients/
 /generated/

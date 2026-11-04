@@ -1,0 +1,4 @@
+interface:
+  display_name: "SaniKey USB Browser Audit"
+  short_description: "Audit SaniKey USB exports with headless Chrome."
+  default_prompt: "Use $sanikey-usb-browser-audit to audit a mounted SaniKey USB export."
