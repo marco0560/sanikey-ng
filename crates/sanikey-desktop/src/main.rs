@@ -16,6 +16,7 @@ use sanikey_core::inventory::{find_duplicate_documents, scan_document_inventory}
 #[cfg(target_os = "linux")]
 use sanikey_core::linux_volume::{LinuxVolumeInfo, inspect_linux_volume};
 use sanikey_core::metadata::prepare_people_metadata;
+use sanikey_core::observation_imports::import_observations;
 #[cfg(target_os = "linux")]
 use sanikey_core::operation::OperationOutcome;
 use sanikey_core::operation::{CancellationToken, OperationEvent, OperationPhase, run_operation};
@@ -40,8 +41,17 @@ struct ReviewSummary {
     selected_people: Vec<String>,
 }
 
+#[derive(Clone, Debug, Default)]
+struct ObservationImportSummary {
+    people: usize,
+    series: usize,
+    points: usize,
+    warnings: Vec<String>,
+}
+
 enum DesktopEvent {
     Preflight(Result<ReviewSummary, String>),
+    ObservationsImported(Result<ObservationImportSummary, String>),
     PatientBuilt(PatientBuildResult),
     ImagePrepared(Result<UsbImageResult, String>),
     #[cfg(target_os = "linux")]
@@ -60,6 +70,7 @@ struct DesktopApp {
     receiver: Option<Receiver<DesktopEvent>>,
     cancellation: Option<CancellationToken>,
     review: Option<ReviewSummary>,
+    observation_import: Option<ObservationImportSummary>,
     progress: Option<f32>,
     completed_people: Vec<String>,
     completed_builds: Vec<PatientBuildResult>,
@@ -85,6 +96,7 @@ impl Default for DesktopApp {
             receiver: None,
             cancellation: None,
             review: None,
+            observation_import: None,
             progress: Some(0.0),
             completed_people: Vec::new(),
             completed_builds: Vec::new(),
@@ -117,6 +129,7 @@ impl DesktopApp {
                 self.status = format!("Profilo caricato: {} persone", self.selections.len());
                 self.profile = Some(profile);
                 self.review = None;
+                self.observation_import = None;
                 self.completed_people.clear();
                 self.completed_builds.clear();
                 self.usb_image = None;
@@ -132,6 +145,7 @@ impl DesktopApp {
                 self.profile = None;
                 self.selections.clear();
                 self.review = None;
+                self.observation_import = None;
                 self.status = format!("{}: {}", error.code().as_str(), error.message());
             }
         }
@@ -190,7 +204,9 @@ impl DesktopApp {
         let root = profile.base_directory().to_path_buf();
         let (sender, receiver) = mpsc::channel();
         self.receiver = Some(receiver);
+        self.progress = None;
         self.review = None;
+        self.observation_import = None;
         self.completed_people.clear();
         self.completed_builds.clear();
         self.usb_image = None;
@@ -238,6 +254,30 @@ impl DesktopApp {
             "Build in corso; l'annullamento viene applicato al termine della persona corrente."
                 .to_owned();
         thread::spawn(move || build_selected_people(selected, cancellation, sender));
+    }
+
+    fn start_observation_import(&mut self) {
+        let Some(config) = self.effective_config() else {
+            return;
+        };
+        let selected = config.enabled_people().cloned().collect::<Vec<_>>();
+        if selected.is_empty() {
+            self.status =
+                "Seleziona almeno una persona prima di importare le osservazioni.".to_owned();
+            return;
+        }
+        let (sender, receiver) = mpsc::channel();
+        self.receiver = Some(receiver);
+        self.progress = None;
+        self.observation_import = None;
+        self.completed_people.clear();
+        self.completed_builds.clear();
+        self.usb_image = None;
+        self.status = "Importazione delle osservazioni selezionate…".to_owned();
+        thread::spawn(move || {
+            let result = import_selected_observations(&selected);
+            let _ = sender.send(DesktopEvent::ObservationsImported(result));
+        });
     }
 
     #[cfg(target_os = "linux")]
@@ -351,6 +391,21 @@ impl DesktopApp {
                     self.status = format!("Preflight fallito: {error}");
                     self.receiver = None;
                     self.review = None;
+                }
+                DesktopEvent::ObservationsImported(Ok(summary)) => {
+                    self.status = format!(
+                        "Importazione completata: {} persone, {} serie, {} osservazioni, {} avvisi.",
+                        summary.people,
+                        summary.series,
+                        summary.points,
+                        summary.warnings.len()
+                    );
+                    self.observation_import = Some(summary);
+                    self.receiver = None;
+                }
+                DesktopEvent::ObservationsImported(Err(error)) => {
+                    self.status = format!("Importazione osservazioni fallita: {error}");
+                    self.receiver = None;
                 }
                 DesktopEvent::PatientBuilt(result) => {
                     self.completed_people.push(result.patient_id.clone());
@@ -476,6 +531,33 @@ fn review_profile(config: &AccountsConfig, root: &Path) -> Result<ReviewSummary,
                     .collect(),
             ));
         }
+    }
+    Ok(summary)
+}
+
+fn import_selected_observations(
+    people: &[PersonConfig],
+) -> Result<ObservationImportSummary, String> {
+    let mut summary = ObservationImportSummary::default();
+    for person in people {
+        let imported = import_observations(&person.metadata_directory, &person.source_documents)
+            .map_err(|error| {
+                format!(
+                    "{} ({}): {}",
+                    person.display_name,
+                    error.code().as_str(),
+                    error.message()
+                )
+            })?;
+        summary.people += 1;
+        summary.series += imported.series.len();
+        summary.points += imported.points.len();
+        summary.warnings.extend(
+            imported
+                .warnings
+                .into_iter()
+                .map(|warning| format!("{}: {warning}", person.display_name)),
+        );
     }
     Ok(summary)
 }
@@ -663,6 +745,12 @@ impl DesktopApp {
                     self.start_preflight();
                 }
                 if ui
+                    .add_enabled(selected, egui::Button::new("Importa/aggiorna osservazioni"))
+                    .clicked()
+                {
+                    self.start_observation_import();
+                }
+                if ui
                     .add_enabled(selected, egui::Button::new("Avvia build incrementale"))
                     .clicked()
                 {
@@ -753,6 +841,21 @@ impl DesktopApp {
                         }
                     }
                 });
+            ui.label("Importa o aggiorna le osservazioni prima della build; i metadati curati restano invariati.");
+        }
+        if let Some(summary) = &self.observation_import {
+            ui.collapsing("Risultato importazione osservazioni", |ui| {
+                ui.label(format!(
+                    "{} persone · {} serie · {} osservazioni · {} avvisi",
+                    summary.people,
+                    summary.series,
+                    summary.points,
+                    summary.warnings.len()
+                ));
+                for warning in &summary.warnings {
+                    ui.colored_label(warning_text_color(ui.visuals().dark_mode), warning);
+                }
+            });
         }
         if !self.completed_people.is_empty() {
             ui.label(format!(
@@ -764,11 +867,7 @@ impl DesktopApp {
             if let Some(progress) = self.progress {
                 ui.add(egui::ProgressBar::new(progress).show_percentage());
             } else {
-                ui.add(
-                    egui::ProgressBar::new(0.3)
-                        .animate(true)
-                        .text("Elaborazione in corso"),
-                );
+                ui.spinner();
             }
             ui.ctx()
                 .request_repaint_after(std::time::Duration::from_millis(30));
@@ -789,11 +888,11 @@ fn main() -> eframe::Result {
 #[cfg(test)]
 mod tests {
     use super::{
-        DesktopApp, DesktopEvent, build_selected_people, build_selected_people_with,
-        review_profile, warning_text_color,
+        DesktopApp, DesktopEvent, ReviewSummary, build_selected_people, build_selected_people_with,
+        import_selected_observations, review_profile, warning_text_color,
     };
     use eframe::egui;
-    use sanikey_core::build::{BuildCounts, PatientBuildResult};
+    use sanikey_core::build::{BuildCounts, BuildOptions, PatientBuildResult, build_patient};
     use sanikey_core::config::AccountsProfile;
     use sanikey_core::operation::{CancellationToken, OperationEvent};
     use std::{fs, path::PathBuf, time::SystemTime};
@@ -1030,6 +1129,20 @@ enabled = false
     }
 
     #[test]
+    fn preflight_starts_with_indeterminate_progress() {
+        let directory = TestDirectory::new();
+        let profile = profile_with_document(&directory);
+        let mut app = DesktopApp::default();
+        app.import_profile(profile.source_path());
+        app.progress = Some(0.67);
+
+        app.start_preflight();
+
+        assert!(app.progress.is_none());
+        assert!(app.receiver.is_some());
+    }
+
+    #[test]
     fn build_emits_progress_success_and_incremental_resume_results() {
         let directory = TestDirectory::new();
         let profile = profile_with_document(&directory);
@@ -1068,6 +1181,39 @@ enabled = false
                 .iter()
                 .any(|event| matches!(event, DesktopEvent::Terminal(OperationEvent::Succeeded)))
         );
+    }
+
+    #[test]
+    fn observation_import_action_generates_current_outputs_for_selected_people() {
+        let directory = TestDirectory::new();
+        let profile = profile_with_document(&directory);
+        let person = profile.accounts().people[0].clone();
+        fs::write(
+            person.source_documents.join("observations.csv"),
+            "Data,Peso\n2026-01-02,70.5\n",
+        )
+        .expect("CSV osservazioni sintetico");
+        fs::write(
+            person.metadata_directory.join("observation_imports.toml"),
+            "[[series]]\nid='peso'\nname='Peso'\nvalue_type='numeric'\nunit='kg'\n\n[[source]]\npath='observations.csv'\nseries_id='peso'\n[source.columns]\ndate='Data'\nnumeric_value='Peso'\n",
+        )
+        .expect("manifest osservazioni sintetico");
+
+        let summary = import_selected_observations(std::slice::from_ref(&person))
+            .expect("importazione osservazioni riuscita");
+
+        assert_eq!(summary.people, 1);
+        assert_eq!(summary.series, 1);
+        assert_eq!(summary.points, 1);
+        assert!(summary.warnings.is_empty());
+        sanikey_core::observation_imports::ensure_observation_imports_current(
+            &person.metadata_directory,
+            &person.source_documents,
+        )
+        .expect("output importato aggiornato per la build");
+        let build = build_patient(&person, BuildOptions::default())
+            .expect("build incrementale dopo l'importazione");
+        assert_eq!(build.patient_id, person.id);
     }
 
     #[test]
@@ -1287,6 +1433,44 @@ enabled = false
             "{labels:?}"
         );
         assert!(status_is_accessible);
+    }
+
+    #[test]
+    fn observation_import_action_is_accessible_after_preflight() {
+        let directory = TestDirectory::new();
+        let profile = profile_with_document(&directory);
+        let mut app = DesktopApp::default();
+        app.import_profile(profile.source_path());
+        app.review = Some(ReviewSummary {
+            selected_people: vec!["Persona A".to_owned()],
+            ..ReviewSummary::default()
+        });
+
+        let context = egui::Context::default();
+        context.enable_accesskit();
+        let mut frame = eframe::Frame::_new_kittest();
+        let output = context.run_ui(egui::RawInput::default(), |ui| {
+            eframe::App::ui(&mut app, ui, &mut frame);
+        });
+        let tree = output
+            .platform_output
+            .accesskit_update
+            .as_ref()
+            .expect("albero AccessKit prodotto dal frame");
+        let labels = tree
+            .nodes
+            .iter()
+            .filter_map(|(_, node)| node.label())
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+
+        output.drop_without_applying_deltas();
+        assert!(
+            labels
+                .iter()
+                .any(|label| label == "Importa/aggiorna osservazioni"),
+            "{labels:?}"
+        );
     }
 
     #[test]
