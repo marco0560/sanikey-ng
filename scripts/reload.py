@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Synchronize developer-local SaniKey data from the Dropbox archive.
+"""Rebuild developer-local SaniKey data from the Dropbox archive.
 
 Parameters
 ----------
@@ -24,6 +24,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CONFIG_PATH = REPO_ROOT / "config" / "accounts.toml"
 LOCAL_DATA = REPO_ROOT / "local-data"
+USB_TARGET = LOCAL_DATA / "usb-target"
 DEFAULT_SOURCE_ROOT = Path.home() / "Dropbox" / "Family Room" / "Medicalia"
 PERSON_ID = re.compile(r"[a-z][a-z0-9]*(?:-[a-z0-9]+)*\Z")
 
@@ -58,7 +59,7 @@ class PersonPaths:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Synchronize, compare, or refresh configured local data.
+    """Rebuild, compare, or refresh configured local data.
 
     Parameters
     ----------
@@ -79,22 +80,22 @@ def main(argv: list[str] | None = None) -> int:
         people = _load_people(config_path)
         enabled_people = tuple(person for person in people if person.enabled)
         _validate_destinations(enabled_people, LOCAL_DATA)
+        source_root = args.source_root.expanduser().resolve()
+        pairs = _sync_pairs(enabled_people, source_root)
+        _validate_sources(pairs, LOCAL_DATA)
+        _require_rsync()
 
+        if args.compare:
+            return _compare(pairs)
         if args.refresh:
             _refresh_generated(enabled_people)
         else:
-            source_root = args.source_root.expanduser().resolve()
-            pairs = _sync_pairs(enabled_people, source_root)
-            _validate_sources(pairs, LOCAL_DATA)
-            _require_rsync()
-            if args.compare:
-                return _compare(pairs)
-            _synchronize_local_data(enabled_people, pairs)
+            _rebuild_local_data(enabled_people, pairs)
     except (OSError, subprocess.SubprocessError, ValueError) as exc:
         print(f"ERRORE: ricaricamento dati non riuscito: {exc}", file=sys.stderr)
         return 2
 
-    mode = "build-rigenerate" if args.refresh else "sincronizzazione"
+    mode = "build-rigenerate" if args.refresh else "ricaricamento-completo"
     print(f"stato=ok persone={len(enabled_people)} modalità={mode}")
     return 0
 
@@ -121,21 +122,18 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Aggiorna le directory locali configurate in SaniKey NG."
     )
-    modes = parser.add_mutually_exclusive_group(required=True)
+    modes = parser.add_mutually_exclusive_group()
     modes.add_argument(
         "--sync",
         action="store_true",
-        help=(
-            "sincronizza documenti e metadati; elimina gli obsoleti solo nelle "
-            "destinazioni configurate"
-        ),
+        help="alias del reset completo eseguito anche senza opzioni",
     )
     modes.add_argument(
         "--refresh",
         action="store_true",
         help=(
-            "ricrea solo le directory di build configurate, preservando "
-            "documenti e metadati"
+            "preserva documenti e metadati, ma ricrea gli output di build e "
+            "la destinazione USB"
         ),
     )
     modes.add_argument(
@@ -433,15 +431,15 @@ def _require_rsync() -> None:
         raise ValueError("eseguibile rsync non trovato nel PATH")
 
 
-def _synchronize_local_data(
+def _rebuild_local_data(
     people: tuple[PersonPaths, ...], pairs: tuple[tuple[Path, Path], ...]
 ) -> None:
-    """Synchronize inputs and clear configured generated build directories.
+    """Recreate managed local data and synchronize configured inputs.
 
     Parameters
     ----------
     people : tuple[PersonPaths, ...]
-        Enabled people whose generated build directories must be empty.
+        Enabled people whose generated build directories must exist.
     pairs : tuple[tuple[pathlib.Path, pathlib.Path], ...]
         Validated source-to-destination pairs.
 
@@ -452,42 +450,28 @@ def _synchronize_local_data(
     Raises
     ------
     OSError
-        If creating a destination directory fails.
+        If stale managed data cannot be removed or a destination cannot be
+        created.
     subprocess.CalledProcessError
         If rsync fails for a source-to-destination pair.
     """
 
+    LOCAL_DATA.mkdir(parents=True, exist_ok=True)
+    for entry in LOCAL_DATA.iterdir():
+        # Il checkout della baseline serve ai confronti e va preservato.
+        if entry == LOCAL_DATA / "reference":
+            continue
+        if entry.is_dir() and not entry.is_symlink():
+            shutil.rmtree(entry)
+        else:
+            entry.unlink()
+
     for source, destination in pairs:
         destination.mkdir(parents=True, exist_ok=True)
         _rsync(source, destination)
-    _empty_generated(people)
-
-
-def _empty_generated(people: tuple[PersonPaths, ...]) -> None:
-    """Remove contents of configured generated directories, keeping roots.
-
-    Parameters
-    ----------
-    people : tuple[PersonPaths, ...]
-        Enabled people whose generated outputs should be cleared.
-
-    Returns
-    -------
-    None
-
-    Raises
-    ------
-    OSError
-        If a generated entry cannot be removed or its directory created.
-    """
-
     for person in people:
         person.local_build.mkdir(parents=True, exist_ok=True)
-        for entry in person.local_build.iterdir():
-            if entry.is_dir() and not entry.is_symlink():
-                shutil.rmtree(entry)
-            else:
-                entry.unlink()
+    USB_TARGET.mkdir(parents=True, exist_ok=True)
 
 
 def _refresh_generated(people: tuple[PersonPaths, ...]) -> None:
@@ -512,6 +496,9 @@ def _refresh_generated(people: tuple[PersonPaths, ...]) -> None:
         if person.local_build.exists():
             shutil.rmtree(person.local_build)
         person.local_build.mkdir(parents=True, exist_ok=True)
+    if USB_TARGET.exists():
+        shutil.rmtree(USB_TARGET)
+    USB_TARGET.mkdir(parents=True, exist_ok=True)
 
 
 def _compare(pairs: tuple[tuple[Path, Path], ...]) -> int:
