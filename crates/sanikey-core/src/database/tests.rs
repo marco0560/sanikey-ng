@@ -304,3 +304,31 @@ fn failed_transaction_preserves_the_previous_database() {
         .expect("riga precedente leggibile");
     assert_eq!(count, 1);
 }
+
+#[test]
+fn duplicate_document_ids_report_both_source_locations() {
+    let directory = TestDirectory::new();
+    let person = person(directory.path());
+    let source = document(directory.path());
+    let mut staged = source.clone();
+    staged.path = directory
+        .path()
+        .join("generated/staging/containers/report.txt");
+    staged.origin = "container".into();
+    staged.container_id = Some("synthetic-container-id".into());
+    staged.internal_path = Some("README/report.txt".into());
+
+    let error = build_database(
+        &person,
+        &[source.clone(), staged.clone()],
+        &CuratedMetadata::default(),
+        &[],
+        &[],
+    )
+    .expect_err("ID duplicato rifiutato prima dell'inserimento SQLite");
+
+    assert!(error.message().contains(&source.path.display().to_string()));
+    assert!(error.message().contains(&staged.path.display().to_string()));
+    assert!(error.message().contains("README/report.txt"));
+    assert!(error.message().contains("synthetic-container-id"));
+}

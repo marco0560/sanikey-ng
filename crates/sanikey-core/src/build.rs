@@ -208,11 +208,12 @@ fn build_prepared_patient(
     ensure_observation_imports_current(&person.metadata_directory, &person.source_documents)?;
 
     let inventory = scan_document_inventory(&person)?;
-    let duplicates = find_duplicate_documents(&inventory);
     let documents = deduplicate_documents(&inventory);
     let staging = stage_container_documents(&person, &documents)?;
-    let mut catalog_documents = documents.clone();
-    catalog_documents.extend(staging.documents.iter().cloned());
+    let mut catalog_candidates = inventory;
+    catalog_candidates.extend(staging.documents.iter().cloned());
+    let duplicates = find_duplicate_documents(&catalog_candidates);
+    let catalog_documents = deduplicate_documents(&catalog_candidates);
     let dicom_studies = crate::dicom::catalog_dicom_studies(&person, &catalog_documents);
     let dicom_media = prepare_dicom_media(&person, &dicom_studies)?;
     let dicom_previews = generate_dicom_previews(&person, &dicom_studies)?;
@@ -348,7 +349,7 @@ fn deduplicate_documents(documents: &[DocumentRecord]) -> Vec<DocumentRecord> {
     let mut seen = HashSet::new();
     documents
         .iter()
-        .filter(|document| seen.insert(document.sha256.as_str()))
+        .filter(|document| seen.insert(document.document_id.as_str()))
         .cloned()
         .collect()
 }

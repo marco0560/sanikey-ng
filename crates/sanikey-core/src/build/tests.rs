@@ -4,6 +4,7 @@ use crate::config::{
 };
 use serde_json::Value;
 use std::fs;
+use std::io::{Cursor, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -49,6 +50,26 @@ fn build_options(mode: BuildMode) -> BuildOptions {
         force_pdf_ocr: false,
         parameter_debug: false,
     }
+}
+
+fn write_zip(path: &Path, entries: &[(&str, &[u8])]) {
+    let mut archive = zip::ZipWriter::new(Cursor::new(Vec::new()));
+    for (name, contents) in entries {
+        archive
+            .start_file(*name, zip::write::SimpleFileOptions::default())
+            .expect("membro ZIP sintetico");
+        archive
+            .write_all(contents)
+            .expect("contenuto ZIP sintetico");
+    }
+    fs::write(
+        path,
+        archive
+            .finish()
+            .expect("ZIP sintetico completo")
+            .into_inner(),
+    )
+    .expect("archivio sintetico scritto");
 }
 
 #[test]
@@ -255,6 +276,49 @@ fn duplicate_source_content_is_built_once_and_reported() {
             .iter()
             .any(|warning| warning.contains("duplicato"))
     );
+}
+
+#[test]
+fn archive_duplicates_are_deduplicated_but_excluded_readmes_are_ignored() {
+    let temp = TestDirectory::new();
+    let mut person = person(&temp.0, "synthetic-archive-duplicates");
+    person.ingestion.exclude_patterns = vec!["README.md".to_owned()];
+    fs::create_dir_all(&person.source_documents).expect("directory documenti");
+    let report = b"Peso 70 kg\nDocumento clinico sintetico";
+    fs::write(person.source_documents.join("report.txt"), report).expect("documento sintetico");
+    write_zip(
+        &person.source_documents.join("bundle.zip"),
+        &[("report.txt", report), ("README.md", report)],
+    );
+
+    let result = build_patient(&person, build_options(BuildMode::Full))
+        .expect("build deduplicata con README escluso");
+
+    assert_eq!(result.counts.documents, 2);
+    assert_eq!(result.counts.derived_documents, 1);
+    assert_eq!(result.counts.total_records, 2);
+    assert_eq!(result.duplicates, 1);
+    let duplicate_warning = result
+        .warning_messages
+        .iter()
+        .find(|warning| warning.contains("duplicato"))
+        .expect("duplicato del documento incluso segnalato");
+    assert!(duplicate_warning.contains("report.txt"));
+    assert!(!duplicate_warning.contains("README.md"));
+
+    let database = rusqlite::Connection::open(&result.database).expect("database creato");
+    let document_count: i64 = database
+        .query_row("SELECT COUNT(*) FROM documents", [], |row| row.get(0))
+        .expect("conteggio documenti");
+    let readme_count: i64 = database
+        .query_row(
+            "SELECT COUNT(*) FROM documents WHERE path LIKE '%README.md%' OR internal_path = 'README.md'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("conteggio README");
+    assert_eq!(document_count, 2);
+    assert_eq!(readme_count, 0);
 }
 
 #[test]

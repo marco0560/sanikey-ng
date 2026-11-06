@@ -128,6 +128,17 @@ fn insert_documents(
     documents: &[DocumentRecord],
     extracted_text: &[ExtractedText],
 ) -> Result<(), OperationError> {
+    let mut document_by_id = HashMap::with_capacity(documents.len());
+    for document in documents {
+        if let Some(previous) = document_by_id.insert(document.document_id.as_str(), document) {
+            return Err(database_error(format!(
+                "ID documento SQLite duplicato {} tra {} e {}; conflitto rilevato prima dell'inserimento",
+                document.document_id,
+                document_location(previous),
+                document_location(document)
+            )));
+        }
+    }
     let text_by_document_id: HashMap<_, _> = extracted_text
         .iter()
         .filter(|item| !item.text.is_empty())
@@ -155,7 +166,13 @@ fn insert_documents(
                     document.internal_path,
                 ],
             )
-            .map_err(|error| database_error(format!("inserimento documento SQLite: {error}")))?;
+            .map_err(|error| {
+                database_error(format!(
+                    "inserimento documento SQLite {} (id {}): {error}",
+                    document_location(document),
+                    document.document_id
+                ))
+            })?;
         let row_id = connection.last_insert_rowid();
         let text = text_by_document_id
             .get(document.document_id.as_str())
@@ -186,6 +203,16 @@ fn insert_documents(
             .map_err(|error| database_error(format!("indicizzazione documento FTS5: {error}")))?;
     }
     Ok(())
+}
+
+fn document_location(document: &DocumentRecord) -> String {
+    match (&document.container_id, &document.internal_path) {
+        (Some(container_id), Some(internal_path)) => format!(
+            "{} (membro {internal_path} del contenitore {container_id})",
+            document.path.display()
+        ),
+        _ => document.path.display().to_string(),
+    }
 }
 
 fn insert_metadata(
