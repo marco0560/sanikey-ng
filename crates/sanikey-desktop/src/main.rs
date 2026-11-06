@@ -639,6 +639,14 @@ fn choose_folder(ui: &mut egui::Ui, label_text: &str, path: &mut PathBuf) {
     });
 }
 
+fn show_path(ui: &mut egui::Ui, label_text: &str, path: &Path) {
+    ui.label(label_text);
+    ui.add(
+        egui::Label::new(egui::RichText::new(path.display().to_string()).monospace())
+            .wrap_mode(egui::TextWrapMode::Wrap),
+    );
+}
+
 /// Sceglie un rosso leggibile sia sul fondo chiaro sia su quello scuro.
 fn warning_text_color(dark_mode: bool) -> egui::Color32 {
     if dark_mode {
@@ -651,7 +659,15 @@ fn warning_text_color(dark_mode: bool) -> egui::Color32 {
 /// Collega gli eventi del core ai controlli e allo stato visuale.
 impl eframe::App for DesktopApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        egui::ScrollArea::vertical().show(ui, |ui| self.show_contents(ui));
+        ui.ctx().set_theme(egui::Theme::Light);
+        egui::Frame::NONE
+            .inner_margin(egui::Margin {
+                left: 16,
+                ..egui::Margin::ZERO
+            })
+            .show(ui, |ui| {
+                egui::ScrollArea::vertical().show(ui, |ui| self.show_contents(ui));
+            });
     }
 }
 
@@ -688,10 +704,7 @@ impl DesktopApp {
 
         if let Some(profile) = &self.profile {
             ui.separator();
-            ui.label(format!(
-                "Base percorsi: {}",
-                profile.base_directory().display()
-            ));
+            show_path(ui, "Base percorsi:", profile.base_directory());
             if !self.selections.iter().any(|person| person.selected) {
                 ui.colored_label(
                     warning_text_color(ui.visuals().dark_mode),
@@ -774,7 +787,7 @@ impl DesktopApp {
                     "Immagine verificata: {} persone · {} file · {} byte",
                     image.patients, image.files, image.bytes
                 ));
-                ui.monospace(image.root.display().to_string());
+                show_path(ui, "Percorso immagine:", &image.root);
             } else if ui.button("Prepara e valida immagine USB").clicked() {
                 self.prepare_usb_image();
             }
@@ -783,20 +796,20 @@ impl DesktopApp {
                     self.choose_usb_target();
                 }
                 if let Some(target) = &self.usb_target {
-                    ui.label(format!(
-                        "Volume selezionato: {} · cartella di export: {}",
-                        target.display(),
-                        target.join("SaniKey").display()
-                    ));
+                    show_path(ui, "Volume selezionato:", target);
+                    show_path(ui, "Cartella di export:", &target.join("SaniKey"));
                 }
                 if let Some(volume) = &self.usb_volume {
-                    ui.label(format!(
-                        "Mount: {} · filesystem: {} · UUID: {} · liberi: {} byte",
+                    show_path(
+                        ui,
+                        "Mount del volume:",
                         volume
                             .mount_target
                             .as_deref()
-                            .unwrap_or(Path::new("sconosciuto"))
-                            .display(),
+                            .unwrap_or(Path::new("sconosciuto")),
+                    );
+                    ui.label(format!(
+                        "Filesystem: {} · UUID: {} · liberi: {} byte",
                         volume.filesystem.as_deref().unwrap_or("sconosciuto"),
                         volume.uuid.as_deref().unwrap_or("sconosciuto"),
                         volume.available_bytes
@@ -837,7 +850,7 @@ impl DesktopApp {
                     for (person, digest, paths) in &review.duplicate_groups {
                         ui.label(format!("{person} · SHA-256 {digest}"));
                         for path in paths {
-                            ui.monospace(path.display().to_string());
+                            show_path(ui, "Documento:", path);
                         }
                     }
                 });
@@ -853,7 +866,13 @@ impl DesktopApp {
                     summary.warnings.len()
                 ));
                 for warning in &summary.warnings {
-                    ui.colored_label(warning_text_color(ui.visuals().dark_mode), warning);
+                    ui.add(
+                        egui::Label::new(
+                            egui::RichText::new(warning)
+                                .color(warning_text_color(ui.visuals().dark_mode)),
+                        )
+                        .wrap_mode(egui::TextWrapMode::Wrap),
+                    );
                 }
             });
         }
@@ -867,14 +886,44 @@ impl DesktopApp {
             if let Some(progress) = self.progress {
                 ui.add(egui::ProgressBar::new(progress).show_percentage());
             } else {
-                ui.spinner();
+                indeterminate_progress_bar(ui);
             }
             ui.ctx()
                 .request_repaint_after(std::time::Duration::from_millis(30));
         }
         ui.separator();
-        ui.label(&self.status);
+        ui.add(egui::Label::new(&self.status).wrap_mode(egui::TextWrapMode::Wrap));
     }
+}
+
+fn indeterminate_progress_bar(ui: &mut egui::Ui) {
+    let width = ui.available_size_before_wrap().x.max(96.0);
+    let height = ui.spacing().interact_size.y * 0.5;
+    let (track, _) = ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::hover());
+    if !ui.is_rect_visible(track) {
+        return;
+    }
+
+    let visuals = ui.visuals();
+    let radius = height * 0.5;
+    ui.painter()
+        .rect_filled(track, radius, visuals.extreme_bg_color);
+    let time = ui.input(|input| input.time);
+    let segment = indeterminate_progress_segment(track, time);
+    ui.painter()
+        .with_clip_rect(track)
+        .rect_filled(segment, radius, visuals.selection.bg_fill);
+}
+
+fn indeterminate_progress_segment(track: egui::Rect, time: f64) -> egui::Rect {
+    let segment_width = track.width() * 0.28;
+    let phase = (time / 1.2).rem_euclid(2.0);
+    let position = (if phase <= 1.0 { phase } else { 2.0 - phase }) as f32;
+    let left = track.left() + (track.width() - segment_width) * position;
+    egui::Rect::from_min_size(
+        egui::pos2(left, track.top()),
+        egui::vec2(segment_width, track.height()),
+    )
 }
 
 fn main() -> eframe::Result {
@@ -889,7 +938,8 @@ fn main() -> eframe::Result {
 mod tests {
     use super::{
         DesktopApp, DesktopEvent, ReviewSummary, build_selected_people, build_selected_people_with,
-        import_selected_observations, review_profile, warning_text_color,
+        import_selected_observations, indeterminate_progress_segment, review_profile, show_path,
+        warning_text_color,
     };
     use eframe::egui;
     use sanikey_core::build::{BuildCounts, BuildOptions, PatientBuildResult, build_patient};
@@ -1143,6 +1193,47 @@ enabled = false
     }
 
     #[test]
+    fn indeterminate_progress_bar_moves_its_segment_across_the_track() {
+        let track = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(100.0, 8.0));
+        let start = indeterminate_progress_segment(track, 0.0);
+        let middle = indeterminate_progress_segment(track, 0.6);
+        let end = indeterminate_progress_segment(track, 1.2);
+
+        assert!(start.left() < middle.left());
+        assert!(middle.left() < end.left());
+        assert!(track.contains_rect(start));
+        assert!(track.contains_rect(middle));
+        assert!(track.contains_rect(end));
+    }
+
+    #[test]
+    fn long_paths_wrap_without_losing_their_beginning_or_end() {
+        let path = std::path::Path::new(
+            "/synthetic/data/patient-a/documents/Cardiologist/19990700 Pressure.xls",
+        );
+        let expected = path.display().to_string();
+        let context = egui::Context::default();
+        let output = context.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(360.0, 240.0),
+                )),
+                ..Default::default()
+            },
+            |ui| show_path(ui, "Documento:", path),
+        );
+
+        assert!(output.shapes.iter().any(|clipped| {
+            matches!(
+                &clipped.shape,
+                egui::epaint::Shape::Text(text) if text.galley.text() == expected
+            )
+        }));
+        output.drop_without_applying_deltas();
+    }
+
+    #[test]
     fn build_emits_progress_success_and_incremental_resume_results() {
         let directory = TestDirectory::new();
         let profile = profile_with_document(&directory);
@@ -1374,7 +1465,7 @@ enabled = false
             output.drop_without_applying_deltas();
 
             assert_eq!(context.pixels_per_point(), pixels_per_point);
-            assert_eq!(context.theme(), theme);
+            assert_eq!(context.theme(), egui::Theme::Light);
         }
 
         let first_focus = focused_widget_after_key(egui::Key::Tab, egui::Modifiers::NONE)
