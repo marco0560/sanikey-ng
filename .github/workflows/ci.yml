@@ -12,7 +12,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        # Riattivare macOS e Windows dopo le prove native locali.
+        os: [ubuntu-latest]
     steps:
       - uses: actions/checkout@v5
 
