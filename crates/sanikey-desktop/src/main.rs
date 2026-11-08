@@ -28,7 +28,7 @@ use sanikey_core::usb_image::assemble_usb_image;
 
 const STRAW_BACKGROUND: egui::Color32 = egui::Color32::from_rgb(248, 241, 198);
 const FIELD_BACKGROUND: egui::Color32 = egui::Color32::from_rgb(255, 252, 229);
-const NAVY_TEXT: egui::Color32 = egui::Color32::from_rgb(16, 42, 104);
+const BLUE_TEXT: egui::Color32 = egui::Color32::from_rgb(0, 51, 204);
 const MIN_PATH_FIELD_WIDTH: f32 = 64.0;
 
 #[derive(Clone, Debug)]
@@ -666,12 +666,12 @@ fn desktop_visuals() -> egui::Visuals {
     visuals.extreme_bg_color = FIELD_BACKGROUND;
     visuals.text_edit_bg_color = Some(FIELD_BACKGROUND);
     visuals.code_bg_color = FIELD_BACKGROUND;
-    visuals.override_text_color = Some(NAVY_TEXT);
-    visuals.weak_text_color = Some(NAVY_TEXT);
+    visuals.override_text_color = Some(BLUE_TEXT);
+    visuals.weak_text_color = Some(BLUE_TEXT);
     visuals.disabled_alpha = 1.0;
-    visuals.hyperlink_color = NAVY_TEXT;
+    visuals.hyperlink_color = BLUE_TEXT;
     visuals.selection.bg_fill = egui::Color32::from_rgb(190, 211, 239);
-    visuals.selection.stroke.color = NAVY_TEXT;
+    visuals.selection.stroke.color = BLUE_TEXT;
     for widget in [
         &mut visuals.widgets.noninteractive,
         &mut visuals.widgets.inactive,
@@ -679,7 +679,7 @@ fn desktop_visuals() -> egui::Visuals {
         &mut visuals.widgets.active,
         &mut visuals.widgets.open,
     ] {
-        widget.fg_stroke.color = NAVY_TEXT;
+        widget.fg_stroke.color = BLUE_TEXT;
     }
     visuals
 }
@@ -992,7 +992,7 @@ fn main() -> eframe::Result {
 #[cfg(test)]
 mod tests {
     use super::{
-        DesktopApp, DesktopEvent, FIELD_BACKGROUND, NAVY_TEXT, ReviewSummary, STRAW_BACKGROUND,
+        BLUE_TEXT, DesktopApp, DesktopEvent, FIELD_BACKGROUND, ReviewSummary, STRAW_BACKGROUND,
         add_responsive_path_edit, build_selected_people, build_selected_people_with,
         configure_desktop_theme, desktop_visuals, import_selected_observations,
         indeterminate_progress_segment, review_profile, show_path, warning_text_color,
@@ -1331,12 +1331,14 @@ enabled = false
         assert_eq!(visuals.panel_fill, STRAW_BACKGROUND);
         assert_eq!(visuals.window_fill, STRAW_BACKGROUND);
         assert_eq!(visuals.extreme_bg_color, FIELD_BACKGROUND);
-        assert_eq!(visuals.override_text_color, Some(NAVY_TEXT));
+        assert_eq!(visuals.override_text_color, Some(BLUE_TEXT));
+        assert_eq!(BLUE_TEXT.r(), 0);
+        assert!(BLUE_TEXT.b() > BLUE_TEXT.g() * 3);
         assert_eq!(visuals.disabled_alpha(), 1.0);
         assert_eq!(context.theme(), egui::Theme::Light);
         let configured_visuals = context.style_of(egui::Theme::Light).visuals.clone();
         assert_eq!(configured_visuals.panel_fill, STRAW_BACKGROUND);
-        assert_eq!(configured_visuals.override_text_color, Some(NAVY_TEXT));
+        assert_eq!(configured_visuals.override_text_color, Some(BLUE_TEXT));
     }
 
     #[test]
