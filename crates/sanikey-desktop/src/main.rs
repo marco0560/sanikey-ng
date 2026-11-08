@@ -26,6 +26,11 @@ use sanikey_core::usb_image::UsbImageResult;
 #[cfg(target_os = "linux")]
 use sanikey_core::usb_image::assemble_usb_image;
 
+const STRAW_BACKGROUND: egui::Color32 = egui::Color32::from_rgb(248, 241, 198);
+const FIELD_BACKGROUND: egui::Color32 = egui::Color32::from_rgb(255, 252, 229);
+const NAVY_TEXT: egui::Color32 = egui::Color32::from_rgb(16, 42, 104);
+const MIN_PATH_FIELD_WIDTH: f32 = 64.0;
+
 #[derive(Clone, Debug)]
 struct PersonSelection {
     selected: bool,
@@ -624,12 +629,12 @@ fn selection_from_person(person: &PersonConfig) -> PersonSelection {
 }
 
 fn choose_folder(ui: &mut egui::Ui, label_text: &str, path: &mut PathBuf) {
+    let label = ui.label(label_text);
+    let mut text = path.display().to_string();
     ui.horizontal_wrapped(|ui| {
-        let label = ui.label(label_text);
-        let mut text = path.display().to_string();
-        let response = ui.text_edit_singleline(&mut text).labelled_by(label.id);
+        let response = add_responsive_path_edit(ui, label.id, &mut text, 100.0);
         if response.changed() {
-            *path = PathBuf::from(text);
+            *path = PathBuf::from(&text);
         }
         if ui.button("Scegli…").clicked()
             && let Some(chosen) = rfd::FileDialog::new().pick_folder()
@@ -637,6 +642,51 @@ fn choose_folder(ui: &mut egui::Ui, label_text: &str, path: &mut PathBuf) {
             *path = chosen;
         }
     });
+}
+
+fn add_responsive_path_edit(
+    ui: &mut egui::Ui,
+    label_id: egui::Id,
+    text: &mut String,
+    trailing_controls_width: f32,
+) -> egui::Response {
+    let width = (ui.available_width() - trailing_controls_width).max(MIN_PATH_FIELD_WIDTH);
+    ui.add_sized(
+        egui::vec2(width, ui.spacing().interact_size.y),
+        egui::TextEdit::singleline(text),
+    )
+    .labelled_by(label_id)
+}
+
+fn desktop_visuals() -> egui::Visuals {
+    let mut visuals = egui::Visuals::light();
+    visuals.panel_fill = STRAW_BACKGROUND;
+    visuals.window_fill = STRAW_BACKGROUND;
+    visuals.faint_bg_color = egui::Color32::from_rgb(241, 232, 179);
+    visuals.extreme_bg_color = FIELD_BACKGROUND;
+    visuals.text_edit_bg_color = Some(FIELD_BACKGROUND);
+    visuals.code_bg_color = FIELD_BACKGROUND;
+    visuals.override_text_color = Some(NAVY_TEXT);
+    visuals.weak_text_color = Some(NAVY_TEXT);
+    visuals.disabled_alpha = 1.0;
+    visuals.hyperlink_color = NAVY_TEXT;
+    visuals.selection.bg_fill = egui::Color32::from_rgb(190, 211, 239);
+    visuals.selection.stroke.color = NAVY_TEXT;
+    for widget in [
+        &mut visuals.widgets.noninteractive,
+        &mut visuals.widgets.inactive,
+        &mut visuals.widgets.hovered,
+        &mut visuals.widgets.active,
+        &mut visuals.widgets.open,
+    ] {
+        widget.fg_stroke.color = NAVY_TEXT;
+    }
+    visuals
+}
+
+fn configure_desktop_theme(context: &egui::Context) {
+    context.set_theme(egui::Theme::Light);
+    context.set_visuals(desktop_visuals());
 }
 
 fn show_path(ui: &mut egui::Ui, label_text: &str, path: &Path) {
@@ -659,8 +709,11 @@ fn warning_text_color(dark_mode: bool) -> egui::Color32 {
 /// Collega gli eventi del core ai controlli e allo stato visuale.
 impl eframe::App for DesktopApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        ui.ctx().set_theme(egui::Theme::Light);
+        configure_desktop_theme(ui.ctx());
+        ui.painter()
+            .rect_filled(ui.max_rect(), 0.0, STRAW_BACKGROUND);
         egui::Frame::NONE
+            .fill(STRAW_BACKGROUND)
             .inner_margin(egui::Margin {
                 left: 16,
                 ..egui::Margin::ZERO
@@ -689,10 +742,9 @@ impl DesktopApp {
         let can_edit = !busy && self.review.is_none();
         let mut open_profile = false;
         ui.add_enabled_ui(can_edit, |ui| {
+            let label = ui.label("Profilo account");
             ui.horizontal_wrapped(|ui| {
-                let label = ui.label("Profilo account");
-                ui.text_edit_singleline(&mut self.profile_path)
-                    .labelled_by(label.id);
+                add_responsive_path_edit(ui, label.id, &mut self.profile_path, 180.0);
                 open_profile = ui.button("Apri profilo… (Ctrl+O)").clicked();
             });
         });
@@ -930,16 +982,20 @@ fn main() -> eframe::Result {
     eframe::run_native(
         "SaniKey",
         eframe::NativeOptions::default(),
-        Box::new(|_creation_context| Ok(Box::<DesktopApp>::default())),
+        Box::new(|creation_context| {
+            configure_desktop_theme(&creation_context.egui_ctx);
+            Ok(Box::<DesktopApp>::default())
+        }),
     )
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        DesktopApp, DesktopEvent, ReviewSummary, build_selected_people, build_selected_people_with,
-        import_selected_observations, indeterminate_progress_segment, review_profile, show_path,
-        warning_text_color,
+        DesktopApp, DesktopEvent, FIELD_BACKGROUND, NAVY_TEXT, ReviewSummary, STRAW_BACKGROUND,
+        add_responsive_path_edit, build_selected_people, build_selected_people_with,
+        configure_desktop_theme, desktop_visuals, import_selected_observations,
+        indeterminate_progress_segment, review_profile, show_path, warning_text_color,
     };
     use eframe::egui;
     use sanikey_core::build::{BuildCounts, BuildOptions, PatientBuildResult, build_patient};
@@ -1231,6 +1287,56 @@ enabled = false
             )
         }));
         output.drop_without_applying_deltas();
+    }
+
+    #[test]
+    fn path_fields_expand_with_the_available_window_width() {
+        let measure_width = |viewport_width| {
+            let context = egui::Context::default();
+            let mut measured_width = 0.0;
+            let output = context.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(viewport_width, 160.0),
+                    )),
+                    ..Default::default()
+                },
+                |ui| {
+                    let label = ui.label("Percorso sintetico:");
+                    ui.horizontal_wrapped(|ui| {
+                        let mut path = "/synthetic/profile/path".to_owned();
+                        measured_width = add_responsive_path_edit(ui, label.id, &mut path, 100.0)
+                            .rect
+                            .width();
+                    });
+                },
+            );
+            output.drop_without_applying_deltas();
+            measured_width
+        };
+
+        let narrow_width = measure_width(400.0);
+        let wide_width = measure_width(800.0);
+        assert!(wide_width > narrow_width);
+        assert!(wide_width - narrow_width > 300.0);
+    }
+
+    #[test]
+    fn desktop_theme_uses_straw_background_and_navy_text() {
+        let context = egui::Context::default();
+        configure_desktop_theme(&context);
+        let visuals = desktop_visuals();
+
+        assert_eq!(visuals.panel_fill, STRAW_BACKGROUND);
+        assert_eq!(visuals.window_fill, STRAW_BACKGROUND);
+        assert_eq!(visuals.extreme_bg_color, FIELD_BACKGROUND);
+        assert_eq!(visuals.override_text_color, Some(NAVY_TEXT));
+        assert_eq!(visuals.disabled_alpha(), 1.0);
+        assert_eq!(context.theme(), egui::Theme::Light);
+        let configured_visuals = context.style_of(egui::Theme::Light).visuals.clone();
+        assert_eq!(configured_visuals.panel_fill, STRAW_BACKGROUND);
+        assert_eq!(configured_visuals.override_text_color, Some(NAVY_TEXT));
     }
 
     #[test]
