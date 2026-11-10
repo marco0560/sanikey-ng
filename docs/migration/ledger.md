@@ -129,6 +129,13 @@ autorizzazione specifica.
 
 ## Prossima sessione
 
+Decisione G2 del 2026-11-10: applicare `--repo-root` al preflight privacy
+dei comandi CLI `build-patient` e `build-all`, come descritto nella
+[ricevuta CLI](verification/2026-11-10-cli-build.md). Entrambi i comandi sono
+collegati al core e il gate Linux è passato; la CLI nel complesso rimane
+pending per i comandi e le qualifiche mancanti. Prossimo lavoro nel perimetro
+approvato: DICOMDIR sintetico e confronto con un lettore indipendente.
+
 Aggiornamento 2026-11-10: il manutentore sospende per ora la qualifica sulle
 altre piattaforme e dà priorità ad AIFA, USB, DICOM e configurazione/CLI.
 Sottoscheda P08.03 desktop: revisione dei riferimenti AIFA nella GUI,
@@ -137,9 +144,7 @@ di conflitto; gate `cargo xtask check` exit 0 su Linux. Una prova diretta del
 servizio pubblico ha risposto per ricerca e coppia FI/RCP su un campione;
 non costituisce qualifica end-to-end. Restano pending GUI interattiva e
 servizio tramite il programma. Dettagli e limiti nella
-[ricevuta](verification/2026-11-10-aifa-desktop.md). La CLI ha ancora soltanto
-info/versione; prossima attività: collegare e verificare i comandi di build
-rispetto alla baseline. Le prove USB fisiche richiedono un supporto identificato;
+[ricevuta](verification/2026-11-10-aifa-desktop.md). Le prove USB fisiche richiedono un supporto identificato;
 per DICOM resta da affrontare l'indice DICOMDIR assente. La differenza sulla
 validazione di `background_opacity = NaN` richiede una decisione G2 prima di
 dichiarare completa la parità della configurazione.

@@ -484,9 +484,9 @@ phase = "P03-P10"
 status = "pending"
 baseline_source = "src/sanikey/cli.py"
 baseline_test = "tests/test_cli.py"
-rust_tests = []
-evidence = []
-approved_deviations = []
+rust_tests = ["crates/sanikey-cli/src/main.rs::tests::build_patient_uses_baseline_options_and_prints_result_paths", "crates/sanikey-cli/src/main.rs::tests::build_all_uses_positional_config_and_skips_disabled_people", "crates/sanikey-cli/src/main.rs::tests::repo_root_privacy_preflight_rejects_versioned_paths_before_writing"]
+evidence = ["verification/2026-11-10-cli-build.md"]
+approved_deviations = ["G2 2026-11-10: --repo-root applicato ai controlli privacy delle build CLI"]
 
 [[capability]]
 id = "desktop"
