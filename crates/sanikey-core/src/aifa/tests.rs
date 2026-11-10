@@ -1,7 +1,8 @@
 use super::{
-    AifaCandidate, AifaCandidateSearch, confirm_aifa_candidate, download_confirmed_leaflets_with,
-    leaflet_download_dates, local_leaflet_documents, lookup_candidate_search_with,
-    medication_fingerprint, write_confirmed_references,
+    AifaCandidate, AifaCandidateSearch, ConfirmedReferenceDecision, confirm_aifa_candidate,
+    create_private_temp_file, download_confirmed_leaflets_with, leaflet_download_dates,
+    local_leaflet_documents, lookup_candidate_search_with, medication_fingerprint,
+    update_confirmed_reference, write_confirmed_references,
 };
 use crate::metadata::{Medication, MedicationLeaflet, MedicationLeafletExclusion};
 use serde_json::{Value, json};
@@ -156,6 +157,236 @@ fn persists_sorted_references_and_exclusions_as_loadable_toml() {
         [references[1].clone(), references[0].clone()]
     );
     assert_eq!(loaded.medication_leaflet_exclusions, exclusions);
+    fs::remove_dir_all(directory).expect("pulizia directory sintetica");
+}
+
+#[test]
+fn update_reference_merges_unrelated_changes_made_after_review_loaded() {
+    let directory = temporary_directory();
+    fs::create_dir_all(&directory).expect("creazione directory metadati");
+    fs::write(
+        directory.join("medications.toml"),
+        "[[medication]]\nid='drug-a'\nname='Drug A'\n\n[[medication]]\nid='drug-b'\nname='Drug B'\n",
+    )
+    .expect("farmaci sintetici");
+    let snapshot = crate::metadata::load_curated_metadata(&directory).expect("snapshot iniziale");
+    let expected_fingerprint = medication_fingerprint(&snapshot.medications[0]);
+
+    write_confirmed_references(
+        &directory,
+        &[MedicationLeaflet {
+            medication_id: "drug-b".into(),
+            codice_sis: "222".into(),
+            aic6: "333".into(),
+            downloaded_at: None,
+            source_fingerprint: None,
+        }],
+        &[],
+    )
+    .expect("modifica concorrente all'altro farmaco");
+
+    let updated = update_confirmed_reference(
+        &directory,
+        "drug-a",
+        &expected_fingerprint,
+        None,
+        None,
+        ConfirmedReferenceDecision::Confirm(MedicationLeaflet {
+            medication_id: "drug-a".into(),
+            codice_sis: "111".into(),
+            aic6: "444".into(),
+            downloaded_at: None,
+            source_fingerprint: Some(expected_fingerprint.clone()),
+        }),
+    )
+    .expect("merge della modifica recente");
+
+    assert_eq!(updated.medication_leaflets.len(), 2);
+    assert!(
+        updated
+            .medication_leaflets
+            .iter()
+            .any(|item| { item.medication_id == "drug-a" && item.aic6 == "444" })
+    );
+    assert!(
+        updated
+            .medication_leaflets
+            .iter()
+            .any(|item| { item.medication_id == "drug-b" && item.aic6 == "333" })
+    );
+    fs::remove_dir_all(directory).expect("pulizia directory sintetica");
+}
+
+#[test]
+fn update_reference_rejects_a_concurrent_change_to_the_same_medication() {
+    let directory = temporary_directory();
+    fs::create_dir_all(&directory).expect("creazione directory metadati");
+    fs::write(
+        directory.join("medications.toml"),
+        "[[medication]]\nid='drug-a'\nname='Drug A'\n",
+    )
+    .expect("farmaco sintetico");
+    let snapshot = crate::metadata::load_curated_metadata(&directory).expect("snapshot iniziale");
+    let expected_fingerprint = medication_fingerprint(&snapshot.medications[0]);
+    write_confirmed_references(
+        &directory,
+        &[MedicationLeaflet {
+            medication_id: "drug-a".into(),
+            codice_sis: "222".into(),
+            aic6: "333".into(),
+            downloaded_at: None,
+            source_fingerprint: None,
+        }],
+        &[],
+    )
+    .expect("modifica concorrente dello stesso farmaco");
+
+    let result = update_confirmed_reference(
+        &directory,
+        "drug-a",
+        &expected_fingerprint,
+        None,
+        None,
+        ConfirmedReferenceDecision::Confirm(MedicationLeaflet {
+            medication_id: "drug-a".into(),
+            codice_sis: "111".into(),
+            aic6: "444".into(),
+            downloaded_at: None,
+            source_fingerprint: Some(expected_fingerprint.clone()),
+        }),
+    );
+    let latest = crate::metadata::load_curated_metadata(&directory).expect("snapshot corrente");
+
+    assert!(result.is_err());
+    assert_eq!(latest.medication_leaflets.len(), 1);
+    assert_eq!(latest.medication_leaflets[0].aic6, "333");
+    fs::remove_dir_all(directory).expect("pulizia directory sintetica");
+}
+
+#[test]
+fn simultaneous_reference_updates_are_serialized_and_one_stale_writer_conflicts() {
+    let directory = temporary_directory();
+    fs::create_dir_all(&directory).expect("creazione directory metadati");
+    fs::write(
+        directory.join("medications.toml"),
+        "[[medication]]\nid='drug-a'\nname='Drug A'\n",
+    )
+    .expect("farmaco sintetico");
+    let snapshot = crate::metadata::load_curated_metadata(&directory).expect("snapshot iniziale");
+    let expected_fingerprint = medication_fingerprint(&snapshot.medications[0]);
+    let barrier = std::sync::Arc::new(std::sync::Barrier::new(3));
+    let writers = ["111", "222"].map(|aic6| {
+        let directory = directory.clone();
+        let expected_fingerprint = expected_fingerprint.clone();
+        let barrier = barrier.clone();
+        std::thread::spawn(move || {
+            barrier.wait();
+            update_confirmed_reference(
+                &directory,
+                "drug-a",
+                &expected_fingerprint,
+                None,
+                None,
+                ConfirmedReferenceDecision::Confirm(MedicationLeaflet {
+                    medication_id: "drug-a".into(),
+                    codice_sis: "123".into(),
+                    aic6: aic6.into(),
+                    downloaded_at: None,
+                    source_fingerprint: Some(expected_fingerprint.clone()),
+                }),
+            )
+        })
+    });
+    barrier.wait();
+    let results = writers.map(|writer| writer.join().expect("writer terminato"));
+    let latest = crate::metadata::load_curated_metadata(&directory).expect("snapshot finale");
+
+    assert_eq!(results.iter().filter(|result| result.is_ok()).count(), 1);
+    assert_eq!(results.iter().filter(|result| result.is_err()).count(), 1);
+    assert_eq!(latest.medication_leaflets.len(), 1);
+    assert!(["111", "222"].contains(&latest.medication_leaflets[0].aic6.as_str()));
+    fs::remove_dir_all(directory).expect("pulizia directory sintetica");
+}
+
+#[cfg(unix)]
+#[test]
+fn atomic_reference_write_preserves_permissions_and_keeps_temp_and_lock_private() {
+    use std::io::Write as _;
+    use std::os::unix::fs::PermissionsExt;
+
+    let directory = temporary_directory();
+    fs::create_dir_all(&directory).expect("creazione directory metadati");
+    let target = directory.join("medication_leaflets.toml");
+    fs::write(
+        &target,
+        "[[unavailable]]\nmedication_id='old'\nreason='non_aifa'\n",
+    )
+    .expect("TOML privato iniziale");
+    fs::set_permissions(&target, fs::Permissions::from_mode(0o640))
+        .expect("permessi TOML iniziali");
+
+    let (temporary, mut file) = create_private_temp_file(&directory).expect("temporaneo privato");
+    assert_eq!(
+        file.metadata()
+            .expect("metadati temporaneo")
+            .permissions()
+            .mode()
+            & 0o7777,
+        0o600
+    );
+    file.write_all(b"fixture privata sintetica")
+        .expect("scrittura temporanea");
+    assert_eq!(
+        file.metadata()
+            .expect("metadati temporaneo dopo scrittura")
+            .permissions()
+            .mode()
+            & 0o7777,
+        0o600
+    );
+    drop(file);
+    fs::remove_file(temporary).expect("rimozione temporaneo di prova");
+
+    write_confirmed_references(
+        &directory,
+        &[MedicationLeaflet {
+            medication_id: "drug-a".into(),
+            codice_sis: "123".into(),
+            aic6: "456".into(),
+            downloaded_at: None,
+            source_fingerprint: None,
+        }],
+        &[],
+    )
+    .expect("sostituzione atomica");
+
+    assert_eq!(
+        fs::metadata(&target)
+            .expect("TOML sostituito")
+            .permissions()
+            .mode()
+            & 0o7777,
+        0o640
+    );
+    let lock = directory.join(".medication_leaflets.lock");
+    assert_eq!(fs::metadata(&lock).expect("lock").len(), 0);
+    assert_eq!(
+        fs::metadata(&lock)
+            .expect("permessi lock")
+            .permissions()
+            .mode()
+            & 0o7777,
+        0o600
+    );
+    assert!(
+        fs::read_dir(&directory)
+            .expect("directory metadati")
+            .all(|entry| !entry
+                .expect("voce directory")
+                .file_name()
+                .to_string_lossy()
+                .ends_with(".tmp"))
+    );
     fs::remove_dir_all(directory).expect("pulizia directory sintetica");
 }
 

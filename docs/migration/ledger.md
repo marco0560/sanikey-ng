@@ -129,6 +129,21 @@ autorizzazione specifica.
 
 ## Prossima sessione
 
+Aggiornamento 2026-11-10: il manutentore sospende per ora la qualifica sulle
+altre piattaforme e dà priorità ad AIFA, USB, DICOM e configurazione/CLI.
+Sottoscheda P08.03 desktop: revisione dei riferimenti AIFA nella GUI,
+conferma esplicita, probe FI/RCP, persistenza con lock advisory e controlli
+di conflitto; gate `cargo xtask check` exit 0 su Linux. Una prova diretta del
+servizio pubblico ha risposto per ricerca e coppia FI/RCP su un campione;
+non costituisce qualifica end-to-end. Restano pending GUI interattiva e
+servizio tramite il programma. Dettagli e limiti nella
+[ricevuta](verification/2026-11-10-aifa-desktop.md). La CLI ha ancora soltanto
+info/versione; prossima attività: collegare e verificare i comandi di build
+rispetto alla baseline. Le prove USB fisiche richiedono un supporto identificato;
+per DICOM resta da affrontare l'indice DICOMDIR assente. La differenza sulla
+validazione di `background_opacity = NaN` richiede una decisione G2 prima di
+dichiarare completa la parità della configurazione.
+
 Leggere [START-HERE.md](START-HERE.md). P11.01–P11.03 sono implementate e
 verificate automaticamente su Linux. P11.04 ha una qualifica Linux parziale,
 con un difetto di layout corretto e coperto da un test di clip headless; il

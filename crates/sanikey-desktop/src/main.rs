@@ -10,12 +10,20 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 static NEXT_USB_IMAGE: AtomicUsize = AtomicUsize::new(0);
 
 use eframe::egui::{self, Key, Modifiers};
+use sanikey_core::aifa::{
+    AifaCandidate, AifaCandidateSearch, ConfirmedReferenceDecision, LeafletDownloadFailure,
+    confirm_aifa_candidate, lookup_aifa_candidate_search, medication_fingerprint,
+    probe_leaflet_documents, update_confirmed_reference,
+};
 use sanikey_core::build::{BuildOptions, PatientBuildResult, build_patient};
 use sanikey_core::config::{AccountsConfig, AccountsProfile, PersonConfig};
 use sanikey_core::inventory::{find_duplicate_documents, scan_document_inventory};
 #[cfg(target_os = "linux")]
 use sanikey_core::linux_volume::{LinuxVolumeInfo, inspect_linux_volume};
-use sanikey_core::metadata::prepare_people_metadata;
+use sanikey_core::metadata::{
+    CuratedMetadata, Medication, MedicationLeaflet, MedicationLeafletExclusion,
+    load_curated_metadata, prepare_people_metadata,
+};
 use sanikey_core::observation_imports::import_observations;
 #[cfg(target_os = "linux")]
 use sanikey_core::operation::OperationOutcome;
@@ -57,6 +65,17 @@ struct ObservationImportSummary {
 enum DesktopEvent {
     Preflight(Result<ReviewSummary, String>),
     ObservationsImported(Result<ObservationImportSummary, String>),
+    AifaMetadataLoaded(Result<Vec<AifaPersonReview>, String>),
+    AifaSearchFinished {
+        person_id: String,
+        medication_id: String,
+        result: Option<AifaCandidateSearch>,
+    },
+    AifaDecisionSaved {
+        person_id: String,
+        medication_id: String,
+        result: Result<AifaDecisionSaved, String>,
+    },
     PatientBuilt(PatientBuildResult),
     ImagePrepared(Result<UsbImageResult, String>),
     #[cfg(target_os = "linux")]
@@ -65,6 +84,42 @@ enum DesktopEvent {
     UsbCopied(OperationOutcome<UsbCopyResult>),
     Progress(OperationEvent),
     Terminal(OperationEvent),
+}
+
+#[derive(Clone, Debug)]
+struct AifaPersonReview {
+    id: String,
+    display_name: String,
+    metadata_directory: PathBuf,
+    metadata: CuratedMetadata,
+    medications: Vec<AifaMedicationReview>,
+}
+
+#[derive(Clone, Debug)]
+struct AifaMedicationReview {
+    medication: Medication,
+    query: String,
+    search: Option<AifaCandidateSearch>,
+    selected_candidate: Option<usize>,
+    status: String,
+}
+
+#[derive(Clone, Debug)]
+struct AifaDecisionSaved {
+    metadata: CuratedMetadata,
+    status: String,
+}
+
+#[derive(Clone, Debug)]
+enum AifaDecision {
+    Confirm(Box<AifaCandidate>),
+    MarkNotApplicable,
+}
+
+enum AifaUiAction {
+    Search(usize, usize, bool),
+    Confirm(usize, usize, Box<AifaCandidate>),
+    MarkNotApplicable(usize, usize),
 }
 
 struct DesktopApp {
@@ -76,6 +131,7 @@ struct DesktopApp {
     cancellation: Option<CancellationToken>,
     review: Option<ReviewSummary>,
     observation_import: Option<ObservationImportSummary>,
+    aifa_people: Option<Vec<AifaPersonReview>>,
     progress: Option<f32>,
     completed_people: Vec<String>,
     completed_builds: Vec<PatientBuildResult>,
@@ -102,6 +158,7 @@ impl Default for DesktopApp {
             cancellation: None,
             review: None,
             observation_import: None,
+            aifa_people: None,
             progress: Some(0.0),
             completed_people: Vec::new(),
             completed_builds: Vec::new(),
@@ -135,6 +192,7 @@ impl DesktopApp {
                 self.profile = Some(profile);
                 self.review = None;
                 self.observation_import = None;
+                self.aifa_people = None;
                 self.completed_people.clear();
                 self.completed_builds.clear();
                 self.usb_image = None;
@@ -151,6 +209,7 @@ impl DesktopApp {
                 self.selections.clear();
                 self.review = None;
                 self.observation_import = None;
+                self.aifa_people = None;
                 self.status = format!("{}: {}", error.code().as_str(), error.message());
             }
         }
@@ -285,6 +344,100 @@ impl DesktopApp {
         });
     }
 
+    fn start_aifa_review(&mut self) {
+        let Some(config) = self.effective_config() else {
+            return;
+        };
+        let people = config.enabled_people().cloned().collect::<Vec<_>>();
+        if people.is_empty() {
+            self.status =
+                "Seleziona almeno una persona prima di rivedere i farmaci AIFA.".to_owned();
+            return;
+        }
+        let (sender, receiver) = mpsc::channel();
+        self.receiver = Some(receiver);
+        self.status = "Caricamento dei farmaci e dei riferimenti AIFA…".to_owned();
+        thread::spawn(move || {
+            let result = load_aifa_people(&people);
+            let _ = sender.send(DesktopEvent::AifaMetadataLoaded(result));
+        });
+    }
+
+    fn start_aifa_search(&mut self, person_index: usize, medication_index: usize, manual: bool) {
+        let Some(people) = self.aifa_people.as_ref() else {
+            return;
+        };
+        let Some(person) = people.get(person_index) else {
+            return;
+        };
+        let Some(medication) = person.medications.get(medication_index) else {
+            return;
+        };
+        let query = if manual {
+            let value = medication.query.trim();
+            if value.is_empty() {
+                self.status = "Inserisci un testo per la ricerca manuale AIFA.".to_owned();
+                return;
+            }
+            Some(value.to_owned())
+        } else {
+            None
+        };
+        let person_id = person.id.clone();
+        let medication_id = medication.medication.id.clone();
+        let medication = medication.medication.clone();
+        let (sender, receiver) = mpsc::channel();
+        self.receiver = Some(receiver);
+        self.status = format!("Ricerca AIFA in corso per {medication_id}…");
+        thread::spawn(move || {
+            let result = lookup_aifa_candidate_search(&medication, query.as_deref());
+            let _ = sender.send(DesktopEvent::AifaSearchFinished {
+                person_id,
+                medication_id,
+                result,
+            });
+        });
+    }
+
+    fn start_aifa_decision(
+        &mut self,
+        person_index: usize,
+        medication_index: usize,
+        decision: AifaDecision,
+    ) {
+        let Some(people) = self.aifa_people.as_ref() else {
+            return;
+        };
+        let Some(person) = people.get(person_index) else {
+            return;
+        };
+        let Some(medication) = person.medications.get(medication_index) else {
+            return;
+        };
+        let person_id = person.id.clone();
+        let medication_id = medication.medication.id.clone();
+        let metadata_directory = person.metadata_directory.clone();
+        let metadata = person.metadata.clone();
+        let medication = medication.medication.clone();
+        let (sender, receiver) = mpsc::channel();
+        self.receiver = Some(receiver);
+        self.status = format!("Verifica e salvataggio AIFA in corso per {medication_id}…");
+        thread::spawn(move || {
+            let result = save_aifa_decision(
+                &metadata_directory,
+                metadata,
+                &medication,
+                decision,
+                probe_leaflet_documents,
+            );
+            let _ = sender.send(DesktopEvent::AifaDecisionSaved {
+                person_id,
+                medication_id,
+                result,
+            });
+        });
+    }
+
     #[cfg(target_os = "linux")]
     fn prepare_usb_image(&mut self) {
         let Some(config) = self.effective_config() else {
@@ -410,6 +563,86 @@ impl DesktopApp {
                 }
                 DesktopEvent::ObservationsImported(Err(error)) => {
                     self.status = format!("Importazione osservazioni fallita: {error}");
+                    self.receiver = None;
+                }
+                DesktopEvent::AifaMetadataLoaded(Ok(people)) => {
+                    let medication_count = people
+                        .iter()
+                        .map(|person| person.medications.len())
+                        .sum::<usize>();
+                    self.status = format!(
+                        "Farmaci caricati: {medication_count} in {} persone. Cerca e conferma i riferimenti AIFA.",
+                        people.len()
+                    );
+                    self.aifa_people = Some(people);
+                    self.receiver = None;
+                }
+                DesktopEvent::AifaMetadataLoaded(Err(error)) => {
+                    self.status = format!("Caricamento metadati AIFA fallito: {error}");
+                    self.aifa_people = None;
+                    self.receiver = None;
+                }
+                DesktopEvent::AifaSearchFinished {
+                    person_id,
+                    medication_id,
+                    result,
+                } => {
+                    if let Some(medication) = self
+                        .aifa_people
+                        .as_mut()
+                        .and_then(|people| people.iter_mut().find(|person| person.id == person_id))
+                        .and_then(|person| {
+                            person
+                                .medications
+                                .iter_mut()
+                                .find(|item| item.medication.id == medication_id)
+                        })
+                    {
+                        medication.selected_candidate = None;
+                        medication.search = result.clone();
+                        medication.status = match result {
+                            None => "Servizio AIFA non disponibile; nessun riferimento modificato."
+                                .to_owned(),
+                            Some(search) if search.all_candidates.is_empty() => {
+                                "Nessun candidato restituito da AIFA.".to_owned()
+                            }
+                            Some(search) => format!(
+                                "{} candidati esatti, {} da rivedere.",
+                                search.exact.len(),
+                                search.review.len()
+                            ),
+                        };
+                        self.status = format!("Ricerca AIFA completata per {medication_id}.");
+                    }
+                    self.receiver = None;
+                }
+                DesktopEvent::AifaDecisionSaved {
+                    person_id,
+                    medication_id,
+                    result,
+                } => {
+                    match result {
+                        Ok(saved) => {
+                            if let Some(person) = self.aifa_people.as_mut().and_then(|people| {
+                                people.iter_mut().find(|person| person.id == person_id)
+                            }) {
+                                person.metadata = saved.metadata;
+                                if let Some(medication) = person
+                                    .medications
+                                    .iter_mut()
+                                    .find(|item| item.medication.id == medication_id)
+                                {
+                                    medication.search = None;
+                                    medication.selected_candidate = None;
+                                    medication.status = saved.status.clone();
+                                }
+                            }
+                            self.status = saved.status;
+                        }
+                        Err(error) => {
+                            self.status = format!("Riferimento AIFA non salvato: {error}");
+                        }
+                    }
                     self.receiver = None;
                 }
                 DesktopEvent::PatientBuilt(result) => {
@@ -565,6 +798,148 @@ fn import_selected_observations(
         );
     }
     Ok(summary)
+}
+
+fn load_aifa_people(people: &[PersonConfig]) -> Result<Vec<AifaPersonReview>, String> {
+    people
+        .iter()
+        .map(|person| {
+            let metadata = load_curated_metadata(&person.metadata_directory).map_err(|error| {
+                format!(
+                    "{} ({}): {}",
+                    person.display_name,
+                    error.code().as_str(),
+                    error.message()
+                )
+            })?;
+            let medications = metadata
+                .medications
+                .iter()
+                .cloned()
+                .map(|medication| AifaMedicationReview {
+                    medication,
+                    query: String::new(),
+                    search: None,
+                    selected_candidate: None,
+                    status: String::new(),
+                })
+                .collect();
+            Ok(AifaPersonReview {
+                id: person.id.clone(),
+                display_name: person.display_name.clone(),
+                metadata_directory: person.metadata_directory.clone(),
+                metadata,
+                medications,
+            })
+        })
+        .collect()
+}
+
+fn candidates_for_review(search: &AifaCandidateSearch) -> &[AifaCandidate] {
+    if search.exact.is_empty() {
+        &search.review
+    } else {
+        &search.exact
+    }
+}
+
+fn show_aifa_candidate(ui: &mut egui::Ui, candidate: &AifaCandidate) {
+    ui.label(format!(
+        "Principi attivi: {}",
+        candidate.active_ingredients.join(", ")
+    ));
+    ui.label(format!(
+        "Forma: {}",
+        candidate.form.as_deref().unwrap_or("non indicata")
+    ));
+    ui.label(format!(
+        "Dosaggio: {}",
+        candidate.strength.as_deref().unwrap_or("non indicato")
+    ));
+    ui.label(format!(
+        "Titolare: {}",
+        candidate.company.as_deref().unwrap_or("non indicato")
+    ));
+    ui.label(format!("ATC: {}", candidate.atc.join(", ")));
+    ui.label(format!("Vie: {}", candidate.routes.join(", ")));
+    ui.label(format!("Confezioni: {}", candidate.packages.join("; ")));
+    ui.label(format!(
+        "Identificativo AIFA: {}/{}",
+        candidate.codice_sis, candidate.aic6
+    ));
+    if !candidate.mismatches.is_empty() {
+        ui.colored_label(
+            warning_text_color(ui.visuals().dark_mode),
+            format!("Campi da verificare: {}", candidate.mismatches.join(", ")),
+        );
+    }
+}
+
+fn save_aifa_decision(
+    metadata_directory: &Path,
+    metadata: CuratedMetadata,
+    medication: &Medication,
+    decision: AifaDecision,
+    probe: impl FnOnce(&MedicationLeaflet) -> Vec<LeafletDownloadFailure>,
+) -> Result<AifaDecisionSaved, String> {
+    save_aifa_decision_with(metadata_directory, metadata, medication, decision, probe)
+}
+
+fn save_aifa_decision_with(
+    metadata_directory: &Path,
+    metadata: CuratedMetadata,
+    medication: &Medication,
+    decision: AifaDecision,
+    probe: impl FnOnce(&MedicationLeaflet) -> Vec<LeafletDownloadFailure>,
+) -> Result<AifaDecisionSaved, String> {
+    let expected_reference = metadata
+        .medication_leaflets
+        .iter()
+        .find(|item| item.medication_id == medication.id)
+        .cloned();
+    let expected_exclusion = metadata
+        .medication_leaflet_exclusions
+        .iter()
+        .find(|item| item.medication_id == medication.id)
+        .cloned();
+    let expected_fingerprint = medication_fingerprint(medication);
+    let (decision, status) = match decision {
+        AifaDecision::Confirm(candidate) => {
+            let reference = confirm_aifa_candidate(medication, &candidate);
+            let failures = probe(&reference);
+            if !failures.is_empty() {
+                return Err(failures
+                    .iter()
+                    .map(|failure| format!("{} {}", failure.kind, failure.reason))
+                    .collect::<Vec<_>>()
+                    .join("; "));
+            }
+            (
+                ConfirmedReferenceDecision::Confirm(reference),
+                format!(
+                    "Riferimento AIFA {}/{} salvato dopo verifica FI/RCP.",
+                    candidate.codice_sis, candidate.aic6
+                ),
+            )
+        }
+        AifaDecision::MarkNotApplicable => (
+            ConfirmedReferenceDecision::MarkNotApplicable(MedicationLeafletExclusion {
+                medication_id: medication.id.clone(),
+                reason: "non_aifa".to_owned(),
+            }),
+            format!("Stato non AIFA salvato per {}.", medication.name),
+        ),
+    };
+    let metadata = update_confirmed_reference(
+        metadata_directory,
+        &medication.id,
+        &expected_fingerprint,
+        expected_reference.as_ref(),
+        expected_exclusion.as_ref(),
+        decision,
+    )
+    .map_err(|error| format!("{}: {}", error.code().as_str(), error.message()))?;
+    Ok(AifaDecisionSaved { metadata, status })
 }
 
 fn build_selected_people(
@@ -804,9 +1179,11 @@ impl DesktopApp {
             if self.review.is_some() && !busy {
                 if ui.button("Modifica selezione").clicked() {
                     self.review = None;
+                    self.aifa_people = None;
                 }
                 if ui.button("Rifai preflight").clicked() {
                     self.review = None;
+                    self.aifa_people = None;
                     self.start_preflight();
                 }
                 if ui
@@ -814,6 +1191,12 @@ impl DesktopApp {
                     .clicked()
                 {
                     self.start_observation_import();
+                }
+                if ui
+                    .add_enabled(selected, egui::Button::new("Rivedi riferimenti AIFA"))
+                    .clicked()
+                {
+                    self.start_aifa_review();
                 }
                 if ui
                     .add_enabled(selected, egui::Button::new("Avvia build incrementale"))
@@ -908,6 +1291,165 @@ impl DesktopApp {
                 });
             ui.label("Importa o aggiorna le osservazioni prima della build; i metadati curati restano invariati.");
         }
+        if let Some(people) = &mut self.aifa_people {
+            ui.separator();
+            ui.heading("Riferimenti farmaceutici AIFA");
+            ui.label("Le ricerche online vengono eseguite fuori dalla finestra. Il riferimento si salva solo dopo conferma e verifica di FI e RCP.");
+            let mut action = None;
+            for (person_index, person) in people.iter_mut().enumerate() {
+                egui::CollapsingHeader::new(format!(
+                    "{} ({}) · {} farmaci",
+                    person.display_name,
+                    person.id,
+                    person.medications.len()
+                ))
+                .default_open(true)
+                .show(ui, |ui| {
+                    for (medication_index, item) in person.medications.iter_mut().enumerate() {
+                        ui.group(|ui| {
+                            ui.heading(&item.medication.name);
+                            ui.label(format!("ID: {}", item.medication.id));
+                            for therapy in person
+                                .metadata
+                                .therapies
+                                .iter()
+                                .filter(|therapy| therapy.medication_id == item.medication.id)
+                            {
+                                ui.label(format!(
+                                    "Terapia curata: {} · {} · {}",
+                                    therapy.role.as_deref().unwrap_or("ruolo non indicato"),
+                                    therapy
+                                        .dosage
+                                        .as_deref()
+                                        .unwrap_or("posologia non indicata"),
+                                    therapy.schedule.join(", ")
+                                ));
+                                if let Some(instructions) = &therapy.instructions {
+                                    ui.label(format!("Istruzioni: {instructions}"));
+                                }
+                            }
+                            if let Some(reference) = person
+                                .metadata
+                                .medication_leaflets
+                                .iter()
+                                .find(|reference| reference.medication_id == item.medication.id)
+                            {
+                                ui.label(format!(
+                                    "Riferimento registrato: AIFA {}/{}",
+                                    reference.codice_sis, reference.aic6
+                                ));
+                            }
+                            if person
+                                .metadata
+                                .medication_leaflet_exclusions
+                                .iter()
+                                .any(|exclusion| exclusion.medication_id == item.medication.id)
+                            {
+                                ui.label("Stato registrato: non applicabile ad AIFA.");
+                            }
+                            ui.horizontal_wrapped(|ui| {
+                                let label = ui.label("Ricerca manuale");
+                                ui.text_edit_singleline(&mut item.query)
+                                    .labelled_by(label.id);
+                                if ui
+                                    .add_enabled(
+                                        !busy,
+                                        egui::Button::new("Cerca nome e principio attivo"),
+                                    )
+                                    .clicked()
+                                {
+                                    action = Some(AifaUiAction::Search(
+                                        person_index,
+                                        medication_index,
+                                        false,
+                                    ));
+                                }
+                                if ui
+                                    .add_enabled(
+                                        !busy && !item.query.trim().is_empty(),
+                                        egui::Button::new("Cerca testo"),
+                                    )
+                                    .clicked()
+                                {
+                                    action = Some(AifaUiAction::Search(
+                                        person_index,
+                                        medication_index,
+                                        true,
+                                    ));
+                                }
+                            });
+                            if let Some(search) = &item.search {
+                                let candidates = candidates_for_review(search);
+                                if candidates.is_empty() {
+                                    ui.label("Nessun candidato da confermare.");
+                                }
+                                for (candidate_index, candidate) in candidates.iter().enumerate() {
+                                    ui.selectable_value(
+                                        &mut item.selected_candidate,
+                                        Some(candidate_index),
+                                        format!(
+                                            "{} · {} · {}",
+                                            candidate.title,
+                                            candidate
+                                                .strength
+                                                .as_deref()
+                                                .unwrap_or("dosaggio non indicato"),
+                                            candidate
+                                                .form
+                                                .as_deref()
+                                                .unwrap_or("forma non indicata")
+                                        ),
+                                    );
+                                }
+                                if let Some(candidate) = item
+                                    .selected_candidate
+                                    .and_then(|index| candidates.get(index))
+                                {
+                                    show_aifa_candidate(ui, candidate);
+                                    if ui
+                                        .add_enabled(
+                                            !busy,
+                                            egui::Button::new(
+                                                "Conferma candidato e verifica FI/RCP",
+                                            ),
+                                        )
+                                        .clicked()
+                                    {
+                                        action = Some(AifaUiAction::Confirm(
+                                            person_index,
+                                            medication_index,
+                                            Box::new(candidate.clone()),
+                                        ));
+                                    }
+                                }
+                            }
+                            if ui
+                                .add_enabled(!busy, egui::Button::new("Conferma stato non AIFA"))
+                                .clicked()
+                            {
+                                action = Some(AifaUiAction::MarkNotApplicable(
+                                    person_index,
+                                    medication_index,
+                                ));
+                            }
+                            ui.label(&item.status);
+                        });
+                    }
+                });
+            }
+            match action {
+                Some(AifaUiAction::Search(person, medication, manual)) => {
+                    self.start_aifa_search(person, medication, manual);
+                }
+                Some(AifaUiAction::Confirm(person, medication, candidate)) => {
+                    self.start_aifa_decision(person, medication, AifaDecision::Confirm(candidate));
+                }
+                Some(AifaUiAction::MarkNotApplicable(person, medication)) => {
+                    self.start_aifa_decision(person, medication, AifaDecision::MarkNotApplicable);
+                }
+                None => {}
+            }
+        }
         if let Some(summary) = &self.observation_import {
             ui.collapsing("Risultato importazione osservazioni", |ui| {
                 ui.label(format!(
@@ -992,14 +1534,19 @@ fn main() -> eframe::Result {
 #[cfg(test)]
 mod tests {
     use super::{
-        BLUE_TEXT, DesktopApp, DesktopEvent, FIELD_BACKGROUND, ReviewSummary, STRAW_BACKGROUND,
-        add_responsive_path_edit, build_selected_people, build_selected_people_with,
-        configure_desktop_theme, desktop_visuals, import_selected_observations,
-        indeterminate_progress_segment, review_profile, show_path, warning_text_color,
+        AifaCandidate, AifaCandidateSearch, AifaDecision, AifaMedicationReview, AifaPersonReview,
+        BLUE_TEXT, DesktopApp, DesktopEvent, FIELD_BACKGROUND, LeafletDownloadFailure,
+        ReviewSummary, STRAW_BACKGROUND, add_responsive_path_edit, build_selected_people,
+        build_selected_people_with, configure_desktop_theme, desktop_visuals,
+        import_selected_observations, indeterminate_progress_segment, load_aifa_people,
+        review_profile, save_aifa_decision_with, show_path, warning_text_color,
     };
     use eframe::egui;
     use sanikey_core::build::{BuildCounts, BuildOptions, PatientBuildResult, build_patient};
     use sanikey_core::config::AccountsProfile;
+    use sanikey_core::metadata::{
+        CuratedMetadata, Medication, MedicationLeafletExclusion, load_curated_metadata,
+    };
     use sanikey_core::operation::{CancellationToken, OperationEvent};
     use std::{fs, path::PathBuf, time::SystemTime};
 
@@ -1832,5 +2379,335 @@ enabled = false
     fn warning_text_color_matches_light_and_dark_themes() {
         assert_eq!(warning_text_color(true), egui::Color32::LIGHT_RED);
         assert_eq!(warning_text_color(false), egui::Color32::DARK_RED);
+    }
+
+    #[test]
+    fn aifa_review_loads_synthetic_medications_from_the_selected_person() {
+        let directory = TestDirectory::new();
+        let profile = profile_with_document(&directory);
+        let person = profile
+            .accounts()
+            .people
+            .first()
+            .expect("persona sintetica");
+        fs::write(
+            person.metadata_directory.join("medications.toml"),
+            "[[medication]]\nid='drug-a'\nname='Farmaco sintetico'\nactive_ingredient='principio'\nform='compresse'\nstrength_per_unit='10 mg'\n",
+        )
+        .expect("farmaco sintetico");
+
+        let loaded = load_aifa_people(std::slice::from_ref(person)).expect("metadati caricati");
+
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].id, "patient-a");
+        assert_eq!(loaded[0].medications.len(), 1);
+        assert_eq!(
+            loaded[0].medications[0].medication.name,
+            "Farmaco sintetico"
+        );
+    }
+
+    #[test]
+    fn aifa_review_exposes_search_and_confirmation_controls_accessibly() {
+        let mut app = DesktopApp {
+            aifa_people: Some(vec![AifaPersonReview {
+                id: "patient-a".into(),
+                display_name: "Persona A sintetica".into(),
+                metadata_directory: PathBuf::from("metadata"),
+                metadata: CuratedMetadata::default(),
+                medications: vec![AifaMedicationReview {
+                    medication: Medication {
+                        id: "drug-a".into(),
+                        name: "Farmaco sintetico".into(),
+                        active_ingredient: Some("principio".into()),
+                        form: Some("compresse".into()),
+                        strength_per_unit: Some("10 mg".into()),
+                    },
+                    query: String::new(),
+                    search: Some(AifaCandidateSearch {
+                        exact: vec![AifaCandidate {
+                            title: "Farmaco sintetico 10 mg".into(),
+                            codice_sis: "123".into(),
+                            aic6: "456".into(),
+                            active_ingredients: vec!["principio".into()],
+                            form: Some("compresse".into()),
+                            strength: Some("10 mg".into()),
+                            company: Some("Azienda sintetica".into()),
+                            atc: Vec::new(),
+                            routes: Vec::new(),
+                            packages: Vec::new(),
+                            mismatches: Vec::new(),
+                        }],
+                        ..AifaCandidateSearch::default()
+                    }),
+                    selected_candidate: Some(0),
+                    status: "Ricerca sintetica pronta.".into(),
+                }],
+            }]),
+            ..DesktopApp::default()
+        };
+
+        let context = egui::Context::default();
+        context.enable_accesskit();
+        let mut frame = eframe::Frame::_new_kittest();
+        let output = context.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1000.0, 2200.0),
+                )),
+                ..Default::default()
+            },
+            |ui| eframe::App::ui(&mut app, ui, &mut frame),
+        );
+        let tree = output
+            .platform_output
+            .accesskit_update
+            .as_ref()
+            .expect("albero AccessKit AIFA");
+        let labels = tree
+            .nodes
+            .iter()
+            .filter_map(|(_, node)| node.label())
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        let manual_search_is_labelled = tree
+            .nodes
+            .iter()
+            .find(|(_, node)| node.role() == egui::accesskit::Role::TextInput)
+            .and_then(|(_, node)| node.labelled_by().first())
+            .and_then(|label_id| tree.nodes.iter().find(|(node_id, _)| node_id == label_id))
+            .and_then(|(_, node)| node.value())
+            == Some("Ricerca manuale");
+
+        output.drop_without_applying_deltas();
+        assert!(manual_search_is_labelled);
+        assert!(
+            labels
+                .iter()
+                .any(|label| label == "Cerca nome e principio attivo")
+        );
+        assert!(
+            labels
+                .iter()
+                .any(|label| label == "Conferma stato non AIFA")
+        );
+        assert!(
+            labels
+                .iter()
+                .any(|label| { label == "Conferma candidato e verifica FI/RCP" })
+        );
+    }
+
+    #[test]
+    fn aifa_confirmation_persists_only_after_synthetic_fi_rcp_probe() {
+        let directory = TestDirectory::new();
+        let medication_directory = directory.0.join("metadata");
+        fs::create_dir_all(&medication_directory).expect("metadati");
+        fs::write(
+            medication_directory.join("medications.toml"),
+            "[[medication]]\nid='drug-a'\nname='Farmaco sintetico'\n\n[[medication]]\nid='drug-b'\nname='Altro farmaco'\n",
+        )
+        .expect("farmaci sintetici");
+        fs::write(
+            medication_directory.join("medication_leaflets.toml"),
+            "[[unavailable]]\nmedication_id='drug-a'\nreason='non_aifa'\n",
+        )
+        .expect("esclusione AIFA iniziale");
+        let metadata = CuratedMetadata {
+            medications: vec![
+                Medication {
+                    id: "drug-a".into(),
+                    name: "Farmaco sintetico".into(),
+                    active_ingredient: None,
+                    form: None,
+                    strength_per_unit: None,
+                },
+                Medication {
+                    id: "drug-b".into(),
+                    name: "Altro farmaco".into(),
+                    active_ingredient: None,
+                    form: None,
+                    strength_per_unit: None,
+                },
+            ],
+            medication_leaflet_exclusions: vec![MedicationLeafletExclusion {
+                medication_id: "drug-a".into(),
+                reason: "non_aifa".into(),
+            }],
+            ..CuratedMetadata::default()
+        };
+        let candidate = AifaCandidate {
+            title: "Farmaco sintetico 10 mg".into(),
+            codice_sis: "123".into(),
+            aic6: "456".into(),
+            active_ingredients: vec!["principio".into()],
+            form: Some("compresse".into()),
+            strength: Some("10 mg".into()),
+            company: Some("Azienda sintetica".into()),
+            atc: Vec::new(),
+            routes: Vec::new(),
+            packages: Vec::new(),
+            mismatches: Vec::new(),
+        };
+        let medication = metadata.medications[0].clone();
+
+        let saved = save_aifa_decision_with(
+            &medication_directory,
+            metadata,
+            &medication,
+            AifaDecision::Confirm(Box::new(candidate)),
+            |reference| {
+                assert_eq!(reference.medication_id, "drug-a");
+                Vec::new()
+            },
+        )
+        .expect("conferma sintetica salvata");
+        let reloaded = load_curated_metadata(&medication_directory).expect("rilettura");
+
+        assert_eq!(reloaded.medication_leaflets.len(), 1);
+        assert_eq!(reloaded.medication_leaflets[0].codice_sis, "123");
+        assert_eq!(reloaded.medication_leaflets[0].aic6, "456");
+        assert!(reloaded.medication_leaflet_exclusions.is_empty());
+        assert_eq!(saved.metadata.medications.len(), 2);
+        assert!(saved.status.contains("verifica FI/RCP"));
+    }
+
+    #[test]
+    fn aifa_non_applicable_decision_preserves_other_references() {
+        let directory = TestDirectory::new();
+        let medication_directory = directory.0.join("metadata");
+        fs::create_dir_all(&medication_directory).expect("metadati");
+        fs::write(
+            medication_directory.join("medications.toml"),
+            "[[medication]]\nid='drug-a'\nname='Farmaco sintetico'\n\n[[medication]]\nid='drug-b'\nname='Altro farmaco'\n",
+        )
+        .expect("farmaci sintetici");
+        fs::write(
+            medication_directory.join("medication_leaflets.toml"),
+            "[[leaflet]]\nmedication_id='drug-a'\ncodice_sis='111'\naic6='222'\n\n[[leaflet]]\nmedication_id='drug-b'\ncodice_sis='333'\naic6='444'\n",
+        )
+        .expect("riferimenti AIFA iniziali");
+        let metadata = CuratedMetadata {
+            medications: vec![
+                Medication {
+                    id: "drug-a".into(),
+                    name: "Farmaco sintetico".into(),
+                    active_ingredient: None,
+                    form: None,
+                    strength_per_unit: None,
+                },
+                Medication {
+                    id: "drug-b".into(),
+                    name: "Altro farmaco".into(),
+                    active_ingredient: None,
+                    form: None,
+                    strength_per_unit: None,
+                },
+            ],
+            medication_leaflets: vec![
+                sanikey_core::metadata::MedicationLeaflet {
+                    medication_id: "drug-a".into(),
+                    codice_sis: "111".into(),
+                    aic6: "222".into(),
+                    downloaded_at: None,
+                    source_fingerprint: None,
+                },
+                sanikey_core::metadata::MedicationLeaflet {
+                    medication_id: "drug-b".into(),
+                    codice_sis: "333".into(),
+                    aic6: "444".into(),
+                    downloaded_at: None,
+                    source_fingerprint: None,
+                },
+            ],
+            ..CuratedMetadata::default()
+        };
+
+        let saved = save_aifa_decision_with(
+            &medication_directory,
+            metadata,
+            &Medication {
+                id: "drug-a".into(),
+                name: "Farmaco sintetico".into(),
+                active_ingredient: None,
+                form: None,
+                strength_per_unit: None,
+            },
+            AifaDecision::MarkNotApplicable,
+            |_| panic!("non AIFA non deve interrogare il servizio"),
+        )
+        .expect("decisione non AIFA salvata");
+        let reloaded = load_curated_metadata(&medication_directory).expect("rilettura");
+
+        assert_eq!(saved.metadata.medication_leaflets.len(), 1);
+        assert_eq!(reloaded.medication_leaflets[0].medication_id, "drug-b");
+        assert_eq!(reloaded.medication_leaflet_exclusions.len(), 1);
+        assert_eq!(
+            reloaded.medication_leaflet_exclusions[0].medication_id,
+            "drug-a"
+        );
+        assert_eq!(reloaded.medication_leaflet_exclusions[0].reason, "non_aifa");
+    }
+
+    #[test]
+    fn aifa_failed_document_probe_does_not_persist_the_candidate() {
+        let directory = TestDirectory::new();
+        let medication_directory = directory.0.join("metadata");
+        fs::create_dir_all(&medication_directory).expect("metadati");
+        fs::write(
+            medication_directory.join("medications.toml"),
+            "[[medication]]\nid='drug-a'\nname='Farmaco sintetico'\n",
+        )
+        .expect("farmaco sintetico");
+        let metadata = CuratedMetadata {
+            medications: vec![Medication {
+                id: "drug-a".into(),
+                name: "Farmaco sintetico".into(),
+                active_ingredient: None,
+                form: None,
+                strength_per_unit: None,
+            }],
+            ..CuratedMetadata::default()
+        };
+        let result = save_aifa_decision_with(
+            &medication_directory,
+            metadata,
+            &Medication {
+                id: "drug-a".into(),
+                name: "Farmaco sintetico".into(),
+                active_ingredient: None,
+                form: None,
+                strength_per_unit: None,
+            },
+            AifaDecision::Confirm(Box::new(AifaCandidate {
+                title: "Farmaco sintetico".into(),
+                codice_sis: "123".into(),
+                aic6: "456".into(),
+                active_ingredients: Vec::new(),
+                form: None,
+                strength: None,
+                company: None,
+                atc: Vec::new(),
+                routes: Vec::new(),
+                packages: Vec::new(),
+                mismatches: Vec::new(),
+            })),
+            |_| {
+                vec![LeafletDownloadFailure {
+                    medication_id: "drug-a".into(),
+                    kind: "FI".into(),
+                    url: "https://example.invalid/FI".into(),
+                    reason: "fixture sintetica: non disponibile".into(),
+                }]
+            },
+        );
+
+        assert!(result.is_err());
+        assert!(
+            !medication_directory
+                .join("medication_leaflets.toml")
+                .exists()
+        );
     }
 }

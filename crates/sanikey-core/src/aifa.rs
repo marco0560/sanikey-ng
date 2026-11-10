@@ -1,13 +1,15 @@
 //! Ricerca dei candidati farmaco nel catalogo AIFA.
 
-use crate::metadata::Medication;
-use crate::metadata::{MedicationLeaflet, MedicationLeafletExclusion};
+use crate::metadata::{
+    CuratedMetadata, Medication, MedicationLeaflet, MedicationLeafletExclusion,
+    load_curated_metadata,
+};
 use crate::operation::{ErrorCode, OperationError};
 use regex::Regex;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
-use std::fs::{self, File};
+use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -15,6 +17,17 @@ use std::time::Duration;
 const API_ROOT: &str = "https://api.aifa.gov.it/aifa-bdf-eif-be/1.0.0/";
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 const DOWNLOAD_MANIFEST: &str = "medication-leaflets.json";
+const REFERENCES_LOCK_FILE: &str = ".medication_leaflets.lock";
+static NEXT_REFERENCE_TEMP: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// Modifica confermata da applicare al riferimento AIFA di un farmaco.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ConfirmedReferenceDecision {
+    /// Registra il candidato AIFA verificato.
+    Confirm(MedicationLeaflet),
+    /// Esclude esplicitamente il farmaco dalla consultazione AIFA.
+    MarkNotApplicable(MedicationLeafletExclusion),
+}
 
 /// Candidato farmaco restituito dal catalogo AIFA.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -119,8 +132,117 @@ pub fn medication_fingerprint(medication: &Medication) -> String {
 /// Persiste riferimenti AIFA confermati e esclusioni curate in formato TOML.
 ///
 /// Gli elementi sono ordinati per identificatore. La validazione dei riferimenti
-/// incrociati viene eseguita dal loader dei metadati durante la rilettura.
+/// incrociati viene eseguita dal loader dei metadati durante la rilettura. Il
+/// file temporaneo viene sincronizzato prima del rename; la directory padre non
+/// viene sincronizzata, quindi la durabilità del rename dopo un crash improvviso
+/// non è garantita.
 pub fn write_confirmed_references(
+    metadata_directory: &Path,
+    references: &[MedicationLeaflet],
+    exclusions: &[MedicationLeafletExclusion],
+) -> Result<PathBuf, OperationError> {
+    fs::create_dir_all(metadata_directory).map_err(|error| {
+        aifa_persistence_error(format!("creazione directory metadati: {error}"))
+    })?;
+    let _lock = lock_confirmed_references(metadata_directory)?;
+    write_confirmed_references_unlocked(metadata_directory, references, exclusions)
+}
+
+/// Aggiorna un solo farmaco preservando le modifiche AIFA concorrenti.
+///
+/// La funzione ricarica i metadati mentre detiene un lock esclusivo per il
+/// file dei riferimenti, confronta l'identità curata e la decisione precedente
+/// con la snapshot mostrata all'operatore, applica la decisione al contenuto
+/// più recente e sostituisce il TOML con una scrittura atomica. Gli aggiornamenti
+/// eseguiti tramite questa API vengono serializzati tra processi. Una modifica
+/// esterna del farmaco o del suo riferimento, già presente quando il lock è
+/// acquisito, causa un conflitto invece di sovrascrivere la snapshot. Il lock
+/// è advisory: un writer che non lo rispetta può ancora modificare il file dopo
+/// la rilettura. La sostituzione atomica evita file parziali, ma non offre CAS
+/// contro writer esterni non cooperanti.
+///
+/// # Errors
+///
+/// Restituisce un errore se la snapshot del farmaco è cambiata, la decisione
+/// riguarda un altro farmaco o i metadati non possono essere letti o scritti.
+pub fn update_confirmed_reference(
+    metadata_directory: &Path,
+    medication_id: &str,
+    expected_source_fingerprint: &str,
+    expected_reference: Option<&MedicationLeaflet>,
+    expected_exclusion: Option<&MedicationLeafletExclusion>,
+    decision: ConfirmedReferenceDecision,
+) -> Result<CuratedMetadata, OperationError> {
+    fs::create_dir_all(metadata_directory).map_err(|error| {
+        aifa_persistence_error(format!("creazione directory metadati: {error}"))
+    })?;
+    let _lock = lock_confirmed_references(metadata_directory)?;
+    let mut metadata = load_curated_metadata(metadata_directory)?;
+    let current_medication = metadata
+        .medications
+        .iter()
+        .find(|item| item.id == medication_id)
+        .ok_or_else(|| {
+            aifa_persistence_error(format!("farmaco curato non trovato: {medication_id}"))
+        })?;
+    if medication_fingerprint(current_medication) != expected_source_fingerprint {
+        return Err(aifa_persistence_error(format!(
+            "conflitto AIFA: l'identità curata di {medication_id} è cambiata durante la ricerca"
+        )));
+    }
+    let current_reference = metadata
+        .medication_leaflets
+        .iter()
+        .find(|item| item.medication_id == medication_id);
+    let current_exclusion = metadata
+        .medication_leaflet_exclusions
+        .iter()
+        .find(|item| item.medication_id == medication_id);
+    if current_reference != expected_reference || current_exclusion != expected_exclusion {
+        return Err(aifa_persistence_error(format!(
+            "conflitto AIFA: il riferimento di {medication_id} è stato modificato da un'altra operazione"
+        )));
+    }
+
+    match decision {
+        ConfirmedReferenceDecision::Confirm(reference) => {
+            if reference.medication_id != medication_id {
+                return Err(aifa_persistence_error(format!(
+                    "la conferma AIFA non corrisponde al farmaco {medication_id}"
+                )));
+            }
+            metadata
+                .medication_leaflets
+                .retain(|item| item.medication_id != medication_id);
+            metadata.medication_leaflets.push(reference);
+            metadata
+                .medication_leaflet_exclusions
+                .retain(|item| item.medication_id != medication_id);
+        }
+        ConfirmedReferenceDecision::MarkNotApplicable(exclusion) => {
+            if exclusion.medication_id != medication_id || exclusion.reason != "non_aifa" {
+                return Err(aifa_persistence_error(format!(
+                    "l'esclusione AIFA non corrisponde al farmaco {medication_id}"
+                )));
+            }
+            metadata
+                .medication_leaflets
+                .retain(|item| item.medication_id != medication_id);
+            metadata
+                .medication_leaflet_exclusions
+                .retain(|item| item.medication_id != medication_id);
+            metadata.medication_leaflet_exclusions.push(exclusion);
+        }
+    }
+    write_confirmed_references_unlocked(
+        metadata_directory,
+        &metadata.medication_leaflets,
+        &metadata.medication_leaflet_exclusions,
+    )?;
+    Ok(metadata)
+}
+
+fn write_confirmed_references_unlocked(
     metadata_directory: &Path,
     references: &[MedicationLeaflet],
     exclusions: &[MedicationLeafletExclusion],
@@ -163,13 +285,104 @@ pub fn write_confirmed_references(
         aifa_persistence_error(format!("serializzazione dei riferimenti AIFA: {error}"))
     })?;
     let target = metadata_directory.join("medication_leaflets.toml");
-    fs::create_dir_all(metadata_directory).map_err(|error| {
-        aifa_persistence_error(format!("creazione directory metadati: {error}"))
-    })?;
-    fs::write(&target, serialized).map_err(|error| {
-        aifa_persistence_error(format!("scrittura {}: {error}", target.display()))
-    })?;
+    write_file_atomically(metadata_directory, &target, serialized.as_bytes())?;
     Ok(target)
+}
+
+fn lock_confirmed_references(metadata_directory: &Path) -> Result<File, OperationError> {
+    let lock_path = metadata_directory.join(REFERENCES_LOCK_FILE);
+    let mut options = OpenOptions::new();
+    options.read(true).write(true).create(true).truncate(false);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let lock = options
+        .open(&lock_path)
+        .map_err(|error| aifa_persistence_error(format!("apertura lock AIFA: {error}")))?;
+    lock.lock()
+        .map_err(|error| aifa_persistence_error(format!("lock riferimenti AIFA: {error}")))?;
+    Ok(lock)
+}
+
+fn write_file_atomically(
+    directory: &Path,
+    target: &Path,
+    contents: &[u8],
+) -> Result<(), OperationError> {
+    #[cfg(unix)]
+    let target_mode = match fs::metadata(target) {
+        Ok(metadata) => {
+            use std::os::unix::fs::PermissionsExt;
+            Some(metadata.permissions().mode() & 0o7777)
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => {
+            return Err(aifa_persistence_error(format!(
+                "lettura permessi {}: {error}",
+                target.display()
+            )));
+        }
+    };
+    let (temporary, mut file) = create_private_temp_file(directory)?;
+    let result = (|| {
+        file.write_all(contents)
+            .map_err(|error| format!("scrittura file temporaneo AIFA: {error}"))?;
+        file.sync_all()
+            .map_err(|error| format!("sincronizzazione file temporaneo AIFA: {error}"))?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut permissions = file
+                .metadata()
+                .map_err(|error| format!("lettura permessi temporaneo AIFA: {error}"))?
+                .permissions();
+            permissions.set_mode(target_mode.unwrap_or(0o600));
+            file.set_permissions(permissions)
+                .map_err(|error| format!("ripristino permessi TOML AIFA: {error}"))?;
+        }
+        file.sync_all()
+            .map_err(|error| format!("sincronizzazione permessi TOML AIFA: {error}"))?;
+        drop(file);
+        fs::rename(&temporary, target)
+            .map_err(|error| format!("sostituzione atomica {}: {error}", target.display()))
+    })();
+    if let Err(error) = result {
+        let _ = fs::remove_file(&temporary);
+        return Err(aifa_persistence_error(error));
+    }
+    Ok(())
+}
+
+fn create_private_temp_file(directory: &Path) -> Result<(PathBuf, File), OperationError> {
+    for _ in 0..100 {
+        let sequence = NEXT_REFERENCE_TEMP.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let path = directory.join(format!(
+            ".medication_leaflets.{}.{}.tmp",
+            std::process::id(),
+            sequence
+        ));
+        let mut options = OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        match options.open(&path) {
+            Ok(file) => return Ok((path, file)),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(error) => {
+                return Err(aifa_persistence_error(format!(
+                    "creazione file temporaneo AIFA: {error}"
+                )));
+            }
+        }
+    }
+    Err(aifa_persistence_error(
+        "impossibile creare un file temporaneo univoco per i riferimenti AIFA".into(),
+    ))
 }
 
 fn aifa_persistence_error(message: String) -> OperationError {

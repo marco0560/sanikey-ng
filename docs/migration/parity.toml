@@ -329,6 +329,7 @@ evidence = [
   "verification/2026-10-28-aifa-persistence.md",
   "verification/2026-10-28-aifa-download.md",
   "verification/2026-10-28-aifa-offline.md",
+  "verification/2026-11-10-aifa-desktop.md",
 ]
 approved_deviations = []
 
