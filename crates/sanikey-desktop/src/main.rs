@@ -2500,6 +2500,93 @@ enabled = false
     }
 
     #[test]
+    fn aifa_confirmation_updates_only_the_second_person_with_shared_medication_id() {
+        let directory = TestDirectory::new();
+        let medication = Medication {
+            id: "drug-a".into(),
+            name: "Farmaco sintetico".into(),
+            active_ingredient: None,
+            form: None,
+            strength_per_unit: None,
+        };
+        let mut people = Vec::new();
+        for id in ["patient-a", "patient-b"] {
+            let path = directory.0.join(id);
+            fs::create_dir_all(&path).expect("metadati sintetici");
+            fs::write(
+                path.join("medications.toml"),
+                "[[medication]]\nid='drug-a'\nname='Farmaco sintetico'\n",
+            )
+            .expect("farmaco sintetico");
+            let metadata = load_curated_metadata(&path).expect("metadati caricati");
+            people.push(AifaPersonReview {
+                id: id.into(),
+                display_name: id.into(),
+                metadata_directory: path,
+                metadata,
+                medications: vec![AifaMedicationReview {
+                    medication: medication.clone(),
+                    query: String::new(),
+                    search: Some(AifaCandidateSearch::default()),
+                    selected_candidate: Some(0),
+                    status: String::new(),
+                }],
+            });
+        }
+        let candidate = AifaCandidate {
+            title: "Farmaco sintetico".into(),
+            codice_sis: "123".into(),
+            aic6: "456".into(),
+            active_ingredients: Vec::new(),
+            form: None,
+            strength: None,
+            company: None,
+            atc: Vec::new(),
+            routes: Vec::new(),
+            packages: Vec::new(),
+            mismatches: Vec::new(),
+        };
+        let saved = save_aifa_decision_with(
+            &people[1].metadata_directory,
+            people[1].metadata.clone(),
+            &medication,
+            AifaDecision::Confirm(Box::new(candidate)),
+            |_| Vec::new(),
+        )
+        .expect("salvataggio sintetico");
+        let (sender, receiver) = std::sync::mpsc::channel();
+        sender
+            .send(DesktopEvent::AifaDecisionSaved {
+                person_id: "patient-b".into(),
+                medication_id: "drug-a".into(),
+                result: Ok(saved),
+            })
+            .expect("evento");
+        let mut app = DesktopApp {
+            receiver: Some(receiver),
+            aifa_people: Some(people),
+            ..DesktopApp::default()
+        };
+        app.receive_worker_events();
+        let people = app.aifa_people.as_ref().expect("persone");
+        assert!(people[0].metadata.medication_leaflets.is_empty());
+        assert!(people[0].medications[0].search.is_some());
+        assert_eq!(
+            people[1].metadata.medication_leaflets[0].medication_id,
+            "drug-a"
+        );
+        assert!(people[1].medications[0].search.is_none());
+        assert!(people[1].medications[0].status.contains("salvato"));
+        assert_eq!(
+            load_curated_metadata(&people[1].metadata_directory)
+                .expect("rilettura")
+                .medication_leaflets
+                .len(),
+            1
+        );
+    }
+
+    #[test]
     fn aifa_confirmation_persists_only_after_synthetic_fi_rcp_probe() {
         let directory = TestDirectory::new();
         let medication_directory = directory.0.join("metadata");
