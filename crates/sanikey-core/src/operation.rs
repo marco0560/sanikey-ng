@@ -424,6 +424,283 @@ mod tests {
         CancellationToken, ErrorCode, OperationError, OperationEvent, OperationOutcome,
         OperationPhase, run_operation,
     };
+    use serde_json::{Value, json};
+    use std::fs;
+
+    fn trace_data(name: &str, value: Value) -> Value {
+        json!({"name": name, "content": {"kind": "data", "value": value}})
+    }
+
+    fn trace_omission(name: &str, reason: &str) -> Value {
+        json!({"name": name, "content": {"kind": "omitted", "reason": reason}})
+    }
+
+    fn expected_arguments(fields: Vec<Value>) -> Value {
+        Value::Array(fields)
+    }
+
+    fn trace_records(path: &std::path::Path) -> Vec<Value> {
+        std::fs::read_to_string(path)
+            .expect("log traccia sintetico")
+            .lines()
+            .map(|line| serde_json::from_str(line).expect("record JSON valido"))
+            .collect()
+    }
+
+    fn assert_trace_spans(records: &[Value], function: &str, expected: &[(Value, Value)]) {
+        let entries: Vec<_> = records
+            .iter()
+            .filter(|record| record["type"] == "function_enter" && record["function"] == function)
+            .collect();
+        assert_eq!(entries.len(), expected.len(), "numero span di {function}");
+        for (entry, (arguments, result)) in entries.into_iter().zip(expected) {
+            assert_eq!(entry["arguments"], *arguments, "argomenti di {function}");
+            let call_id = entry["call_id"].as_u64().expect("call_id numerico");
+            let exits: Vec<_> = records
+                .iter()
+                .filter(|record| {
+                    record["type"] == "function_exit"
+                        && record["function"] == function
+                        && record["call_id"] == call_id
+                })
+                .collect();
+            assert_eq!(exits.len(), 1, "una sola uscita per {function}#{call_id}");
+            assert_eq!(exits[0]["outcome"], "returned");
+            assert_eq!(exits[0]["result"], *result, "risultato di {function}");
+            assert!(
+                exits[0]["duration_ms"].as_u64().is_some(),
+                "durata mancante per {function}#{call_id}"
+            );
+        }
+    }
+
+    #[test]
+    fn operation_error_spans_record_arguments_results_and_formatter_omission() {
+        use crate::logging::{Component, Level, Session};
+
+        let directory = std::env::temp_dir().join(format!(
+            "sanikey-operation-error-spans-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let (session, path) =
+            Session::create_in_directory_with_level(&directory, Component::Core, Level::Trace)
+                .expect("sessione trace sintetica");
+        const MESSAGE: &str = "errore sintetico";
+        let error = session.scoped(|| {
+            let error = OperationError::new(ErrorCode::Configuration, MESSAGE);
+            assert_eq!(error.message(), MESSAGE);
+            assert_eq!(error.to_string(), MESSAGE);
+            error
+        });
+        assert_eq!(error.code(), ErrorCode::Configuration);
+        drop(session);
+
+        let records = trace_records(&path);
+        let message = json!({
+            "format": "text_redacted_known_secret_assignments",
+            "value": MESSAGE,
+        });
+        let self_value = json!({
+            "code": "configuration",
+            "message": {"kind": "data", "value": message},
+        });
+        assert_trace_spans(
+            &records,
+            "operation::OperationError::new",
+            &[(
+                expected_arguments(vec![
+                    trace_data("code", json!("configuration")),
+                    trace_data(
+                        "message",
+                        json!({"format": "text_redacted_known_secret_assignments", "value": MESSAGE}),
+                    ),
+                ]),
+                json!({
+                    "kind": "data",
+                    "value": {
+                        "code": "configuration",
+                        "message": {"kind": "data", "value": message},
+                    },
+                }),
+            )],
+        );
+        assert_trace_spans(
+            &records,
+            "operation::OperationError::message",
+            &[
+                (
+                    expected_arguments(vec![trace_data("self", self_value.clone())]),
+                    json!({"kind": "data", "value": message}),
+                ),
+                (
+                    expected_arguments(vec![trace_data("self", self_value.clone())]),
+                    json!({"kind": "data", "value": message}),
+                ),
+            ],
+        );
+        assert_trace_spans(
+            &records,
+            "operation::OperationError::fmt",
+            &[(
+                expected_arguments(vec![
+                    trace_data("self", self_value),
+                    trace_omission("formatter", "unsupported_type"),
+                ]),
+                json!({"kind": "data", "value": {"ok": true}}),
+            )],
+        );
+        fs::remove_file(path).expect("rimozione log sintetico");
+        fs::remove_dir(directory).expect("rimozione directory sintetica");
+    }
+
+    #[test]
+    fn cancellation_token_spans_record_transitions_and_results() {
+        use crate::logging::{Component, Level, Session};
+
+        let directory = std::env::temp_dir().join(format!(
+            "sanikey-cancellation-spans-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let (session, path) =
+            Session::create_in_directory_with_level(&directory, Component::Core, Level::Trace)
+                .expect("sessione trace sintetica");
+        let token = CancellationToken::default();
+        session.scoped(|| {
+            assert!(!token.is_cancelled());
+            token.cancel();
+            assert!(token.is_cancelled());
+        });
+        drop(session);
+
+        let records = trace_records(&path);
+        assert_trace_spans(
+            &records,
+            "operation::CancellationToken::is_cancelled",
+            &[
+                (
+                    expected_arguments(vec![trace_data("self_cancelled_at_entry", json!(false))]),
+                    json!({"kind": "data", "value": false}),
+                ),
+                (
+                    expected_arguments(vec![trace_data("self_cancelled_at_entry", json!(true))]),
+                    json!({"kind": "data", "value": true}),
+                ),
+            ],
+        );
+        assert_trace_spans(
+            &records,
+            "operation::CancellationToken::cancel",
+            &[(
+                expected_arguments(vec![trace_data("previously_cancelled", json!(false))]),
+                json!({"kind": "data", "value": null}),
+            )],
+        );
+        fs::remove_file(path).expect("rimozione log sintetico");
+        fs::remove_dir(directory).expect("rimozione directory sintetica");
+    }
+
+    #[test]
+    fn operation_context_and_run_spans_record_arguments_results_and_omissions() {
+        use crate::logging::{Component, Level, Session};
+
+        let directory = std::env::temp_dir().join(format!(
+            "sanikey-operation-context-spans-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let (session, path) =
+            Session::create_in_directory_with_level(&directory, Component::Core, Level::Trace)
+                .expect("sessione trace sintetica");
+        let run = session.scoped(|| {
+            run_operation(
+                "synthetic.operation",
+                &CancellationToken::default(),
+                |context| {
+                    context.set_phase(OperationPhase::Processing);
+                    context.report_progress(2, Some(5));
+                    assert!(!context.is_cancelled());
+                    Ok(42)
+                },
+            )
+        });
+        assert_eq!(run.outcome, OperationOutcome::Succeeded(42));
+        drop(session);
+
+        let records = trace_records(&path);
+        let null_result = json!({"kind": "data", "value": null});
+        assert_trace_spans(
+            &records,
+            "operation::OperationContext::set_phase",
+            &[(
+                expected_arguments(vec![
+                    trace_data("previous_phase", json!("Preparing")),
+                    trace_data("previous_event_count", json!(1)),
+                    trace_data("cancellation_requested", json!(false)),
+                    trace_data("phase", json!("Processing")),
+                ]),
+                null_result.clone(),
+            )],
+        );
+        assert_trace_spans(
+            &records,
+            "operation::OperationContext::report_progress",
+            &[(
+                expected_arguments(vec![
+                    trace_data("phase", json!("Processing")),
+                    trace_data("previous_event_count", json!(1)),
+                    trace_data("cancellation_requested", json!(false)),
+                    trace_data("completed", json!(2)),
+                    trace_data("total", json!(5)),
+                ]),
+                null_result,
+            )],
+        );
+        let cancelled_result = json!({"kind": "data", "value": false});
+        assert_trace_spans(
+            &records,
+            "operation::OperationContext::is_cancelled",
+            &[
+                (
+                    expected_arguments(vec![
+                        trace_data("phase", json!("Processing")),
+                        trace_data("event_count", json!(2)),
+                        trace_data("cancellation_requested", json!(false)),
+                    ]),
+                    cancelled_result.clone(),
+                ),
+                (
+                    expected_arguments(vec![
+                        trace_data("phase", json!("Processing")),
+                        trace_data("event_count", json!(2)),
+                        trace_data("cancellation_requested", json!(false)),
+                    ]),
+                    cancelled_result,
+                ),
+            ],
+        );
+        assert_trace_spans(
+            &records,
+            "operation::run_operation",
+            &[(
+                expected_arguments(vec![
+                    trace_data("operation", json!("synthetic.operation")),
+                    trace_data("cancellation_requested", json!(false)),
+                    trace_omission("action", "unsupported_type"),
+                ]),
+                json!({
+                    "kind": "data",
+                    "value": {
+                        "outcome": "succeeded",
+                        "value": {"kind": "omitted", "reason": "unsupported_type"},
+                    },
+                }),
+            )],
+        );
+        fs::remove_file(path).expect("rimozione log sintetico");
+        fs::remove_dir(directory).expect("rimozione directory sintetica");
+    }
 
     #[test]
     fn scoped_trace_records_operation_arguments_and_explicit_omissions() {

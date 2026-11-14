@@ -146,8 +146,8 @@ sintetiche Linux degli adattatori non qualificano esecuzioni native Windows o
 macOS. La [misura sintetica](verification/2026-11-14-log-benchmark.md) riporta
 dimensioni e tempi del logger, senza stimare le prestazioni delle build reali.
 Il 2026-11-14 `cargo xtask check`, con directory temporanea del workspace, ha superato Clippy, test, doctest,
-build e controlli di pubblicabilità su Linux: 315 test core passati e 2
-ignorati, 55 desktop e 20 CLI passati, oltre ai test degli adattatori. Codira
+build e controlli di pubblicabilità su Linux: 319 test core passati e 2
+ignorati, 56 desktop e 20 CLI passati, oltre ai test degli adattatori. Codira
 ha indicizzato 246 file supportati senza errori e l'audit Rustdoc, ripetuto
 dopo la documentazione dei simboli rilevati, non ha prodotto ulteriori rilievi;
 12 asset senza analyzer restano fuori dalla copertura. L'implementazione e le
@@ -157,7 +157,7 @@ e `c892a05` protegge anche le sequenze non UTF-8 con segreti riconoscibili.
 Il gate completo è stato ripetuto dopo questi interventi. Restano da dimostrare
 la copertura funzione per funzione e le qualifiche native separate. Il registro
 di revisione associa le prove agli hash del sorgente: nello snapshot corrente
-sei voci sono segnate coperte, sei sono eccezioni motivate e 3.211 elementi,
+diciassette voci sono segnate coperte, sei sono eccezioni motivate e 3.200 elementi,
 incluse macro e closure, restano da revisionare. I picker nativi ora registrano in Diagnostica e Traccia
 un'omissione esplicita del testo di sistema non osservabile.
 

@@ -3270,8 +3270,8 @@ mod tests {
         build_selected_people, build_selected_people_with, configure_desktop_theme,
         desktop_visuals, import_selected_observations, indeterminate_progress_segment,
         load_aifa_people, record_native_dialog_omission, record_ui_action, review_profile,
-        save_aifa_decision_with, show_path, spawn_logged_worker, trace_desktop_path,
-        warning_text_color,
+        save_aifa_decision_with, selection_from_person, show_path, spawn_logged_worker,
+        trace_desktop_path, warning_text_color,
     };
     use eframe::egui;
     use sanikey_core::build::{BuildCounts, BuildOptions, PatientBuildResult, build_patient};
@@ -4394,6 +4394,139 @@ enabled = false
             config.people[0].source_documents,
             directory.0.join("patients/patient-a/documents")
         );
+    }
+
+    #[test]
+    fn person_selection_trace_records_inputs_output_duration_and_redacts_secret_paths() {
+        use sanikey_core::logging::{Component, Level, Session};
+        use serde_json::Value;
+
+        fn field_content<'a>(fields: &'a [Value], name: &str) -> &'a Value {
+            fields
+                .iter()
+                .find(|field| field["name"] == name)
+                .map(|field| &field["content"])
+                .unwrap_or_else(|| panic!("campo {name} assente"))
+        }
+
+        let directory = TestDirectory::new();
+        let profile = profile_with_document(&directory);
+        let mut person = profile.accounts().people[0].clone();
+        person.display_name = "Persona sintetica privata".to_owned();
+        person.source_documents =
+            PathBuf::from("/synthetic/private/patients/patient-a/api_key=SECRET-SYNTHETIC");
+        let (session, log_path) =
+            Session::create_in_directory_with_level(&directory.0, Component::Desktop, Level::Trace)
+                .expect("sessione Trace sintetica");
+
+        let selection = session.scoped(|| selection_from_person(&person));
+        session.finish(Component::Desktop).expect("chiusura Trace");
+
+        assert!(selection.selected);
+        assert_eq!(selection.source_documents, person.source_documents);
+        assert_eq!(selection.metadata_directory, person.metadata_directory);
+        assert_eq!(selection.local_build, person.local_build);
+
+        let contents = fs::read_to_string(log_path).expect("log Trace sintetico");
+        assert!(contents.contains("Persona sintetica privata"));
+        assert!(!contents.contains("SECRET-SYNTHETIC"));
+        let entries: Vec<Value> = contents
+            .lines()
+            .map(|line| serde_json::from_str(line).expect("record JSON sintetico"))
+            .collect();
+        let enter = entries
+            .iter()
+            .find(|entry| {
+                entry["type"] == "function_enter"
+                    && entry["function"] == "desktop::selection_from_person"
+            })
+            .expect("ingresso della funzione");
+        let exit = entries
+            .iter()
+            .find(|entry| {
+                entry["type"] == "function_exit"
+                    && entry["function"] == "desktop::selection_from_person"
+            })
+            .expect("uscita della funzione");
+
+        let arguments = enter["arguments"].as_array().expect("argomenti registrati");
+        assert_eq!(arguments.len(), 2);
+        assert_eq!(arguments[0]["name"], "person");
+        assert_eq!(arguments[1]["name"], "paths");
+        let person_fields = arguments[0]["content"]["value"]
+            .as_array()
+            .expect("record della persona");
+        let debug_text = person_fields
+            .iter()
+            .find(|field| field["name"] == "value")
+            .expect("valore debug della persona")["content"]["value"]["value"]
+            .as_str()
+            .expect("argomento privato serializzato");
+        assert!(debug_text.contains("Persona sintetica privata"));
+        assert_eq!(
+            debug_text,
+            sanikey_core::logging::redact_secret_assignments(&format!("{person:#?}"))
+        );
+        assert!(debug_text.contains("[secret_omitted]"));
+        for field in [
+            "id",
+            "display_name",
+            "source_documents",
+            "metadata_directory",
+            "local_build",
+            "usb_uuid",
+            "enabled",
+            "ui",
+            "search",
+            "ingestion",
+        ] {
+            assert!(debug_text.contains(&format!("{field}:")), "campo {field}");
+        }
+        let input_paths = arguments[1]["content"]["value"]
+            .as_array()
+            .expect("percorsi di input");
+        assert_eq!(input_paths.len(), 3);
+        assert_eq!(
+            field_content(input_paths, "source_documents")["kind"],
+            "secret_omitted"
+        );
+        for (name, expected) in [
+            ("metadata_directory", &person.metadata_directory),
+            ("local_build", &person.local_build),
+        ] {
+            let content = field_content(input_paths, name);
+            assert_eq!(content["kind"], "data");
+            assert_eq!(content["value"]["encoding"], "utf8");
+            assert_eq!(
+                content["value"]["value"],
+                expected.to_str().expect("percorso UTF-8")
+            );
+        }
+
+        assert_eq!(exit["call_id"], enter["call_id"]);
+        assert_eq!(exit["outcome"], "returned");
+        assert!(exit["duration_ms"].as_u64().is_some());
+        let result_fields = exit["result"]["value"]
+            .as_array()
+            .expect("risultato strutturato");
+        assert_eq!(result_fields.len(), 4);
+        assert_eq!(field_content(result_fields, "selected")["value"], true);
+        assert_eq!(
+            field_content(result_fields, "source_documents")["kind"],
+            "secret_omitted"
+        );
+        for (name, expected) in [
+            ("metadata_directory", &person.metadata_directory),
+            ("local_build", &person.local_build),
+        ] {
+            let content = field_content(result_fields, name);
+            assert_eq!(content["kind"], "data");
+            assert_eq!(content["value"]["encoding"], "utf8");
+            assert_eq!(
+                content["value"]["value"],
+                expected.to_str().expect("percorso UTF-8")
+            );
+        }
     }
 
     #[test]

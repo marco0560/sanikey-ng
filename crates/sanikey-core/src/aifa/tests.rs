@@ -56,6 +56,36 @@ fn success(payload: Value) -> Option<Value> {
     Some(payload)
 }
 
+fn assert_trace_span<'a>(records: &'a [Value], function: &str) -> (&'a Value, &'a Value) {
+    let entry = records
+        .iter()
+        .find(|record| record["type"] == "function_enter" && record["function"] == function)
+        .unwrap_or_else(|| panic!("span di ingresso assente: {function}"));
+    let exit = records
+        .iter()
+        .find(|record| {
+            record["type"] == "function_exit"
+                && record["function"] == function
+                && record["call_id"] == entry["call_id"]
+        })
+        .unwrap_or_else(|| panic!("span di uscita abbinata assente: {function}"));
+    assert_eq!(
+        exit["outcome"], "returned",
+        "esito non restituito: {function}"
+    );
+    assert!(
+        exit["duration_ms"].is_u64(),
+        "durata assente o non numerica: {function}"
+    );
+    assert!(
+        entry["arguments"]
+            .as_array()
+            .is_some_and(|arguments| !arguments.is_empty()),
+        "argomenti di ingresso assenti: {function}"
+    );
+    (entry, exit)
+}
+
 fn temporary_directory() -> PathBuf {
     let sequence = TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed);
     std::env::temp_dir().join(format!("sanikey-ng-aifa-{}-{sequence}", std::process::id()))
@@ -881,6 +911,154 @@ fn synthetic_trace_captures_aifa_request_and_pdf_bytes_but_events_stay_terse() {
 }
 
 #[test]
+fn lookup_queries_trace_complete_inputs_and_result_or_secret_omission() {
+    let directory = temporary_directory();
+    let (session, log_path) = Session::create_in_directory_with_level(
+        &directory.join("logs"),
+        Component::Core,
+        Level::Trace,
+    )
+    .expect("sessione Trace sintetica");
+    let safe_medication = Medication {
+        id: "drug-safe".into(),
+        name: "Farmaco di controllo".into(),
+        active_ingredient: Some("Principio di controllo".into()),
+        form: Some("capsula".into()),
+        strength_per_unit: Some("10 mg".into()),
+    };
+    let sensitive_medication = Medication {
+        id: "drug-query-secret".into(),
+        name: "Farmaco query sintetica".into(),
+        active_ingredient: Some("Principio query sintetico".into()),
+        form: Some("compressa".into()),
+        strength_per_unit: Some("25 mg".into()),
+    };
+    let secret_query = "password=synthetic-aifa-lookup-query-secret";
+
+    session.scoped(|| {
+        assert_eq!(
+            super::lookup_queries(&safe_medication, None),
+            ["Farmaco di controllo", "Principio di controllo"]
+        );
+        assert_eq!(
+            super::lookup_queries(&sensitive_medication, Some(secret_query)),
+            [secret_query]
+        );
+    });
+    drop(session);
+
+    let log = fs::read_to_string(log_path).expect("log sintetico");
+    let records = log
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).expect("record JSON valido"))
+        .collect::<Vec<_>>();
+    let entries = records
+        .iter()
+        .filter(|record| {
+            record["type"] == "function_enter" && record["function"] == "aifa::lookup_queries"
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(entries.len(), 2, "attesi i due ingressi sintetici");
+
+    let verify_exit = |entry: &Value, expected: Value| {
+        let exit = records
+            .iter()
+            .find(|record| {
+                record["type"] == "function_exit"
+                    && record["function"] == "aifa::lookup_queries"
+                    && record["call_id"] == entry["call_id"]
+            })
+            .expect("uscita abbinata tramite call_id");
+        assert!(entry["call_id"].is_u64());
+        assert_eq!(exit["call_id"], entry["call_id"]);
+        assert_eq!(exit["outcome"], "returned");
+        assert!(exit["duration_ms"].is_u64());
+        assert_eq!(exit["result"], expected);
+    };
+
+    let safe_entry = entries
+        .iter()
+        .find(|entry| entry["arguments"][0]["content"]["value"]["id"] == "drug-safe")
+        .expect("ingresso farmaco non sensibile");
+    assert_eq!(
+        safe_entry["arguments"],
+        json!([
+            {
+                "name": "medication",
+                "content": {
+                    "kind": "data",
+                    "value": {
+                        "id": "drug-safe",
+                        "name": "Farmaco di controllo",
+                        "active_ingredient": "Principio di controllo",
+                        "form": "capsula",
+                        "strength_per_unit": "10 mg"
+                    }
+                }
+            },
+            {
+                "name": "query",
+                "content": {"kind": "data", "value": null}
+            }
+        ])
+    );
+    verify_exit(
+        safe_entry,
+        json!({
+            "kind": "data",
+            "value": {
+                "result": {
+                    "kind": "data",
+                    "value": ["Farmaco di controllo", "Principio di controllo"]
+                }
+            }
+        }),
+    );
+
+    let sensitive_entry = entries
+        .iter()
+        .find(|entry| entry["arguments"][0]["content"]["value"]["id"] == "drug-query-secret")
+        .expect("ingresso farmaco con query sensibile");
+    assert_eq!(
+        sensitive_entry["arguments"],
+        json!([
+            {
+                "name": "medication",
+                "content": {
+                    "kind": "data",
+                    "value": {
+                        "id": "drug-query-secret",
+                        "name": "Farmaco query sintetica",
+                        "active_ingredient": "Principio query sintetico",
+                        "form": "compressa",
+                        "strength_per_unit": "25 mg"
+                    }
+                }
+            },
+            {
+                "name": "query",
+                "content": {
+                    "kind": "data",
+                    "value": {
+                        "format": "text_redacted_known_secret_assignments",
+                        "value": "password=[secret_omitted]"
+                    }
+                }
+            }
+        ])
+    );
+    verify_exit(
+        sensitive_entry,
+        json!({
+            "kind": "data",
+            "value": {"result": {"kind": "secret_omitted"}}
+        }),
+    );
+    assert!(!log.contains(secret_query));
+    fs::remove_dir_all(directory).expect("pulizia log sintetico");
+}
+
+#[test]
 fn derived_search_results_and_pdf_flows_keep_secret_provenance() {
     let directory = temporary_directory();
     let logs = directory.join("logs");
@@ -975,15 +1153,45 @@ fn derived_search_results_and_pdf_flows_keep_secret_provenance() {
         "aifa::write_confirmed_references_unlocked_impl",
         "aifa::write_file_atomically_impl",
     ] {
-        let exit = records
-            .iter()
-            .find(|record| record["type"] == "function_exit" && record["function"] == function)
-            .unwrap_or_else(|| panic!("span di uscita assente: {function}"));
+        let (entry, exit) = assert_trace_span(&records, function);
+        if !matches!(
+            function,
+            "aifa::lookup_candidate_search_with" | "aifa::lookup_candidate_search_with_impl"
+        ) {
+            assert!(
+                entry["arguments"].to_string().contains("secret_omitted"),
+                "input derivato non omesso: {function}"
+            );
+        }
         assert!(
             exit["result"].to_string().contains("secret_omitted"),
             "risultato derivato non omesso: {function}"
         );
     }
+    let search_entry = records
+        .iter()
+        .find(|record| {
+            record["type"] == "function_enter"
+                && record["function"] == "aifa::lookup_candidate_search_with"
+        })
+        .expect("argomenti ricerca AIFA");
+    assert!(
+        search_entry["arguments"]
+            .to_string()
+            .contains("Ordinary synthetic medication")
+    );
+    let download_entry = records
+        .iter()
+        .find(|record| {
+            record["type"] == "function_enter"
+                && record["function"] == "aifa::fetch_leaflet_documents_with"
+        })
+        .expect("argomenti download foglietto");
+    assert!(
+        download_entry["arguments"]
+            .to_string()
+            .contains("secret_omitted")
+    );
     assert!(log.contains("private payload note remains recordable"));
     assert!(!log.contains("Ordinary candidate title before redaction"));
     assert!(!log.contains("synthetic-derived-search-secret"));
@@ -1067,13 +1275,62 @@ fn aifa_operational_inner_boundaries_have_independent_spans() {
         "aifa::write_temporary_impl",
         "aifa::write_download_dates_impl",
     ] {
-        assert!(
-            records.iter().any(|record| {
-                record["type"] == "function_exit" && record["function"] == function
-            }),
-            "span interna assente: {function}"
-        );
+        let (entry, exit) = assert_trace_span(&records, function);
+        assert!(entry["arguments"].is_array());
+        assert!(!exit["result"].is_null(), "risultato assente: {function}");
     }
+    let write_entry = records
+        .iter()
+        .find(|record| {
+            record["type"] == "function_enter"
+                && record["function"] == "aifa::write_confirmed_references_impl"
+        })
+        .expect("ingresso persistenza riferimenti");
+    let write_exit = records
+        .iter()
+        .find(|record| {
+            record["type"] == "function_exit"
+                && record["function"] == "aifa::write_confirmed_references_impl"
+                && record["call_id"] == write_entry["call_id"]
+        })
+        .expect("uscita persistenza riferimenti");
+    assert!(write_entry["arguments"].to_string().contains("drug-a"));
+    assert!(
+        write_exit["result"]
+            .to_string()
+            .contains("medication_leaflets.toml")
+    );
+
+    let update_entry = records
+        .iter()
+        .find(|record| {
+            record["type"] == "function_enter"
+                && record["function"] == "aifa::update_confirmed_reference_impl"
+        })
+        .expect("ingresso aggiornamento riferimento");
+    let update_exit = records
+        .iter()
+        .find(|record| {
+            record["type"] == "function_exit"
+                && record["function"] == "aifa::update_confirmed_reference_impl"
+                && record["call_id"] == update_entry["call_id"]
+        })
+        .expect("uscita aggiornamento riferimento");
+    assert!(update_entry["arguments"].to_string().contains("drug-a"));
+    assert!(update_exit["result"].to_string().contains("456"));
+
+    let download_exit = records
+        .iter()
+        .find(|record| {
+            record["type"] == "function_exit"
+                && record["function"] == "aifa::download_confirmed_leaflets_with_impl"
+        })
+        .expect("uscita download foglietti");
+    assert!(
+        download_exit["result"]
+            .to_string()
+            .contains("downloaded_at")
+    );
     fs::remove_dir_all(directory).expect("pulizia dati sintetici");
 }
 
@@ -1258,10 +1515,11 @@ fn aifa_parser_and_matching_helpers_omit_results_derived_from_identified_secrets
         "aifa::lookup_candidate_search_with_impl",
         "aifa::lookup_candidate_search_with",
     ] {
-        let exit = records
-            .iter()
-            .find(|record| record["type"] == "function_exit" && record["function"] == function)
-            .unwrap_or_else(|| panic!("span di uscita assente: {function}"));
+        let (entry, exit) = assert_trace_span(&records, function);
+        assert!(
+            entry["arguments"].to_string().contains("secret_omitted"),
+            "input derivato non omesso: {function}"
+        );
         assert!(
             exit["result"].to_string().contains("secret_omitted"),
             "risultato derivato non omesso: {function}"

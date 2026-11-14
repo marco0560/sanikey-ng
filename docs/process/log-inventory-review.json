@@ -2,6 +2,18 @@
   "schema": 1,
   "reviews": [
     {
+      "id": "crates/sanikey-core/src/aifa.rs#b663de73332bd93687e7157ddaa45374ab050e744ef679ccc2cd48c89952c56c:144",
+      "source_sha256": "b663de73332bd93687e7157ddaa45374ab050e744ef679ccc2cd48c89952c56c",
+      "status": "covered",
+      "evidence": "aifa::tests::lookup_queries_trace_complete_inputs_and_result_or_secret_omission confronta tutti gli argomenti e il risultato, verifica call_id e durata, inclusa omissione del segreto."
+    },
+    {
+      "id": "crates/sanikey-desktop/src/main.rs#5eb3dc426ae9f017f9b66aef5594274865dae4b4a5aadda2551de924c4cb794b:82",
+      "source_sha256": "5eb3dc426ae9f017f9b66aef5594274865dae4b4a5aadda2551de924c4cb794b",
+      "status": "covered",
+      "evidence": "tests::person_selection_trace_records_inputs_output_duration_and_redacts_secret_paths verifica input e output rappresentabili, call_id, durata e redazione del percorso segreto."
+    },
+    {
       "id": "crates/sanikey-desktop/src/presentation.rs#b8238ab2059e631c3a6d942534b5050f3df132712a57a93eaf8e682b837f4398:13",
       "source_sha256": "b8238ab2059e631c3a6d942534b5050f3df132712a57a93eaf8e682b837f4398",
       "status": "exception",
@@ -47,15 +59,15 @@
       "rationale": "Una chiamata di tracing con effetti runtime non può essere inserita nel corpo const senza modificarne il contratto."
     },
     {
-      "id": "crates/sanikey-core/src/operation.rs#300d946d4a0b7d20547b3194ceb41f0cf4a47d294c19285332094124448c29ab:0",
-      "source_sha256": "300d946d4a0b7d20547b3194ceb41f0cf4a47d294c19285332094124448c29ab",
+      "id": "crates/sanikey-core/src/operation.rs#5f1fef3c25172aaf3326e47e150ffa2f89d8f832299ca35efb49afa38a60aded:0",
+      "source_sha256": "5f1fef3c25172aaf3326e47e150ffa2f89d8f832299ca35efb49afa38a60aded",
       "status": "exception",
       "evidence": "ErrorCode::as_str è dichiarata const e restituisce un identificatore statico.",
       "rationale": "Una chiamata di tracing con effetti runtime non può essere inserita nel corpo const senza modificarne il contratto."
     },
     {
-      "id": "crates/sanikey-core/src/operation.rs#300d946d4a0b7d20547b3194ceb41f0cf4a47d294c19285332094124448c29ab:5",
-      "source_sha256": "300d946d4a0b7d20547b3194ceb41f0cf4a47d294c19285332094124448c29ab",
+      "id": "crates/sanikey-core/src/operation.rs#5f1fef3c25172aaf3326e47e150ffa2f89d8f832299ca35efb49afa38a60aded:5",
+      "source_sha256": "5f1fef3c25172aaf3326e47e150ffa2f89d8f832299ca35efb49afa38a60aded",
       "status": "exception",
       "evidence": "OperationError::code è dichiarata const e restituisce la categoria dell'errore.",
       "rationale": "Una chiamata di tracing con effetti runtime non può essere inserita nel corpo const senza modificarne il contratto."
@@ -78,6 +90,60 @@
       "status": "exception",
       "evidence": "La firma e il corpo di version sono const; project_info ne registra il valore nel proprio risultato.",
       "rationale": "Una chiamata di tracing con effetti runtime non può essere inserita nel corpo const senza modificarne il contratto."
+    },
+    {
+      "id": "crates/sanikey-core/src/operation.rs#5f1fef3c25172aaf3326e47e150ffa2f89d8f832299ca35efb49afa38a60aded:1",
+      "source_sha256": "5f1fef3c25172aaf3326e47e150ffa2f89d8f832299ca35efb49afa38a60aded",
+      "status": "covered",
+      "evidence": "operation::tests::operation_error_spans_record_arguments_results_and_formatter_omission: confronta argomenti e risultato JSON, correla call_id e verifica esito e durata."
+    },
+    {
+      "id": "crates/sanikey-core/src/operation.rs#5f1fef3c25172aaf3326e47e150ffa2f89d8f832299ca35efb49afa38a60aded:6",
+      "source_sha256": "5f1fef3c25172aaf3326e47e150ffa2f89d8f832299ca35efb49afa38a60aded",
+      "status": "covered",
+      "evidence": "operation::tests::operation_error_spans_record_arguments_results_and_formatter_omission: confronta argomenti e risultato JSON, correla call_id e verifica esito e durata."
+    },
+    {
+      "id": "crates/sanikey-core/src/operation.rs#5f1fef3c25172aaf3326e47e150ffa2f89d8f832299ca35efb49afa38a60aded:9",
+      "source_sha256": "5f1fef3c25172aaf3326e47e150ffa2f89d8f832299ca35efb49afa38a60aded",
+      "status": "covered",
+      "evidence": "operation::tests::operation_error_spans_record_arguments_results_and_formatter_omission: confronta argomenti e risultato JSON, correla call_id e verifica esito e durata."
+    },
+    {
+      "id": "crates/sanikey-core/src/operation.rs#5f1fef3c25172aaf3326e47e150ffa2f89d8f832299ca35efb49afa38a60aded:13",
+      "source_sha256": "5f1fef3c25172aaf3326e47e150ffa2f89d8f832299ca35efb49afa38a60aded",
+      "status": "covered",
+      "evidence": "operation::tests::cancellation_token_spans_record_transitions_and_results: confronta argomenti e risultato JSON, correla call_id e verifica esito e durata."
+    },
+    {
+      "id": "crates/sanikey-core/src/operation.rs#5f1fef3c25172aaf3326e47e150ffa2f89d8f832299ca35efb49afa38a60aded:17",
+      "source_sha256": "5f1fef3c25172aaf3326e47e150ffa2f89d8f832299ca35efb49afa38a60aded",
+      "status": "covered",
+      "evidence": "operation::tests::cancellation_token_spans_record_transitions_and_results: confronta argomenti e risultato JSON, correla call_id e verifica esito e durata."
+    },
+    {
+      "id": "crates/sanikey-core/src/operation.rs#5f1fef3c25172aaf3326e47e150ffa2f89d8f832299ca35efb49afa38a60aded:21",
+      "source_sha256": "5f1fef3c25172aaf3326e47e150ffa2f89d8f832299ca35efb49afa38a60aded",
+      "status": "covered",
+      "evidence": "operation::tests::operation_context_and_run_spans_record_arguments_results_and_omissions: confronta argomenti e risultato JSON, correla call_id e verifica esito e durata."
+    },
+    {
+      "id": "crates/sanikey-core/src/operation.rs#5f1fef3c25172aaf3326e47e150ffa2f89d8f832299ca35efb49afa38a60aded:25",
+      "source_sha256": "5f1fef3c25172aaf3326e47e150ffa2f89d8f832299ca35efb49afa38a60aded",
+      "status": "covered",
+      "evidence": "operation::tests::operation_context_and_run_spans_record_arguments_results_and_omissions: confronta argomenti e risultato JSON, correla call_id e verifica esito e durata."
+    },
+    {
+      "id": "crates/sanikey-core/src/operation.rs#5f1fef3c25172aaf3326e47e150ffa2f89d8f832299ca35efb49afa38a60aded:29",
+      "source_sha256": "5f1fef3c25172aaf3326e47e150ffa2f89d8f832299ca35efb49afa38a60aded",
+      "status": "covered",
+      "evidence": "operation::tests::operation_context_and_run_spans_record_arguments_results_and_omissions: confronta argomenti e risultato JSON, correla call_id e verifica esito e durata."
+    },
+    {
+      "id": "crates/sanikey-core/src/operation.rs#5f1fef3c25172aaf3326e47e150ffa2f89d8f832299ca35efb49afa38a60aded:37",
+      "source_sha256": "5f1fef3c25172aaf3326e47e150ffa2f89d8f832299ca35efb49afa38a60aded",
+      "status": "covered",
+      "evidence": "operation::tests::operation_context_and_run_spans_record_arguments_results_and_omissions: confronta argomenti e risultato JSON, correla call_id e verifica esito e durata."
     }
   ]
 }
