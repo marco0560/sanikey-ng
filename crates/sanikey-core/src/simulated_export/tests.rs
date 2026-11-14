@@ -1,8 +1,12 @@
 //! Fixture sintetiche per export e validazione dell'immagine TXT.
 
-use super::{export_txt_simulation, validate_txt_simulation};
+use super::{
+    count_files, export_txt_simulation, percent_decode, safe_relative_path, sha256_file,
+    validate_txt_simulation,
+};
 use crate::config::{IngestionConfig, PersonConfig, SearchConfig, UiConfig};
 use crate::logging::{Component, Level, Session};
+use serde_json::{Value, json};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -84,6 +88,192 @@ fn read_tree(root: &Path) -> Vec<(PathBuf, Vec<u8>)> {
     }
     files.sort_by(|left, right| left.0.cmp(&right.0));
     files
+}
+
+fn expected_text_trace(value: &str) -> Value {
+    json!({
+        "kind": "data",
+        "value": {
+            "format": "text_redacted_known_secret_assignments",
+            "value": value,
+        }
+    })
+}
+
+fn expected_path_trace(path: &Path) -> Value {
+    json!({
+        "kind": "data",
+        "value": {
+            "kind": "data",
+            "value": {
+                "encoding": "utf8",
+                "value": path.to_str().expect("percorso fixture UTF-8"),
+            }
+        }
+    })
+}
+
+fn expected_secret_path_trace() -> Value {
+    json!({"kind": "data", "value": {"kind": "secret_omitted"}})
+}
+
+fn expected_arguments(fields: Vec<(&str, Value)>) -> Value {
+    Value::Array(
+        fields
+            .into_iter()
+            .map(|(name, content)| json!({"name": name, "content": content}))
+            .collect(),
+    )
+}
+
+fn expected_debug_result<T: std::fmt::Debug>(value: &T) -> Value {
+    expected_text_trace(&format!("{value:#?}"))
+}
+
+fn assert_complete_trace_calls(records: &[Value], function: &str, expected: Vec<(Value, Value)>) {
+    let entries: Vec<_> = records
+        .iter()
+        .filter(|record| record["type"] == "function_enter" && record["function"] == function)
+        .collect();
+    assert_eq!(entries.len(), expected.len(), "numero ingressi: {function}");
+    let mut unmatched = entries;
+    for (arguments, result) in expected {
+        let index = unmatched
+            .iter()
+            .position(|entry| entry["arguments"] == arguments)
+            .unwrap_or_else(|| panic!("argomenti completi assenti per {function}: {arguments}"));
+        let entry = unmatched.remove(index);
+        let call_id = entry["call_id"].as_u64().expect("call_id numerico");
+        let exits: Vec<_> = records
+            .iter()
+            .filter(|record| {
+                record["type"] == "function_exit"
+                    && record["function"] == function
+                    && record["call_id"] == call_id
+            })
+            .collect();
+        assert_eq!(exits.len(), 1, "uscita correlata: {function}#{call_id}");
+        assert_eq!(exits[0]["outcome"], "returned", "esito: {function}");
+        assert!(
+            exits[0]["duration_ms"].is_u64(),
+            "durata assente: {function}#{call_id}"
+        );
+        assert_eq!(exits[0]["result"], result, "risultato: {function}");
+    }
+    assert!(unmatched.is_empty());
+}
+
+#[test]
+fn traced_export_helpers_match_complete_inputs_results_and_omissions() {
+    let directory = TestDirectory::new();
+    let safe_input = "patients/patient-a/documents/Report One.txt";
+    let safe_result = PathBuf::from("patients/patient-a/documents/Report One.txt");
+    let encoded_input = "patients/patient-a/documents/Report%20One.txt";
+    let decoded_result = "patients/patient-a/documents/Report One.txt";
+    let secret_path = directory
+        .path()
+        .join("api_key=SYNTHETIC-EXPORT-PATH-SECRET");
+    fs::write(&secret_path, b"abc").expect("file sintetico");
+    let tree = directory.path().join("tree");
+    fs::create_dir_all(tree.join("nested")).expect("tree sintetico");
+    fs::write(tree.join("one.txt"), b"one").expect("file sintetico");
+    fs::write(tree.join("nested/two.bin"), b"two").expect("file sintetico");
+
+    let (session, log_path) = Session::create_in_directory_with_level(
+        &directory.path().join("logs"),
+        Component::Core,
+        Level::Trace,
+    )
+    .expect("sessione trace sintetica");
+    let (safe, decoded, digest, file_count) = session.scoped(|| {
+        (
+            safe_relative_path(safe_input).expect("path relativo sicuro"),
+            percent_decode(encoded_input).expect("percent encoding valido"),
+            sha256_file(&secret_path).expect("checksum file sintetico"),
+            count_files(&tree).expect("conteggio file sintetici"),
+        )
+    });
+    drop(session);
+
+    assert_eq!(safe, safe_result);
+    assert_eq!(decoded, decoded_result);
+    assert_eq!(
+        digest,
+        "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+    );
+    assert_eq!(file_count, 2);
+    let log = fs::read_to_string(log_path).expect("log trace sintetico");
+    assert!(!log.contains("SYNTHETIC-EXPORT-PATH-SECRET"));
+    assert!(log.contains("secret_omitted"));
+    let records: Vec<Value> = log
+        .lines()
+        .map(|line| serde_json::from_str(line).expect("record JSON sintetico"))
+        .collect();
+
+    let safe_arguments = expected_arguments(vec![("value", expected_text_trace(safe_input))]);
+    assert_complete_trace_calls(
+        &records,
+        "simulated_export::safe_relative_path",
+        vec![(safe_arguments.clone(), expected_debug_result(&safe_result))],
+    );
+    assert_complete_trace_calls(
+        &records,
+        "simulated_export::safe_relative_path_inner",
+        vec![(safe_arguments, expected_debug_result(&safe_result))],
+    );
+
+    let percent_arguments = expected_arguments(vec![("value", expected_text_trace(encoded_input))]);
+    assert_complete_trace_calls(
+        &records,
+        "simulated_export::percent_decode",
+        vec![(
+            percent_arguments.clone(),
+            expected_debug_result(&decoded_result),
+        )],
+    );
+    assert_complete_trace_calls(
+        &records,
+        "simulated_export::percent_decode_inner",
+        vec![(percent_arguments, expected_debug_result(&decoded_result))],
+    );
+
+    let omitted_raw_bytes = json!({
+        "kind": "data",
+        "value": [
+            {"name": "state", "content": {"kind": "data", "value": "omitted"}},
+            {"name": "reason", "content": {"kind": "data", "value": "raw_file_bytes_not_recorded"}},
+        ]
+    });
+    let sha_arguments = expected_arguments(vec![
+        ("path", expected_secret_path_trace()),
+        ("byte_length", json!({"kind": "data", "value": 3})),
+        ("raw_bytes", omitted_raw_bytes),
+    ]);
+    assert_complete_trace_calls(
+        &records,
+        "simulated_export::sha256_file",
+        vec![(sha_arguments, expected_debug_result(&digest))],
+    );
+    assert_complete_trace_calls(
+        &records,
+        "simulated_export::sha256_file_inner",
+        vec![(
+            expected_arguments(vec![("path", expected_secret_path_trace())]),
+            expected_debug_result(&digest),
+        )],
+    );
+
+    let count_arguments = expected_arguments(vec![("root", expected_path_trace(&tree))]);
+    assert_complete_trace_calls(
+        &records,
+        "simulated_export::count_files",
+        vec![(count_arguments.clone(), expected_debug_result(&file_count))],
+    );
+    assert_complete_trace_calls(
+        &records,
+        "simulated_export::count_files_inner",
+        vec![(count_arguments, expected_debug_result(&file_count))],
+    );
 }
 
 #[test]

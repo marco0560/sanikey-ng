@@ -7,8 +7,11 @@ use super::{
 use crate::logging::{Component, Level, Session};
 use crate::metadata::{DocumentRecord, ObservationPoint, ObservationSeries};
 use crate::parameter_rules::{ParameterBuildResult, RuleDecision};
-use crate::parameter_slices::{DiscoverySettings, discover_candidates};
+use crate::parameter_slices::{
+    CandidateGroup, DiscoverySettings, ParameterCandidate, discover_candidates,
+};
 use crate::pdf::ExtractedText;
+use serde_json::{Value, json};
 use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -53,6 +56,115 @@ fn document(id: &str, date: &str) -> DocumentRecord {
         container_id: None,
         internal_path: None,
     }
+}
+
+fn traced<R>(operation: impl FnOnce() -> R) -> (R, String, Vec<Value>) {
+    let directory = TestDirectory::new();
+    let log_directory = directory.0.join("logs");
+    let (session, log_path) =
+        Session::create_in_directory_with_level(&log_directory, Component::Core, Level::Trace)
+            .expect("sessione Trace sintetica");
+    let result = session.scoped(operation);
+    session.finish(Component::Core).expect("chiusura Trace");
+    let contents = fs::read_to_string(log_path).expect("log Trace sintetico");
+    let records = contents
+        .lines()
+        .map(|line| serde_json::from_str(line).expect("record JSON sintetico"))
+        .collect();
+    (result, contents, records)
+}
+
+fn function_span<'a>(records: &'a [Value], function: &str) -> (&'a Value, &'a Value) {
+    let enters: Vec<_> = records
+        .iter()
+        .filter(|record| record["type"] == "function_enter" && record["function"] == function)
+        .collect();
+    assert_eq!(enters.len(), 1, "ingresso univoco di {function}");
+    let enter = enters[0];
+    let exits: Vec<_> = records
+        .iter()
+        .filter(|record| {
+            record["type"] == "function_exit"
+                && record["function"] == function
+                && record["call_id"] == enter["call_id"]
+        })
+        .collect();
+    assert_eq!(exits.len(), 1, "uscita correlata di {function}");
+    let exit = exits[0];
+    assert_eq!(exit["outcome"], "returned");
+    assert!(exit["duration_ms"].as_u64().is_some());
+    (enter, exit)
+}
+
+fn expected_debug(value: &str) -> Value {
+    json!({
+        "kind":"data",
+        "value":{"format":"rust_debug", "value":value}
+    })
+}
+
+fn expected_debug_redacted(value: &impl std::fmt::Debug) -> Value {
+    expected_debug(&format!("{value:#?}").replace("synthetic-report-secret", "[secret_omitted]"))
+}
+
+fn candidate_fixture() -> ParameterCandidate {
+    ParameterCandidate {
+        stable_id: "candidate-stable-01".into(),
+        document_id: "document-02".into(),
+        document_date: None,
+        document_href: Some("../documents/source-03.pdf".into()),
+        document_title: "Synthetic title 04".into(),
+        document_name: "source-05.pdf".into(),
+        document_category: "Synthetic category 06".into(),
+        source_text_digest: "a".repeat(64),
+        line_number: 7,
+        character_start: 8,
+        character_end: 9,
+        original_line: "Hb: 13.7 g/dL; api_key=synthetic-report-secret".into(),
+        normalized_label: "hb".into(),
+        raw_value: "13.7".into(),
+        parsed_value: Some(13.7),
+        number_format: None,
+        qualifier: Some("<".into()),
+        raw_unit: Some("g/dL".into()),
+        prefix_context: "prefix 10".into(),
+        suffix_context: "suffix 11".into(),
+        reason_code: None,
+        page_number: Some(12),
+        context: "context 13; api_key=synthetic-report-secret".into(),
+        page_label: "page 14".into(),
+        section_specimen: None,
+    }
+}
+
+fn expected_candidate() -> Value {
+    json!({
+        "stable_id":"candidate-stable-01",
+        "document_id":"document-02",
+        "document_date":null,
+        "document_href":"../documents/source-03.pdf",
+        "document_title":"Synthetic title 04",
+        "document_name":"source-05.pdf",
+        "document_category":"Synthetic category 06",
+        "source_text_digest":"a".repeat(64),
+        "line_number":7,
+        "character_start":8,
+        "character_end":9,
+        "original_line":"Hb: 13.7 g/dL; api_key=synthetic-report-secret",
+        "normalized_label":"hb",
+        "raw_value":"13.7",
+        "parsed_value":13.7,
+        "number_format":null,
+        "qualifier":"<",
+        "raw_unit":"g/dL",
+        "prefix_context":"prefix 10",
+        "suffix_context":"suffix 11",
+        "reason_code":null,
+        "page_number":12,
+        "context":"context 13; api_key=synthetic-report-secret",
+        "page_label":"page 14",
+        "section_specimen":null
+    })
 }
 
 #[test]
@@ -384,5 +496,177 @@ fn report_path_trace_keeps_non_unicode_path_bytes() {
             .as_array()
             .unwrap()
             .contains(&serde_json::json!(0xff))
+    );
+}
+
+#[test]
+fn synthetic_trace_records_complete_parameter_report_projections() {
+    let candidate = candidate_fixture();
+    let expected_candidate = expected_candidate();
+    let (candidate_value, candidate_log, candidate_records) =
+        traced(|| super::candidate_value(&candidate));
+    assert_eq!(candidate_value, expected_candidate);
+    assert_eq!(candidate_value["original_line"], candidate.original_line);
+    assert_eq!(candidate_value["context"], candidate.context);
+    assert!(candidate_log.contains("secret_omitted"));
+    assert!(!candidate_log.contains("synthetic-report-secret"));
+    let (enter, exit) = function_span(&candidate_records, "parameter_reports::candidate_value");
+    assert_eq!(
+        enter["arguments"],
+        json!([{"name":"candidate", "content":expected_debug_redacted(&candidate)}])
+    );
+    assert_eq!(exit["result"], expected_debug_redacted(&expected_candidate));
+
+    let group = CandidateGroup {
+        normalized_label: "hb".into(),
+        candidates: vec![candidate.clone()],
+    };
+    let expected_group = json!({"normalized_label":"hb", "candidates":[expected_candidate]});
+    let (group_value, group_log, group_records) = traced(|| super::group_value(&group));
+    assert_eq!(group_value, expected_group);
+    assert!(!group_log.contains("synthetic-report-secret"));
+    let (enter, exit) = function_span(&group_records, "parameter_reports::group_value");
+    assert_eq!(
+        enter["arguments"],
+        json!([{"name":"group", "content":expected_debug_redacted(&group)}])
+    );
+    assert_eq!(exit["result"], expected_debug_redacted(&expected_group));
+
+    let series = ObservationSeries {
+        id: "series-01".into(),
+        name: "Series 02".into(),
+        value_type: "numeric-03".into(),
+        unit: Some("unit-04".into()),
+        description: None,
+        warn_duplicate_same_day: true,
+        synonyms: vec!["alias-06".into(), "alias-07".into()],
+        parameter_rule_id: Some("rule-08".into()),
+        parameter_rule_version: Some(9),
+        parameter_rule_digest: Some("b".repeat(64)),
+        unit_variant: None,
+    };
+    let expected_series = json!({
+        "id":"series-01", "name":"Series 02", "value_type":"numeric-03",
+        "unit":"unit-04", "description":null,
+        "warn_duplicate_same_day":true, "synonyms":["alias-06", "alias-07"],
+        "parameter_rule_id":"rule-08", "parameter_rule_version":9,
+        "parameter_rule_digest":"b".repeat(64), "unit_variant":null
+    });
+    let (series_value, _, series_records) = traced(|| super::series_value(&series));
+    assert_eq!(series_value, expected_series);
+    let (enter, exit) = function_span(&series_records, "parameter_reports::series_value");
+    assert_eq!(
+        enter["arguments"],
+        json!([{"name":"series", "content":expected_debug(&format!("{series:#?}"))}])
+    );
+    assert_eq!(
+        exit["result"],
+        expected_debug(&format!("{expected_series:#?}"))
+    );
+
+    let point = ObservationPoint {
+        id: "point-01".into(),
+        series_id: "series-02".into(),
+        observation_date: "2026-04-05".into(),
+        source_type: "source-type-04".into(),
+        source_reference: "source-reference-05".into(),
+        numeric_value: Some(6.5),
+        text_value: None,
+        systolic: Some(8.5),
+        diastolic: Some(9.5),
+        pulse: Some(10.5),
+        note: None,
+        source_kind: "source-kind-12".into(),
+        document_id: Some("document-13".into()),
+        document_href: Some("href-14".into()),
+        document_title: Some("title-15".into()),
+        document_category: Some("category-16".into()),
+        source_text_digest: Some("c".repeat(64)),
+        original_line: Some("line-18".into()),
+        line_number: Some(19),
+        page_number: None,
+        character_start: Some(21),
+        character_end: Some(22),
+        matched_label: Some("label-23".into()),
+        raw_value: Some("raw-24".into()),
+        parsed_value: Some(25.5),
+        raw_unit: Some("raw-unit-26".into()),
+        normalized_unit: Some("normalized-unit-27".into()),
+        qualifier: None,
+        rule_id: Some("rule-29".into()),
+        rule_version: Some(30),
+        rule_digest: Some("d".repeat(64)),
+        reason_code: Some("reason-32".into()),
+    };
+    let expected_point = json!({
+        "id":"point-01", "series_id":"series-02", "observation_date":"2026-04-05",
+        "source_type":"source-type-04", "source_reference":"source-reference-05",
+        "numeric_value":6.5, "text_value":null, "systolic":8.5,
+        "diastolic":9.5, "pulse":10.5, "note":null, "source_kind":"source-kind-12",
+        "document_id":"document-13", "document_href":"href-14", "document_title":"title-15",
+        "document_category":"category-16", "source_text_digest":"c".repeat(64),
+        "original_line":"line-18", "line_number":19, "page_number":null,
+        "character_start":21, "character_end":22, "matched_label":"label-23",
+        "raw_value":"raw-24", "parsed_value":25.5, "raw_unit":"raw-unit-26",
+        "normalized_unit":"normalized-unit-27", "qualifier":null,
+        "rule_id":"rule-29", "rule_version":30, "rule_digest":"d".repeat(64),
+        "reason_code":"reason-32"
+    });
+    let (point_value, _, point_records) = traced(|| super::point_value(&point));
+    assert_eq!(point_value, expected_point);
+    let (enter, exit) = function_span(&point_records, "parameter_reports::point_value");
+    assert_eq!(
+        enter["arguments"],
+        json!([{"name":"point", "content":expected_debug(&format!("{point:#?}"))}])
+    );
+    assert_eq!(
+        exit["result"],
+        expected_debug(&format!("{expected_point:#?}"))
+    );
+
+    for (cell_input, expected_cell) in [
+        (Value::Null, "None"),
+        (json!("cell text"), "cell text"),
+        (json!(17), "17"),
+        (json!([1, "x"]), "[1,\"x\"]"),
+        (json!({"field":"value"}), "{\"field\":\"value\"}"),
+    ] {
+        let (cell, _, cell_records) = traced(|| super::json_cell(&cell_input));
+        assert_eq!(cell, expected_cell);
+        let (enter, exit) = function_span(&cell_records, "parameter_reports::json_cell");
+        assert_eq!(
+            enter["arguments"],
+            json!([{"name":"value", "content":{"kind":"data", "value":cell_input}}])
+        );
+        assert_eq!(
+            exit["result"],
+            expected_debug(&format!("{expected_cell:?}"))
+        );
+    }
+
+    let row = [
+        "A".into(),
+        "BB".into(),
+        "C".into(),
+        "DD".into(),
+        "E".into(),
+        "FF".into(),
+        "G".into(),
+    ];
+    let widths = [2, 2, 1, 2, 1, 2, 1];
+    let (rendered, _, row_records) = traced(|| super::render_table_row(&row, &widths));
+    let expected_row = "A  | BB | C | DD | E | FF | G";
+    assert_eq!(rendered, expected_row);
+    let (enter, exit) = function_span(&row_records, "parameter_reports::render_table_row");
+    assert_eq!(
+        enter["arguments"],
+        json!([
+            {"name":"row", "content":expected_debug(&format!("{row:#?}"))},
+            {"name":"widths", "content":expected_debug(&format!("{widths:#?}"))}
+        ])
+    );
+    assert_eq!(
+        exit["result"],
+        expected_debug("\"A  | BB | C | DD | E | FF | G\"")
     );
 }

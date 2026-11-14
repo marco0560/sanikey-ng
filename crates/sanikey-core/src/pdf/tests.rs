@@ -1,11 +1,13 @@
 //! Fixture sintetiche per estrazione PDF digitale e OCR.
 
 use super::{
-    PdfExtractionOptions, bind_pdfium, extract_pdf_text, extract_pdf_text_with_options,
-    find_tesseract, pdf_page_count, run_tesseract,
+    ExtractedText, PdfExtractionOptions, TextPageSpan, bind_pdfium, extract_pdf_text,
+    extract_pdf_text_with_options, find_tesseract, pdf_page_count, run_tesseract,
     test_support::{synthetic_pdf, synthetic_scanned_pdf, synthetic_scanned_pdf_with_digital_text},
 };
+use crate::logging::{Component, Level, Session};
 use crate::metadata::DocumentRecord;
+use serde_json::{Value, json};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -54,6 +56,91 @@ fn document(path: &Path) -> DocumentRecord {
         container_id: None,
         internal_path: None,
     }
+}
+
+fn expected_path(path: &Path) -> Value {
+    json!({
+        "kind": "data",
+        "value": {"encoding": "utf8", "value": path.to_str().expect("percorso UTF-8")},
+    })
+}
+
+fn expected_data(value: Value) -> Value {
+    json!({"kind": "data", "value": value})
+}
+
+fn expected_document(document: &DocumentRecord) -> Value {
+    expected_data(json!({
+        "document_id": document.document_id,
+        "patient_id": document.patient_id,
+        "path": expected_path(&document.path),
+        "title": document.title,
+        "category": document.category,
+        "kind": document.kind,
+        "sha256": document.sha256,
+        "date": document.date,
+        "series": document.series,
+        "tags": document.tags,
+        "origin": document.origin,
+        "container_id": document.container_id,
+        "internal_path": document.internal_path,
+    }))
+}
+
+fn expected_output(value: Value) -> Value {
+    json!({"kind": "data", "value": {"output": expected_data(value)}})
+}
+
+fn assert_pdf_span(records: &[Value], function: &str, arguments: Value, output: Value) -> u64 {
+    assert_pdf_spans(records, function, vec![(arguments, output)])
+        .into_iter()
+        .next()
+        .expect("una chiamata attesa")
+}
+
+fn assert_pdf_spans(
+    records: &[Value],
+    function: &str,
+    mut expected: Vec<(Value, Value)>,
+) -> Vec<u64> {
+    let entries: Vec<_> = records
+        .iter()
+        .filter(|record| record["type"] == "function_enter" && record["function"] == function)
+        .collect();
+    assert_eq!(entries.len(), expected.len(), "entrate per {function}");
+    let mut unmatched = entries;
+    let mut call_ids = Vec::new();
+    for (arguments, output) in expected.drain(..) {
+        let index = unmatched
+            .iter()
+            .position(|entry| entry["arguments"] == arguments)
+            .unwrap_or_else(|| {
+                panic!(
+                    "argomenti attesi assenti per {function}: {arguments}; presenti: {:?}",
+                    unmatched
+                        .iter()
+                        .map(|entry| &entry["arguments"])
+                        .collect::<Vec<_>>()
+                )
+            });
+        let entry = unmatched.remove(index);
+        let call_id = entry["call_id"].as_u64().expect("call_id numerico");
+        let exits: Vec<_> = records
+            .iter()
+            .filter(|record| {
+                record["type"] == "function_exit"
+                    && record["function"] == function
+                    && record["call_id"] == call_id
+            })
+            .collect();
+        assert_eq!(exits.len(), 1, "una sola uscita correlata per {function}");
+        assert_eq!(exits[0]["outcome"], "returned");
+        assert_eq!(exits[0]["result"], output, "risultato di {function}");
+        assert!(exits[0]["duration_ms"].as_u64().is_some());
+        call_ids.push(call_id);
+    }
+    assert!(unmatched.is_empty());
+    call_ids
 }
 
 #[test]
@@ -309,4 +396,207 @@ fn synthetic_trace_captures_pdf_text_and_ocr_boundary_while_events_omit_it() {
             assert!(!log.contains("synthetic-"));
         }
     }
+}
+
+#[test]
+fn synthetic_pdf_spans_match_full_arguments_outputs_ids_durations_and_omissions() {
+    let directory = TestDirectory::new();
+    let secret = "synthetic-pdf-trace-secret";
+    let source_text = format!(
+        "Synthetic digital report has enough characters for parsing; password = {secret}; retained."
+    );
+    let extracted_text = format!("{source_text}\n");
+    let path = directory.write_pdf("trace-report.pdf", &synthetic_pdf(&[&source_text]));
+    let safe_text = source_text.replace(secret, "[secret_omitted]");
+    let safe_extracted_text = format!("{safe_text}\n");
+    let (session, log_path) = Session::create_in_directory_with_level(
+        &directory.0.join("trace-logs"),
+        Component::Core,
+        Level::Trace,
+    )
+    .expect("sessione PDF sintetica");
+    let (document_id, extraction, empty, ppm, page_count, threshold) = session.scoped(|| {
+        let extracted = extract_pdf_text(&path);
+        let empty = super::empty_extraction("empty-synthetic-document");
+        let ppm = super::rgba_to_ppm(&[10, 20, 30, 255, 40, 50, 60, 255], 2, 1)
+            .expect("PPM sintetico valido");
+        let page_count = pdf_page_count(&path);
+        let threshold = super::has_sufficient_pdf_text(&source_text);
+        (path.clone(), extracted, empty, ppm, page_count, threshold)
+    });
+    assert_eq!(extraction.text, extracted_text);
+    assert!(extraction.warnings.is_empty());
+    assert_eq!(
+        extraction.page_spans,
+        [TextPageSpan {
+            page_number: 1,
+            character_start: 0,
+            character_end: extracted_text.chars().count(),
+        }]
+    );
+    assert_eq!(
+        empty,
+        ExtractedText {
+            document_id: "empty-synthetic-document".to_owned(),
+            text: String::new(),
+            warnings: Vec::new(),
+            page_spans: Vec::new(),
+        }
+    );
+    let expected_ppm = b"P6\n2 1\n255\n\x0a\x14\x1e\x28\x32\x3c".to_vec();
+    assert_eq!(ppm, expected_ppm);
+    assert_eq!(page_count, Some(1));
+    assert!(threshold);
+    drop(session);
+
+    let records: Vec<Value> = fs::read_to_string(log_path)
+        .expect("log PDF sintetico")
+        .lines()
+        .map(|line| serde_json::from_str(line).expect("JSON valido"))
+        .collect();
+    let document = document_id;
+    let extracted_projection = json!({
+        "document_id": "synthetic-pdf-id",
+        "text": safe_extracted_text,
+        "warnings": [],
+        "page_spans": expected_data(json!([{
+            "page_number": 1,
+            "character_start": 0,
+            "character_end": extracted_text.chars().count(),
+        }])),
+    });
+    let extracted_output = expected_output(extracted_projection);
+
+    let extract_id = assert_pdf_span(
+        &records,
+        "pdf::extract_pdf_text",
+        json!([{"name": "document", "content": expected_document(&document)}]),
+        extracted_output.clone(),
+    );
+    let options_id = assert_pdf_span(
+        &records,
+        "pdf::extract_pdf_text_with_options",
+        json!([
+            {"name": "document", "content": expected_document(&document)},
+            {"name": "options", "content": expected_data(json!("PdfExtractionOptions {\n    force_pdf_ocr: false,\n}"))},
+        ]),
+        extracted_output.clone(),
+    );
+    let digital_id = assert_pdf_span(
+        &records,
+        "pdf::extract_digital_pdf_text",
+        json!([
+            {"name": "document", "content": expected_document(&document)},
+            {"name": "pdf_file_bytes", "content": {"kind": "omitted", "reason": "external_component"}},
+        ]),
+        extracted_output,
+    );
+    let threshold_arguments = |text: &str| {
+        json!([{"name": "text", "content": expected_data(json!({
+            "format": "text_redacted_known_secret_assignments",
+            "value": text,
+        }))}])
+    };
+    let threshold_ids = assert_pdf_spans(
+        &records,
+        "pdf::has_sufficient_pdf_text",
+        vec![
+            (
+                threshold_arguments(&safe_extracted_text),
+                expected_output(json!(true)),
+            ),
+            (
+                threshold_arguments(&safe_extracted_text),
+                expected_output(json!(true)),
+            ),
+            (
+                threshold_arguments(&safe_text),
+                expected_output(json!(true)),
+            ),
+        ],
+    );
+    let empty_output = expected_output(json!({
+        "document_id": "empty-synthetic-document",
+        "text": "",
+        "warnings": [],
+        "page_spans": expected_data(json!([])),
+    }));
+    let empty_id = assert_pdf_span(
+        &records,
+        "pdf::empty_extraction",
+        json!([{"name": "document_id", "content": expected_data(json!("empty-synthetic-document"))}]),
+        empty_output,
+    );
+    let ppm_id = assert_pdf_span(
+        &records,
+        "pdf::rgba_to_ppm",
+        json!([
+            {"name": "rgba", "content": expected_data(json!([10, 20, 30, 255, 40, 50, 60, 255]))},
+            {"name": "width", "content": expected_data(json!(2))},
+            {"name": "height", "content": expected_data(json!(1))},
+        ]),
+        expected_output(json!({"ppm_bytes": expected_ppm, "result": "ok"})),
+    );
+    let page_count_id = assert_pdf_span(
+        &records,
+        "pdf::pdf_page_count",
+        json!([
+            {"name": "document", "content": expected_document(&document)},
+            {"name": "pdf_file_bytes", "content": {"kind": "omitted", "reason": "external_component"}},
+        ]),
+        expected_output(json!(1)),
+    );
+    assert_eq!(
+        records
+            .iter()
+            .find(|record| record["call_id"] == options_id)
+            .unwrap()["parent_call_id"],
+        extract_id
+    );
+    assert_eq!(
+        records
+            .iter()
+            .find(|record| record["call_id"] == digital_id)
+            .unwrap()["parent_call_id"],
+        options_id
+    );
+    assert_eq!(
+        records
+            .iter()
+            .find(|record| record["call_id"] == threshold_ids[0])
+            .unwrap()["parent_call_id"],
+        digital_id
+    );
+    assert_eq!(
+        records
+            .iter()
+            .find(|record| record["call_id"] == threshold_ids[1])
+            .unwrap()["parent_call_id"],
+        options_id
+    );
+    assert!(records.iter().any(|record| {
+        record["call_id"] == threshold_ids[2] && record["parent_call_id"].is_null()
+    }));
+    for id in [empty_id, ppm_id, page_count_id] {
+        assert!(
+            records
+                .iter()
+                .any(|record| record["call_id"] == id && record["parent_call_id"].is_null())
+        );
+    }
+    let serialized = serde_json::to_string(&records).expect("records serializzabili");
+    assert!(serialized.contains("secret_omitted"));
+    assert!(!serialized.contains(secret));
+
+    let (events, event_path) = Session::create_in_directory_with_level(
+        &directory.0.join("event-logs"),
+        Component::Core,
+        Level::Events,
+    )
+    .expect("sessione eventi sintetica");
+    events.scoped(|| assert!(super::has_sufficient_pdf_text(&source_text)));
+    drop(events);
+    let event_log = fs::read_to_string(event_path).expect("log eventi PDF sintetico");
+    assert!(!event_log.contains("function_enter"));
+    assert!(!event_log.contains(secret));
 }

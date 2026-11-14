@@ -1,10 +1,11 @@
 //! Test sintetici delle invarianti dei percorsi runtime.
 
-use super::validate_runtime_privacy;
+use super::{normalize, privacy_error, resolve_non_strict, validate_runtime_privacy};
 use crate::config::{AccountsConfig, parse_accounts_data};
 use crate::logging::{Component, Level, Session};
 use crate::metadata::prepare_people_metadata;
 use crate::operation::ErrorCode;
+use serde_json::{Value as JsonValue, json};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -73,6 +74,153 @@ fn config_with_paths(root: &Path, paths: [&Path; 3]) -> AccountsConfig {
     ]);
     parse_accounts_data(&Value::Table(root_table), root.join("config/accounts.toml"))
         .expect("configurazione sintetica valida")
+}
+
+fn expected_path_trace(path: &Path) -> JsonValue {
+    json!({
+        "kind": "data",
+        "value": {"encoding": "utf8", "value": path.to_str().expect("path sintetico UTF-8")}
+    })
+}
+
+fn expected_secret_path_trace() -> JsonValue {
+    json!({"kind": "secret_omitted"})
+}
+
+fn expected_arguments(name: &str, content: JsonValue) -> JsonValue {
+    json!([{"name": name, "content": content}])
+}
+
+fn assert_complete_trace_calls(
+    records: &[JsonValue],
+    function: &str,
+    expected: Vec<(JsonValue, JsonValue)>,
+) {
+    let entries: Vec<_> = records
+        .iter()
+        .filter(|record| record["type"] == "function_enter" && record["function"] == function)
+        .collect();
+    assert_eq!(entries.len(), expected.len(), "numero ingressi: {function}");
+    let mut unmatched = entries;
+    for (arguments, result) in expected {
+        let index = unmatched
+            .iter()
+            .position(|entry| entry["arguments"] == arguments)
+            .unwrap_or_else(|| panic!("argomenti completi assenti per {function}: {arguments}"));
+        let entry = unmatched.remove(index);
+        let call_id = entry["call_id"].as_u64().expect("call_id numerico");
+        let exits: Vec<_> = records
+            .iter()
+            .filter(|record| {
+                record["type"] == "function_exit"
+                    && record["function"] == function
+                    && record["call_id"] == call_id
+            })
+            .collect();
+        assert_eq!(exits.len(), 1, "uscita correlata: {function}#{call_id}");
+        assert_eq!(exits[0]["outcome"], "returned", "esito: {function}");
+        assert!(
+            exits[0]["duration_ms"].is_u64(),
+            "durata assente: {function}#{call_id}"
+        );
+        assert_eq!(exits[0]["result"], result, "risultato: {function}");
+    }
+    assert!(unmatched.is_empty());
+}
+
+#[test]
+fn traced_path_helpers_match_complete_inputs_results_and_durations() {
+    let directory = TestDirectory::new();
+    let root = directory.path();
+    let resolve_input = root.join("missing/child");
+    let resolve_result = resolve_input.clone();
+    let normalize_input = root.join("alpha/../beta/./gamma");
+    let normalize_result = root.join("beta/gamma");
+    let secret_path = root.join("generated/api_key=SYNTHETIC-PRIVACY-PATH-SECRET");
+    let message = "synthetic privacy failure";
+    let (session, log_path) =
+        Session::create_in_directory_with_level(&root.join("logs"), Component::Core, Level::Trace)
+            .expect("sessione trace sintetica");
+
+    let (resolved, normalized, normalized_secret, error) = session.scoped(|| {
+        (
+            resolve_non_strict(&resolve_input).expect("percorso inesistente risolto"),
+            normalize(&normalize_input),
+            normalize(&secret_path),
+            privacy_error(message),
+        )
+    });
+    drop(session);
+    assert_eq!(resolved, resolve_result);
+    assert_eq!(normalized, normalize_result);
+    assert_eq!(normalized_secret, secret_path);
+    assert_eq!(error.code(), ErrorCode::Privacy);
+    assert_eq!(error.message(), message);
+
+    let log = fs::read_to_string(log_path).expect("log trace sintetico");
+    assert!(!log.contains("SYNTHETIC-PRIVACY-PATH-SECRET"));
+    assert!(log.contains("secret_omitted"));
+    let records: Vec<JsonValue> = log
+        .lines()
+        .map(|line| serde_json::from_str(line).expect("record JSON sintetico"))
+        .collect();
+    let resolve_arguments = expected_arguments("path", expected_path_trace(&resolve_input));
+    let resolve_result = json!({
+        "kind": "data",
+        "value": {
+            "outcome": "succeeded",
+            "path": expected_path_trace(&resolve_result),
+        }
+    });
+    assert_complete_trace_calls(
+        &records,
+        "privacy::resolve_non_strict",
+        vec![(resolve_arguments, resolve_result)],
+    );
+
+    let normalize_resolve_arguments =
+        expected_arguments("path", expected_path_trace(&resolve_input));
+    let normalize_direct_arguments =
+        expected_arguments("path", expected_path_trace(&normalize_input));
+    let normalize_resolve_result = json!({
+        "kind": "data",
+        "value": {"path": expected_path_trace(&resolve_input)},
+    });
+    let normalize_direct_result = json!({
+        "kind": "data",
+        "value": {"path": expected_path_trace(&normalize_result)},
+    });
+    assert_complete_trace_calls(
+        &records,
+        "privacy::normalize",
+        vec![
+            (
+                normalize_resolve_arguments.clone(),
+                normalize_resolve_result.clone(),
+            ),
+            (normalize_resolve_arguments, normalize_resolve_result),
+            (normalize_direct_arguments, normalize_direct_result),
+            (
+                expected_arguments("path", expected_secret_path_trace()),
+                json!({
+                    "kind": "data",
+                    "value": {"path": expected_secret_path_trace()},
+                }),
+            ),
+        ],
+    );
+
+    assert_complete_trace_calls(
+        &records,
+        "privacy::privacy_error",
+        vec![(
+            expected_arguments("message", json!({"kind": "data", "value": message})),
+            json!({
+                "kind": "data",
+                "value": {"code": "privacy", "message": message},
+            }),
+        )],
+    );
 }
 
 #[test]
