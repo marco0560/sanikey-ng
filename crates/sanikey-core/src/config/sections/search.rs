@@ -1,5 +1,9 @@
 //! Search section and ordered dictionary parsing.
 
+use super::super::trace::{
+    trace_config_call, trace_optional_path, trace_optional_toml_value, trace_search_result,
+    trace_toml_value,
+};
 use super::super::validation::{error, optional_positive_integer, reject_unknown, table_or_empty};
 use super::super::{SearchConfig, SearchDictionary};
 use super::paths::optional_path;
@@ -16,6 +20,13 @@ pub(in crate::config) fn parse_search(
     base_dir: &Path,
     base: Option<&SearchConfig>,
 ) -> Result<SearchConfig, OperationError> {
+    trace_config_call!(
+        "config::parse_search",
+        ["context" => &context, "base" => &base],
+        paths ["base_dir" => base_dir],
+        fields ["value" => trace_toml_value(value), "base_dictionary_path" => trace_optional_path(base.and_then(|config| config.dictionary.as_deref()))],
+        result_paths trace_search_result,
+        || {
     let table = table_or_empty(Some(value), context)?;
     reject_unknown(&table, SEARCH_FIELDS, context)?;
     let defaults = base.cloned().unwrap_or_default();
@@ -41,12 +52,20 @@ pub(in crate::config) fn parse_search(
             defaults.advanced_index_warning_mb,
         )?,
     })
+        }
+    )
 }
 
 fn load_search_dictionary(
     path: Option<&Path>,
     context: &str,
 ) -> Result<SearchDictionary, OperationError> {
+    trace_config_call!(
+        "config::load_search_dictionary",
+        ["context" => &context],
+        paths [],
+        fields ["path_native" => trace_optional_path(path)],
+        || {
     let Some(path) = path else {
         return Ok(SearchDictionary::default());
     };
@@ -76,12 +95,15 @@ fn load_search_dictionary(
     let terms = parse_dictionary_section(table.get("terms"), &format!("{context}.terms"))?;
     let months = parse_dictionary_section(table.get("months"), &format!("{context}.months"))?;
     Ok(SearchDictionary { terms, months })
+        }
+    )
 }
 
 fn parse_dictionary_section(
     value: Option<&Value>,
     context: &str,
 ) -> Result<IndexMap<String, Vec<String>>, OperationError> {
+    trace_config_call!("config::parse_dictionary_section", ["context" => &context], paths [], fields ["value" => trace_optional_toml_value(value)], || {
     let Some(value) = value else {
         return Ok(IndexMap::new());
     };
@@ -115,4 +137,5 @@ fn parse_dictionary_section(
         parsed.insert(key.trim().to_owned(), expanded);
     }
     Ok(parsed)
+    })
 }

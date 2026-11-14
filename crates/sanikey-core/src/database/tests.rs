@@ -1,6 +1,9 @@
+//! Fixture sintetiche per la persistenza del database.
+
 use super::{build_database, database_path};
 use crate::config::{IngestionConfig, PersonConfig, SearchConfig, UiConfig};
 use crate::dicom::DicomStudy;
+use crate::logging::{Component, Level, Session};
 use crate::metadata::{
     ClinicalProblem, CuratedMetadata, DocumentRecord, Medication, Observation, ObservationPoint,
     ObservationSeries, Procedure, TherapyEpisode, TimelineEvent,
@@ -15,6 +18,7 @@ static TEMP_SEQUENCE: AtomicUsize = AtomicUsize::new(0);
 
 struct TestDirectory(PathBuf);
 
+/// Gestisce le directory temporanee dei test database.
 impl TestDirectory {
     fn new() -> Self {
         let sequence = TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed);
@@ -31,6 +35,7 @@ impl TestDirectory {
     }
 }
 
+/// Elimina i file di test al termine del test.
 impl Drop for TestDirectory {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.0);
@@ -272,6 +277,122 @@ fn builds_complete_archive_with_curated_rows_dicom_and_fts() {
     );
     assert_eq!(fts_count, 1);
     assert_eq!(foreign_key_violations, 0);
+}
+
+#[test]
+fn database_trace_records_sqlite_inputs_and_marks_runtime_boundary() {
+    let directory = TestDirectory::new();
+    for (suffix, level) in [("events", Level::Events), ("trace", Level::Trace)] {
+        let mut config = person(directory.path());
+        config.local_build = directory.path().join(format!("build-{suffix}"));
+        let mut document = document(directory.path());
+        #[cfg(unix)]
+        {
+            use std::os::unix::ffi::OsStringExt;
+            document.path = directory
+                .path()
+                .join(std::ffi::OsString::from_vec(b"report-\xff.txt".to_vec()));
+        }
+        let extracted = ExtractedText {
+            document_id: document.document_id.clone(),
+            text: "Synthetic private extracted text".into(),
+            warnings: vec!["Synthetic parser warning".into()],
+            page_spans: vec![],
+        };
+        let metadata = metadata();
+        let study = study(directory.path());
+        let logs = directory.path().join(format!("logs-{suffix}"));
+        let (session, log_path) =
+            Session::create_in_directory_with_level(&logs, Component::Core, level)
+                .expect("sessione sintetica");
+        let result = session.scoped(|| {
+            build_database(
+                &config,
+                std::slice::from_ref(&document),
+                &metadata,
+                std::slice::from_ref(&study),
+                std::slice::from_ref(&extracted),
+            )
+        });
+        assert!(result.is_ok());
+        drop(session);
+
+        let log = fs::read_to_string(log_path).expect("log sintetico");
+        if level == Level::Trace {
+            assert!(log.contains("database::build_database"));
+            assert!(log.contains("database::insert_documents"));
+            assert!(log.contains("database::build_database_impl"));
+            assert!(log.contains("database::insert_documents_impl"));
+            assert!(log.contains("database::insert_metadata_impl"));
+            assert!(log.contains("database::insert_dicom_impl"));
+            assert!(log.contains("database::DatabaseStage::new"));
+            assert!(log.contains("database::DatabaseStage::drop"));
+            assert!(log.contains("database::insert_metadata"));
+            assert!(log.contains("database::insert_dicom"));
+            assert!(log.contains("sqlite_schema"));
+            assert!(log.contains("sqlite_runtime_state"));
+            assert!(log.contains("external_component"));
+            assert!(log.contains("Synthetic private extracted text"));
+            assert!(log.contains("1.2.826.0.1.3680043.10.543.1"));
+            #[cfg(unix)]
+            {
+                assert!(log.contains("unix_bytes"));
+                assert!(log.contains("sqlite_path_text_lossy"));
+                assert!(log.contains("lossy_utf8"));
+            }
+        } else {
+            assert!(!log.contains("function_enter"));
+            assert!(!log.contains("Synthetic private extracted text"));
+            assert!(!log.contains("1.2.826.0.1.3680043.10.543.1"));
+        }
+    }
+}
+
+#[test]
+fn database_trace_redacts_known_secret_assignments_and_preserves_stored_text() {
+    let directory = TestDirectory::new();
+    let config = person(directory.path());
+    let document = document(directory.path());
+    let secret = "SECRET-SYNTHETIC-DATABASE";
+    let text = format!("api_key={secret}");
+    let extracted = ExtractedText {
+        document_id: document.document_id.clone(),
+        text: text.clone(),
+        warnings: Vec::new(),
+        page_spans: Vec::new(),
+    };
+    let logs = directory.path().join("logs");
+    let (session, log_path) =
+        Session::create_in_directory_with_level(&logs, Component::Core, Level::Trace)
+            .expect("sessione trace sintetica");
+
+    let result = session.scoped(|| {
+        build_database(
+            &config,
+            std::slice::from_ref(&document),
+            &CuratedMetadata::default(),
+            &[],
+            &[extracted],
+        )
+    });
+    let result = result.expect("database sintetico");
+    drop(session);
+
+    let connection = Connection::open(result.path).expect("database sintetico leggibile");
+    let stored: String = connection
+        .query_row(
+            "SELECT text FROM document_text WHERE document_id = ?1",
+            [&document.document_id],
+            |row| row.get(0),
+        )
+        .expect("testo sintetico conservato nel database");
+    assert_eq!(stored, text);
+
+    let log = fs::read_to_string(log_path).expect("log trace sintetico");
+    assert!(!log.contains(secret));
+    assert!(log.contains("secret_omitted"));
+    assert!(log.contains("database::build_database_impl"));
+    assert!(log.contains("database::insert_documents_impl"));
 }
 
 #[test]

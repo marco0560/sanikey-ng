@@ -2,6 +2,7 @@
 
 use super::validate_runtime_privacy;
 use crate::config::{AccountsConfig, parse_accounts_data};
+use crate::logging::{Component, Level, Session};
 use crate::metadata::prepare_people_metadata;
 use crate::operation::ErrorCode;
 use std::fs;
@@ -11,6 +12,7 @@ use toml::Value;
 
 struct TestDirectory(PathBuf);
 
+/// Gestisce una root temporanea per le verifiche di privacy.
 impl TestDirectory {
     fn new() -> Self {
         static NEXT_ID: AtomicUsize = AtomicUsize::new(0);
@@ -28,6 +30,7 @@ impl TestDirectory {
     }
 }
 
+/// Pulisce la root sintetica alla fine del test.
 impl Drop for TestDirectory {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.0);
@@ -177,4 +180,76 @@ fn metadata_preflight_preserves_original_documents_without_git() {
         fs::read(original).expect("originale dopo preflight"),
         source_bytes
     );
+}
+
+#[test]
+fn runtime_privacy_trace_records_representable_inputs_and_result_only_at_trace_level() {
+    for (level, expect_trace) in [(Level::Events, false), (Level::Trace, true)] {
+        let directory = TestDirectory::new();
+        let root = directory.path().join("repository");
+        fs::create_dir_all(&root).expect("root sintetica");
+        let private_path = "docs/private-synthetic-path-marker";
+        let config = config_with_paths(
+            &root,
+            [
+                Path::new(private_path),
+                Path::new("local-data/patient-a/metadata"),
+                Path::new("generated/api_key=synthetic-privacy-config-secret"),
+            ],
+        );
+        let (session, path) = Session::create_in_directory_with_level(
+            &directory.path().join("logs"),
+            Component::Core,
+            level,
+        )
+        .expect("sessione sintetica");
+
+        let result = session.scoped(|| validate_runtime_privacy(&config, &root));
+        let error = result.expect_err("il percorso docs sintetico va rifiutato");
+        assert_eq!(error.code(), ErrorCode::Privacy);
+        let log = fs::read_to_string(path).expect("log sintetico leggibile");
+
+        if expect_trace {
+            assert!(log.contains("privacy::validate_runtime_privacy"));
+            assert!(log.contains("privacy::resolve_non_strict"));
+            assert!(log.contains("privacy::privacy_error"));
+            assert!(log.contains("\"name\":\"message\""));
+            assert!(log.contains("\"code\":\"privacy\""));
+            assert!(log.contains("private-synthetic-path-marker"));
+            assert!(log.contains("secret_omitted"));
+            assert!(!log.contains("synthetic-privacy-config-secret"));
+            assert!(log.contains("rust_debug"));
+            assert!(log.contains("Patient A"));
+            assert!(log.contains("contenuto versionato del repository"));
+        } else {
+            assert!(!log.contains("privacy::validate_runtime_privacy"));
+            assert!(!log.contains("private-synthetic-path-marker"));
+            assert!(!log.contains("contenuto versionato del repository"));
+        }
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn runtime_privacy_trace_encodes_non_utf8_paths_as_unix_bytes() {
+    use std::ffi::OsString;
+    use std::os::unix::ffi::OsStringExt;
+
+    let directory = TestDirectory::new();
+    let non_utf8_path = PathBuf::from(OsString::from_vec(vec![b'p', 0xff]));
+    let (session, log_path) = Session::create_in_directory_with_level(
+        &directory.path().join("logs"),
+        Component::Core,
+        Level::Trace,
+    )
+    .expect("sessione trace sintetica");
+
+    let normalized = session.scoped(|| super::normalize(&non_utf8_path));
+
+    assert_eq!(normalized, non_utf8_path);
+    let log = fs::read_to_string(log_path).expect("log sintetico leggibile");
+    assert!(log.contains("privacy::normalize"));
+    assert!(log.contains("unix_bytes"));
+    assert!(log.contains("255"));
+    assert!(!log.contains("unsupported_type"));
 }

@@ -30,6 +30,13 @@ Per dati binari, grandi, non rappresentabili o non disponibili al punto di
 osservazione, l'implementazione deve documentare le eventuali omissioni e
 segnalarle nel log; non deve presentare come completa una traccia incompleta.
 
+Integrazione approvata dal manutentore: un modello di presentazione condiviso
+classifica testo pubblico, privato, non classificabile e segreti identificati.
+Il contenuto non classificabile segue le regole dei dati privati registrabili;
+i segreti identificati sono esclusi. Una password inserita in un campo generico
+non è distinguibile con certezza da altri dati. Il testo interno delle finestre
+native di sistema non è necessariamente disponibile alla GUI SaniKey.
+
 ## Attivazione e conservazione
 
 - La GUI offre la scelta del livello per la sessione e mostra il percorso del

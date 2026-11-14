@@ -2,6 +2,10 @@
 
 use super::super::AccountsConfig;
 use super::super::sections::{parse_ingestion, parse_search, parse_ui, parse_usb};
+use super::super::trace::{
+    trace_accounts_result, trace_config_call, trace_optional_path, trace_path_result,
+    trace_toml_value,
+};
 use super::super::validation::{error, reject_unknown, require_table};
 use super::paths::{absolute_non_strict, expand_path, path_base};
 use super::person::{parse_person, validate_enabled_usb_uuid, validate_unique_ids};
@@ -29,12 +33,21 @@ const GLOBAL_FIELDS: &[&str] = &[
 /// Restituisce `ErrorCode::Configuration` se non è possibile leggere la directory
 /// corrente quando `repo_root` è `None`.
 pub fn default_accounts_path(repo_root: Option<&Path>) -> Result<PathBuf, OperationError> {
+    trace_config_call!(
+        "config::default_accounts_path",
+        ["repo_root" => &repo_root],
+        paths [],
+        fields ["repo_root_native_path" => trace_optional_path(repo_root)],
+        result_paths trace_path_result,
+        || {
     let root = match repo_root {
         Some(path) => path.to_path_buf(),
         None => std::env::current_dir()
             .map_err(|cause| error(format!("directory corrente non disponibile: {cause}")))?,
     };
     Ok(root.join("config").join("accounts.toml"))
+        }
+    )
 }
 
 /// Carica e valida un file TOML di account.
@@ -45,6 +58,12 @@ pub fn default_accounts_path(repo_root: Option<&Path>) -> Result<PathBuf, Operat
 /// contiene TOML non valido o viola il contratto delle sezioni account.
 pub fn load_accounts(path: impl AsRef<Path>) -> Result<AccountsConfig, OperationError> {
     let provided = path.as_ref();
+    trace_config_call!(
+        "config::load_accounts",
+        [],
+        paths ["path" => provided],
+        result_paths trace_accounts_result,
+        || {
     let expanded = expand_path(provided);
     let resolved = match fs::canonicalize(&expanded) {
         Ok(path) if path.is_file() => path,
@@ -69,6 +88,8 @@ pub fn load_accounts(path: impl AsRef<Path>) -> Result<AccountsConfig, Operation
         ))
     })?;
     parse_accounts_data(&value, &resolved)
+        }
+    )
 }
 
 /// Valida una struttura TOML già analizzata e risolve i percorsi relativi.
@@ -86,6 +107,13 @@ pub fn parse_accounts_data(
     path: impl AsRef<Path>,
 ) -> Result<AccountsConfig, OperationError> {
     let config_path = path.as_ref();
+    trace_config_call!(
+        "config::parse_accounts_data",
+        [],
+        paths ["path" => config_path],
+        fields ["data" => trace_toml_value(data)],
+        result_paths trace_accounts_result,
+        || {
     let root = require_table(data, "configurazione")?;
     reject_unknown(root, ROOT_FIELDS, "configurazione")?;
 
@@ -152,4 +180,6 @@ pub fn parse_accounts_data(
         ingestion: global_ingestion,
         usb: global_usb,
     })
+        }
+    )
 }

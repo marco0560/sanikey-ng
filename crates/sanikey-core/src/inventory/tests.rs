@@ -2,6 +2,7 @@
 
 use super::{find_duplicate_documents, scan_document_inventory, scan_documents, sha256_file};
 use crate::config::{IngestionConfig, PersonConfig, SearchConfig, UiConfig};
+use crate::logging::{Component, Level, Session};
 use crate::operation::ErrorCode;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -9,6 +10,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 struct TestDirectory(PathBuf);
 
+/// Gestisce la root temporanea usata dalle fixture d'inventario.
 impl TestDirectory {
     fn new() -> Self {
         static NEXT_ID: AtomicUsize = AtomicUsize::new(0);
@@ -26,6 +28,7 @@ impl TestDirectory {
     }
 }
 
+/// Rimuove i file della fixture quando il test termina.
 impl Drop for TestDirectory {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.0);
@@ -45,6 +48,31 @@ fn person(root: &Path) -> PersonConfig {
         search: SearchConfig::default(),
         ingestion: IngestionConfig::default(),
     }
+}
+
+#[test]
+fn inventory_error_trace_redacts_secret_like_debug_text_without_changing_error() {
+    let directory = TestDirectory::new();
+    let (session, log_path) = Session::create_in_directory_with_level(
+        &directory.path().join("logs"),
+        Component::Core,
+        Level::Trace,
+    )
+    .expect("sessione trace sintetica");
+    let message = "password = synthetic-inventory-secret";
+    let error = session.scoped(|| {
+        super::filesystem_error(
+            message,
+            Path::new("synthetic.txt"),
+            std::io::Error::other("errore sintetico"),
+        )
+    });
+    assert!(error.message().contains(message));
+    drop(session);
+
+    let log = fs::read_to_string(log_path).expect("log sintetico leggibile");
+    assert!(log.contains("secret_omitted"));
+    assert!(!log.contains("synthetic-inventory-secret"));
 }
 
 #[test]
@@ -277,4 +305,103 @@ fn digest_read_errors_keep_a_configuration_error_and_path_context() {
 
     assert_eq!(error.code(), ErrorCode::Configuration);
     assert!(error.message().contains("documento-assente.txt"));
+}
+
+#[cfg(unix)]
+#[test]
+fn inventory_trace_preserves_non_unicode_paths_and_is_off_at_events_level() {
+    use std::os::unix::ffi::OsStringExt;
+
+    use crate::logging::{Component, Level, Session};
+
+    for level in [Level::Events, Level::Trace] {
+        let directory = TestDirectory::new();
+        let person = person(directory.path());
+        fs::create_dir_all(&person.source_documents).expect("root documenti sintetico");
+        let weird_name = std::ffi::OsString::from_vec(b"nonunicode-\xff.txt".to_vec());
+        fs::write(person.source_documents.join(weird_name), b"synthetic").expect("file sintetico");
+        fs::write(
+            person.source_documents.join("duplicate-a.txt"),
+            b"same bytes",
+        )
+        .expect("primo duplicato sintetico");
+        fs::write(
+            person.source_documents.join("duplicate-b.txt"),
+            b"same bytes",
+        )
+        .expect("secondo duplicato sintetico");
+        fs::create_dir_all(person.source_documents.join("nested"))
+            .expect("directory annidata sintetica");
+        fs::write(
+            person.source_documents.join("nested/extra.txt"),
+            b"nested bytes",
+        )
+        .expect("file annidato sintetico");
+        let (session, log_path) = Session::create_in_directory_with_level(
+            &directory.path().join("logs"),
+            Component::Core,
+            level,
+        )
+        .expect("sessione sintetica");
+
+        let (documents, duplicates) = session.scoped(|| {
+            let documents = scan_document_inventory(&person).expect("inventario sintetico");
+            let duplicates = find_duplicate_documents(&documents);
+            (documents, duplicates)
+        });
+        assert_eq!(documents.len(), 4);
+        assert_eq!(duplicates.len(), 1);
+        drop(session);
+
+        let log = fs::read_to_string(log_path).expect("log sintetico leggibile");
+        if level == Level::Trace {
+            assert!(log.contains("inventory::scan_document_inventory"));
+            assert!(log.contains("inventory::collect_files"));
+            assert!(log.contains("inventory::document_record"));
+            assert!(log.contains("inventory::find_duplicate_documents"));
+            assert!(log.contains("unix_bytes"));
+            assert!(log.contains("nonunicode-"));
+            let records = log
+                .lines()
+                .map(|line| serde_json::from_str::<serde_json::Value>(line).expect("JSON valido"))
+                .collect::<Vec<_>>();
+            let calls = records
+                .iter()
+                .filter(|record| {
+                    record["type"] == "function_enter"
+                        && record["function"] == "inventory::collect_files"
+                })
+                .collect::<Vec<_>>();
+            assert!(calls.iter().any(|record| {
+                record["arguments"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|argument| {
+                        argument["name"] == "depth" && argument["content"]["value"]["value"] == "0"
+                    })
+            }));
+            assert!(calls.iter().any(|record| {
+                record["arguments"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|argument| {
+                        argument["name"] == "depth" && argument["content"]["value"]["value"] == "1"
+                    })
+            }));
+            for call in calls {
+                let exit = records
+                    .iter()
+                    .find(|record| {
+                        record["type"] == "function_exit" && record["call_id"] == call["call_id"]
+                    })
+                    .expect("uscita correlata via call_id");
+                assert!(exit["result"]["value"]["value"]["files_length_after"].is_u64());
+            }
+        } else {
+            assert!(!log.contains("inventory::"));
+            assert!(!log.contains("patient-a"));
+        }
+    }
 }

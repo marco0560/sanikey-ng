@@ -1,7 +1,12 @@
 //! Estrazione del testo digitale PDF e OCR per pagine scansionate.
 
+use crate::logging::{
+    Component, TraceField, TraceOmission, TraceValue, trace_current, trace_json_value,
+    trace_sensitive_text,
+};
 use crate::metadata::DocumentRecord;
 use pdfium_render::prelude::{PdfPageObjectCommon, PdfPageObjectsCommon, PdfRenderConfig, Pdfium};
+use serde_json::{Value, json};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -9,6 +14,66 @@ use std::process::{Command, Stdio};
 const MIN_PDF_TEXT_CHARACTERS: usize = 40;
 const SCANNED_PDF_PAGE_IMAGE_COVERAGE: f32 = 0.90;
 const OCR_TARGET_WIDTH: i32 = 2550;
+
+macro_rules! trace_pdf_call {
+    ($function:literal, [$($field:expr),* $(,)?], $body:expr, $output:expr) => {{
+        let trace = trace_current(Component::Core, $function, || vec![$($field),*]);
+        let result = run_pdf_body(|| $body);
+        if let Some(trace) = trace {
+            let output = $output(&result);
+            let _ = trace.finish(TraceValue::Data(json!({
+                "output": output.to_json(),
+            })));
+        }
+        result
+    }};
+}
+
+fn run_pdf_body<T>(body: impl FnOnce() -> T) -> T {
+    body()
+}
+
+fn trace_document(document: &DocumentRecord) -> TraceValue {
+    trace_json_value(&json!({
+        "document_id": document.document_id,
+        "patient_id": document.patient_id,
+        "path": TraceValue::path(&document.path).to_json(),
+        "title": document.title,
+        "category": document.category,
+        "kind": document.kind,
+        "sha256": document.sha256,
+        "date": document.date,
+        "series": document.series,
+        "tags": document.tags,
+        "origin": document.origin,
+        "container_id": document.container_id,
+        "internal_path": document.internal_path,
+    }))
+}
+
+fn trace_spans(spans: &[TextPageSpan]) -> TraceValue {
+    TraceValue::Data(Value::Array(
+        spans
+            .iter()
+            .map(|span| {
+                json!({
+                    "page_number": span.page_number,
+                    "character_start": span.character_start,
+                    "character_end": span.character_end,
+                })
+            })
+            .collect(),
+    ))
+}
+
+fn trace_extracted(extracted: &ExtractedText) -> TraceValue {
+    trace_json_value(&json!({
+        "document_id": extracted.document_id,
+        "text": extracted.text,
+        "warnings": extracted.warnings,
+        "page_spans": trace_spans(&extracted.page_spans).to_json(),
+    }))
+}
 
 /// Intervallo di testo estratto da una pagina PDF, con offset Unicode.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -48,7 +113,12 @@ pub struct PdfExtractionOptions {
 /// pagina è coperta per almeno il 90% da una singola immagine. Non esegue OCR
 /// diretto sui file immagine sorgente né modifica il PDF.
 pub fn extract_pdf_text(document: &DocumentRecord) -> ExtractedText {
-    extract_pdf_text_with_options(document, PdfExtractionOptions::default())
+    trace_pdf_call!(
+        "pdf::extract_pdf_text",
+        [TraceField::new("document", trace_document(document))],
+        extract_pdf_text_with_options(document, PdfExtractionOptions::default()),
+        |result: &ExtractedText| trace_extracted(result)
+    )
 }
 
 /// Estrae il testo PDF applicando controlli espliciti di forzatura OCR.
@@ -56,115 +126,157 @@ pub fn extract_pdf_text_with_options(
     document: &DocumentRecord,
     options: PdfExtractionOptions,
 ) -> ExtractedText {
-    let mut digital = extract_digital_pdf_text(document);
-    let sufficient_text = has_sufficient_pdf_text(&digital.text);
-    if sufficient_text && !options.force_pdf_ocr {
-        return digital;
-    }
+    trace_pdf_call!(
+        "pdf::extract_pdf_text_with_options",
+        [
+            TraceField::new("document", trace_document(document)),
+            TraceField::new("options", TraceValue::data(format!("{options:#?}"))),
+        ],
+        {
+            let mut digital = extract_digital_pdf_text(document);
+            let sufficient_text = has_sufficient_pdf_text(&digital.text);
+            if sufficient_text && !options.force_pdf_ocr {
+                return digital;
+            }
 
-    let ocr = match extract_pdf_ocr_text(
-        &document.document_id,
-        &document.path,
-        sufficient_text && options.force_pdf_ocr,
-    ) {
-        Ok(ocr) => ocr,
-        Err(error) => {
-            digital.warnings.retain(|warning| {
+            let ocr = match extract_pdf_ocr_text(
+                &document.document_id,
+                &document.path,
+                sufficient_text && options.force_pdf_ocr,
+            ) {
+                Ok(ocr) => ocr,
+                Err(error) => {
+                    digital.warnings.retain(|warning| {
                 warning != "il testo PDF digitale è insufficiente e l'OCR non è ancora disponibile"
             });
-            if !sufficient_text {
-                digital.warnings.push(format!(
-                    "testo PDF insufficiente; OCR non riuscito: {error}"
-                ));
-            } else if options.force_pdf_ocr {
-                digital
-                    .warnings
-                    .push(format!("OCR PDF forzato non riuscito: {error}"));
+                    if !sufficient_text {
+                        digital.warnings.push(format!(
+                            "testo PDF insufficiente; OCR non riuscito: {error}"
+                        ));
+                    } else if options.force_pdf_ocr {
+                        digital
+                            .warnings
+                            .push(format!("OCR PDF forzato non riuscito: {error}"));
+                    }
+                    return digital;
+                }
+            };
+
+            if !ocr.attempted {
+                return digital;
             }
-            return digital;
-        }
-    };
 
-    if !ocr.attempted {
-        return digital;
-    }
-
-    let mut result = ocr.extracted;
-    result.warnings = digital
-        .warnings
-        .into_iter()
-        .filter(|warning| {
-            warning != "il testo PDF digitale è insufficiente e l'OCR non è ancora disponibile"
-        })
-        .collect();
-    result.warnings.extend(ocr.warnings);
-    result
+            let mut result = ocr.extracted;
+            result.warnings = digital
+                .warnings
+                .into_iter()
+                .filter(|warning| {
+                    warning
+                        != "il testo PDF digitale è insufficiente e l'OCR non è ancora disponibile"
+                })
+                .collect();
+            result.warnings.extend(ocr.warnings);
+            result
+        },
+        |result: &ExtractedText| trace_extracted(result)
+    )
 }
 
 fn extract_digital_pdf_text(document: &DocumentRecord) -> ExtractedText {
-    let mut result = ExtractedText {
-        document_id: document.document_id.clone(),
-        text: String::new(),
-        warnings: Vec::new(),
-        page_spans: Vec::new(),
-    };
-    let pdf = match lopdf::Document::load(&document.path) {
-        Ok(pdf) => pdf,
-        Err(error) => {
-            result
-                .warnings
-                .push(format!("impossibile leggere il PDF digitale: {error}"));
-            return result;
-        }
-    };
-    let pages = pdf.get_pages();
-    if pages.is_empty() {
-        result
-            .warnings
-            .push("il PDF non contiene pagine".to_owned());
-        return result;
-    }
-    for (index, page_number) in pages.keys().enumerate() {
-        let page_text = match pdf.extract_text(&[*page_number]) {
-            Ok(text) => text,
-            Err(error) => {
-                result.warnings.push(format!(
-                    "impossibile estrarre il testo PDF della pagina {page_number}: {error}"
-                ));
+    trace_pdf_call!(
+        "pdf::extract_digital_pdf_text",
+        [
+            TraceField::new("document", trace_document(document)),
+            TraceField::new(
+                "pdf_file_bytes",
+                TraceValue::Omitted(TraceOmission::ExternalComponent)
+            ),
+        ],
+        {
+            let mut result = ExtractedText {
+                document_id: document.document_id.clone(),
+                text: String::new(),
+                warnings: Vec::new(),
+                page_spans: Vec::new(),
+            };
+            let pdf = match lopdf::Document::load(&document.path) {
+                Ok(pdf) => pdf,
+                Err(error) => {
+                    result
+                        .warnings
+                        .push(format!("impossibile leggere il PDF digitale: {error}"));
+                    return result;
+                }
+            };
+            let pages = pdf.get_pages();
+            if pages.is_empty() {
+                result
+                    .warnings
+                    .push("il PDF non contiene pagine".to_owned());
                 return result;
             }
-        };
-        if index > 0 {
-            result.text.push('\n');
-        }
-        let start = result.text.chars().count();
-        result.text.push_str(&page_text);
-        let end = result.text.chars().count();
-        result.page_spans.push(TextPageSpan {
-            page_number: *page_number as usize,
-            character_start: start,
-            character_end: end,
-        });
-    }
-    if !has_sufficient_pdf_text(&result.text) {
-        result.warnings.push(
-            "il testo PDF digitale è insufficiente e l'OCR non è ancora disponibile".to_owned(),
-        );
-    }
-    result
+            for (index, page_number) in pages.keys().enumerate() {
+                let page_text = match pdf.extract_text(&[*page_number]) {
+                    Ok(text) => text,
+                    Err(error) => {
+                        result.warnings.push(format!(
+                            "impossibile estrarre il testo PDF della pagina {page_number}: {error}"
+                        ));
+                        return result;
+                    }
+                };
+                if index > 0 {
+                    result.text.push('\n');
+                }
+                let start = result.text.chars().count();
+                result.text.push_str(&page_text);
+                let end = result.text.chars().count();
+                result.page_spans.push(TextPageSpan {
+                    page_number: *page_number as usize,
+                    character_start: start,
+                    character_end: end,
+                });
+            }
+            if !has_sufficient_pdf_text(&result.text) {
+                result.warnings.push(
+                    "il testo PDF digitale è insufficiente e l'OCR non è ancora disponibile"
+                        .to_owned(),
+                );
+            }
+            result
+        },
+        |result: &ExtractedText| trace_extracted(result)
+    )
 }
 
 fn has_sufficient_pdf_text(text: &str) -> bool {
-    text.chars()
-        .filter(|character| !character.is_whitespace())
-        .count()
-        >= MIN_PDF_TEXT_CHARACTERS
+    trace_pdf_call!(
+        "pdf::has_sufficient_pdf_text",
+        [TraceField::new("text", trace_sensitive_text(text))],
+        text.chars()
+            .filter(|character| !character.is_whitespace())
+            .count()
+            >= MIN_PDF_TEXT_CHARACTERS,
+        |result: &bool| TraceValue::data(*result)
+    )
 }
 
+#[derive(Debug)]
 struct OcrExtraction {
     extracted: ExtractedText,
     warnings: Vec<String>,
     attempted: bool,
+}
+
+fn trace_ocr_result(result: &Result<OcrExtraction, String>) -> TraceValue {
+    TraceValue::Data(json!(match result {
+        Ok(ocr) => json!({
+            "extracted": trace_extracted(&ocr.extracted).to_json(),
+            "warnings": ocr.warnings,
+            "attempted": ocr.attempted,
+        }),
+        Err(error) => json!({"error": trace_sensitive_text(error).to_json()}),
+    }))
 }
 
 fn extract_pdf_ocr_text(
@@ -172,167 +284,265 @@ fn extract_pdf_ocr_text(
     path: &Path,
     require_scanned_pdf: bool,
 ) -> Result<OcrExtraction, String> {
-    let pdfium = bind_pdfium()?;
-    let document = pdfium
-        .load_pdf_from_file(path, None)
-        .map_err(|error| format!("PDFium non può aprire il PDF: {error}"))?;
-    if document.pages().is_empty() {
-        return Err("il PDF non contiene pagine".to_owned());
-    }
+    trace_pdf_call!(
+        "pdf::extract_pdf_ocr_text",
+        [
+            TraceField::new("document_id", TraceValue::data(document_id)),
+            TraceField::new("path", TraceValue::path(path)),
+            TraceField::new("require_scanned_pdf", TraceValue::data(require_scanned_pdf)),
+            TraceField::new(
+                "pdf_file_bytes",
+                TraceValue::Omitted(TraceOmission::ExternalComponent)
+            ),
+            TraceField::new(
+                "pdfium_document_handle",
+                TraceValue::Omitted(TraceOmission::ExternalComponent)
+            ),
+        ],
+        {
+            let pdfium = bind_pdfium()?;
+            let document = pdfium
+                .load_pdf_from_file(path, None)
+                .map_err(|error| format!("PDFium non può aprire il PDF: {error}"))?;
+            if document.pages().is_empty() {
+                return Err("il PDF non contiene pagine".to_owned());
+            }
 
-    for (index, page) in document.pages().iter().enumerate() {
-        let page_area = page.width().value * page.height().value;
-        if page_area <= 0.0 {
-            return Err(format!("area non valida nella pagina {}", index + 1));
-        }
-        let largest_image_area = page
-            .objects()
-            .iter()
-            .filter_map(|object| {
-                object.as_image_object().and_then(|image| {
-                    let bounds = image.bounds().ok()?;
-                    let left = bounds.left().value.max(0.0);
-                    let right = bounds.right().value.min(page.width().value);
-                    let bottom = bounds.bottom().value.max(0.0);
-                    let top = bounds.top().value.min(page.height().value);
-                    let width = (right - left).max(0.0);
-                    let height = (top - bottom).max(0.0);
-                    (width > 0.0 && height > 0.0).then_some(width * height)
-                })
+            for (index, page) in document.pages().iter().enumerate() {
+                let page_area = page.width().value * page.height().value;
+                if page_area <= 0.0 {
+                    return Err(format!("area non valida nella pagina {}", index + 1));
+                }
+                let largest_image_area = page
+                    .objects()
+                    .iter()
+                    .filter_map(|object| {
+                        object.as_image_object().and_then(|image| {
+                            let bounds = image.bounds().ok()?;
+                            let left = bounds.left().value.max(0.0);
+                            let right = bounds.right().value.min(page.width().value);
+                            let bottom = bounds.bottom().value.max(0.0);
+                            let top = bounds.top().value.min(page.height().value);
+                            let width = (right - left).max(0.0);
+                            let height = (top - bottom).max(0.0);
+                            (width > 0.0 && height > 0.0).then_some(width * height)
+                        })
+                    })
+                    .fold(0.0_f32, f32::max);
+                if require_scanned_pdf
+                    && largest_image_area / page_area < SCANNED_PDF_PAGE_IMAGE_COVERAGE
+                {
+                    return Ok(OcrExtraction {
+                        extracted: empty_extraction(document_id),
+                        warnings: Vec::new(),
+                        attempted: false,
+                    });
+                }
+            }
+
+            let tesseract = find_tesseract()?;
+            let glossary = GlossaryFile::create()?;
+            let mut extracted = empty_extraction(document_id);
+            let mut warnings = Vec::new();
+            for (index, page) in document.pages().iter().enumerate() {
+                let bitmap = page
+                    .render_with_config(
+                        &PdfRenderConfig::new()
+                            .set_target_width(OCR_TARGET_WIDTH)
+                            .set_maximum_height(3500),
+                    )
+                    .map_err(|error| {
+                        format!("render pagina {} non riuscito: {error}", index + 1)
+                    })?;
+                let ppm = rgba_to_ppm(&bitmap.as_rgba_bytes(), bitmap.width(), bitmap.height())?;
+                let output = run_tesseract(&tesseract, &glossary.path, &ppm, index + 1)?;
+                let page_text = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+                if index > 0 {
+                    extracted.text.push('\n');
+                }
+                let start = extracted.text.chars().count();
+                extracted.text.push_str(&page_text);
+                let end = extracted.text.chars().count();
+                extracted.page_spans.push(TextPageSpan {
+                    page_number: index + 1,
+                    character_start: start,
+                    character_end: end,
+                });
+            }
+            if !has_sufficient_pdf_text(&extracted.text) {
+                warnings.push("l'OCR non ha restituito testo sufficiente".to_owned());
+            }
+            Ok(OcrExtraction {
+                extracted,
+                warnings,
+                attempted: true,
             })
-            .fold(0.0_f32, f32::max);
-        if require_scanned_pdf && largest_image_area / page_area < SCANNED_PDF_PAGE_IMAGE_COVERAGE {
-            return Ok(OcrExtraction {
-                extracted: empty_extraction(document_id),
-                warnings: Vec::new(),
-                attempted: false,
-            });
-        }
-    }
-
-    let tesseract = find_tesseract()?;
-    let glossary = GlossaryFile::create()?;
-    let mut extracted = empty_extraction(document_id);
-    let mut warnings = Vec::new();
-    for (index, page) in document.pages().iter().enumerate() {
-        let bitmap = page
-            .render_with_config(
-                &PdfRenderConfig::new()
-                    .set_target_width(OCR_TARGET_WIDTH)
-                    .set_maximum_height(3500),
-            )
-            .map_err(|error| format!("render pagina {} non riuscito: {error}", index + 1))?;
-        let ppm = rgba_to_ppm(&bitmap.as_rgba_bytes(), bitmap.width(), bitmap.height())?;
-        let output = run_tesseract(&tesseract, &glossary.path, &ppm, index + 1)?;
-        let page_text = String::from_utf8_lossy(&output.stdout).trim().to_owned();
-        if index > 0 {
-            extracted.text.push('\n');
-        }
-        let start = extracted.text.chars().count();
-        extracted.text.push_str(&page_text);
-        let end = extracted.text.chars().count();
-        extracted.page_spans.push(TextPageSpan {
-            page_number: index + 1,
-            character_start: start,
-            character_end: end,
-        });
-    }
-    if !has_sufficient_pdf_text(&extracted.text) {
-        warnings.push("l'OCR non ha restituito testo sufficiente".to_owned());
-    }
-    Ok(OcrExtraction {
-        extracted,
-        warnings,
-        attempted: true,
-    })
+        },
+        trace_ocr_result
+    )
 }
 
 fn empty_extraction(document_id: &str) -> ExtractedText {
-    ExtractedText {
-        document_id: document_id.to_owned(),
-        text: String::new(),
-        warnings: Vec::new(),
-        page_spans: Vec::new(),
-    }
+    trace_pdf_call!(
+        "pdf::empty_extraction",
+        [TraceField::new(
+            "document_id",
+            TraceValue::data(document_id)
+        )],
+        ExtractedText {
+            document_id: document_id.to_owned(),
+            text: String::new(),
+            warnings: Vec::new(),
+            page_spans: Vec::new(),
+        },
+        |result: &ExtractedText| trace_extracted(result)
+    )
 }
 
 fn bind_pdfium() -> Result<Pdfium, String> {
-    let library_name = Pdfium::pdfium_platform_library_name_at_path("");
-    let mut candidates = Vec::new();
-    if let Some(explicit) = std::env::var_os("SANIKEY_PDFIUM_LIBRARY") {
-        candidates.push(PathBuf::from(explicit));
-    }
-    if let Ok(executable) = std::env::current_exe()
-        && let Some(directory) = executable.parent()
-    {
-        candidates.push(directory.join(&library_name));
-    }
-    for candidate in candidates {
-        match Pdfium::bind_to_library(&candidate) {
-            Ok(bindings) => return Ok(Pdfium::new(bindings)),
-            Err(pdfium_render::prelude::PdfiumError::PdfiumLibraryBindingsAlreadyInitialized) => {
-                return Ok(Pdfium::default());
+    let explicit_library = std::env::var_os("SANIKEY_PDFIUM_LIBRARY");
+    let mut candidates_for_trace = Vec::new();
+    let mut system_binding_attempted = false;
+    let trace = trace_current(Component::Core, "pdf::bind_pdfium", || {
+        vec![TraceField::new(
+            "requested_library_path",
+            explicit_library
+                .as_deref()
+                .map(|path| TraceValue::path(Path::new(&path)))
+                .unwrap_or_else(|| TraceValue::data(Value::Null)),
+        )]
+    });
+    let result = (|| {
+        let library_name = Pdfium::pdfium_platform_library_name_at_path("");
+        let mut candidates = Vec::new();
+        if let Some(explicit) = explicit_library {
+            let path = PathBuf::from(explicit);
+            candidates_for_trace.push(path.clone());
+            candidates.push(path);
+        }
+        if let Ok(executable) = std::env::current_exe()
+            && let Some(directory) = executable.parent()
+        {
+            let path = directory.join(&library_name);
+            candidates_for_trace.push(path.clone());
+            candidates.push(path);
+        }
+        for candidate in candidates {
+            match Pdfium::bind_to_library(&candidate) {
+                Ok(bindings) => return Ok(Pdfium::new(bindings)),
+                Err(
+                    pdfium_render::prelude::PdfiumError::PdfiumLibraryBindingsAlreadyInitialized,
+                ) => {
+                    return Ok(Pdfium::default());
+                }
+                Err(_) => {}
             }
-            Err(_) => {}
         }
-    }
-    match Pdfium::bind_to_system_library() {
-        Ok(bindings) => Ok(Pdfium::new(bindings)),
-        Err(pdfium_render::prelude::PdfiumError::PdfiumLibraryBindingsAlreadyInitialized) => {
-            Ok(Pdfium::default())
+        system_binding_attempted = true;
+        match Pdfium::bind_to_system_library() {
+            Ok(bindings) => Ok(Pdfium::new(bindings)),
+            Err(pdfium_render::prelude::PdfiumError::PdfiumLibraryBindingsAlreadyInitialized) => {
+                Ok(Pdfium::default())
+            }
+            Err(error) => Err(format!(
+                "libreria PDFium non disponibile; collocarla accanto all'eseguibile o impostare SANIKEY_PDFIUM_LIBRARY: {error}"
+            )),
         }
-        Err(error) => Err(format!(
-            "libreria PDFium non disponibile; collocarla accanto all'eseguibile o impostare SANIKEY_PDFIUM_LIBRARY: {error}"
-        )),
+    })();
+    if let Some(trace) = trace {
+        let _ = trace.finish(TraceValue::Data(json!({
+            "return": match &result { Ok(_) => json!("bound"), Err(error) => trace_sensitive_text(error).to_json() },
+            "output": {
+                "candidate_paths": candidates_for_trace.iter().map(|path| TraceValue::path(path).to_json()).collect::<Vec<_>>(),
+                "binding_handle": TraceValue::Omitted(TraceOmission::ExternalComponent).to_json(),
+                "system_binding_attempted": system_binding_attempted,
+                "system_library_resolution": TraceValue::Omitted(TraceOmission::ExternalComponent).to_json(),
+            },
+        })));
     }
+    result
 }
 
 fn find_tesseract() -> Result<PathBuf, String> {
-    if let Some(explicit) = std::env::var_os("SANIKEY_TESSERACT") {
-        let path = PathBuf::from(explicit);
-        if path.is_file() {
-            return Ok(path);
-        }
-        return Err("SANIKEY_TESSERACT non indica un eseguibile disponibile".to_owned());
-    }
-    let search_path = std::env::var_os("PATH").unwrap_or_default();
-    for directory in std::env::split_paths(&search_path) {
-        let executable = directory.join(if cfg!(windows) {
-            "tesseract.exe"
-        } else {
-            "tesseract"
-        });
-        if executable.is_file() {
-            return Ok(executable);
-        }
-    }
-    Err("eseguibile Tesseract non disponibile nel PATH".to_owned())
+    let explicit_tesseract = std::env::var_os("SANIKEY_TESSERACT");
+    let mut search_directories = Vec::new();
+    trace_pdf_call!(
+        "pdf::find_tesseract",
+        [TraceField::new(
+            "explicit_executable",
+            explicit_tesseract
+                .as_deref()
+                .map(|path| TraceValue::path(Path::new(&path)))
+                .unwrap_or_else(|| TraceValue::data(Value::Null)),
+        )],
+        {
+            if let Some(explicit) = explicit_tesseract {
+                let path = PathBuf::from(explicit);
+                if path.is_file() {
+                    return Ok(path);
+                }
+                return Err("SANIKEY_TESSERACT non indica un eseguibile disponibile".to_owned());
+            }
+            let search_path = std::env::var_os("PATH").unwrap_or_default();
+            for directory in std::env::split_paths(&search_path) {
+                search_directories.push(directory.to_path_buf());
+                let executable = directory.join(if cfg!(windows) {
+                    "tesseract.exe"
+                } else {
+                    "tesseract"
+                });
+                if executable.is_file() {
+                    return Ok(executable);
+                }
+            }
+            Err("eseguibile Tesseract non disponibile nel PATH".to_owned())
+        },
+        |result: &Result<PathBuf, String>| TraceValue::Data(json!({
+            "selected_executable": result.as_ref().ok().map(|path| TraceValue::path(path).to_json()),
+            "search_directories": search_directories.iter().map(|path| TraceValue::path(path).to_json()).collect::<Vec<_>>(),
+            "result": result.as_ref().map(|_| json!("found")).unwrap_or_else(|error| trace_sensitive_text(error).to_json()),
+        }))
+    )
 }
 
 fn rgba_to_ppm(rgba: &[u8], width: i32, height: i32) -> Result<Vec<u8>, String> {
-    if width <= 0 || height <= 0 {
-        return Err("bitmap OCR con dimensioni non valide".to_owned());
-    }
-    let expected = usize::try_from(width)
-        .ok()
-        .and_then(|width| {
-            usize::try_from(height)
+    trace_pdf_call!(
+        "pdf::rgba_to_ppm",
+        [
+            TraceField::new("rgba", TraceValue::Data(json!(rgba))),
+            TraceField::new("width", TraceValue::data(width)),
+            TraceField::new("height", TraceValue::data(height)),
+        ],
+        {
+            if width <= 0 || height <= 0 {
+                return Err("bitmap OCR con dimensioni non valide".to_owned());
+            }
+            let expected = usize::try_from(width)
                 .ok()
-                .and_then(|height| width.checked_mul(height))
-        })
-        .and_then(|pixels| pixels.checked_mul(4))
-        .ok_or_else(|| "dimensioni bitmap OCR eccessive".to_owned())?;
-    if rgba.len() != expected {
-        return Err("dimensione bitmap OCR incoerente".to_owned());
-    }
-    let mut ppm = format!("P6\n{width} {height}\n255\n").into_bytes();
-    ppm.reserve(expected / 4 * 3);
-    let (pixels, remainder) = rgba.as_chunks::<4>();
-    debug_assert!(remainder.is_empty());
-    for pixel in pixels {
-        ppm.extend_from_slice(&pixel[..3]);
-    }
-    Ok(ppm)
+                .and_then(|width| {
+                    usize::try_from(height)
+                        .ok()
+                        .and_then(|height| width.checked_mul(height))
+                })
+                .and_then(|pixels| pixels.checked_mul(4))
+                .ok_or_else(|| "dimensioni bitmap OCR eccessive".to_owned())?;
+            if rgba.len() != expected {
+                return Err("dimensione bitmap OCR incoerente".to_owned());
+            }
+            let mut ppm = format!("P6\n{width} {height}\n255\n").into_bytes();
+            ppm.reserve(expected / 4 * 3);
+            let (pixels, remainder) = rgba.as_chunks::<4>();
+            debug_assert!(remainder.is_empty());
+            for pixel in pixels {
+                ppm.extend_from_slice(&pixel[..3]);
+            }
+            Ok(ppm)
+        },
+        |result: &Result<Vec<u8>, String>| TraceValue::Data(json!({
+            "ppm_bytes": result.as_ref().ok(),
+            "result": result.as_ref().map(|_| json!("ok")).unwrap_or_else(|error| trace_sensitive_text(error).to_json()),
+        }))
+    )
 }
 
 fn run_tesseract(
@@ -341,86 +551,160 @@ fn run_tesseract(
     ppm: &[u8],
     page_number: usize,
 ) -> Result<std::process::Output, String> {
-    let mut child = Command::new(executable)
-        .args(["stdin", "stdout", "--dpi", "300", "--user-words"])
-        .arg(glossary)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .map_err(|error| format!("avvio di Tesseract non riuscito: {error}"))?;
-    let mut stdin = child
-        .stdin
-        .take()
-        .ok_or_else(|| "input di Tesseract non disponibile".to_owned())?;
-    if let Err(error) = stdin.write_all(ppm) {
-        drop(stdin);
-        let _ = child.wait();
-        return Err(format!(
-            "invio pagina {page_number} a Tesseract non riuscito: {error}"
-        ));
+    trace_pdf_call!(
+        "pdf::run_tesseract",
+        [
+            TraceField::new("executable", TraceValue::path(executable)),
+            TraceField::new("glossary", TraceValue::path(glossary)),
+            TraceField::new("page_number", TraceValue::data(page_number)),
+            TraceField::new(
+                "argv",
+                TraceValue::Data(json!(["stdin", "stdout", "--dpi", "300", "--user-words"]))
+            ),
+            TraceField::new("stdin_ppm_bytes", trace_pdf_bytes(ppm)),
+            TraceField::new("stderr_capture", TraceValue::data(false)),
+        ],
+        {
+            let mut child = Command::new(executable)
+                .args(["stdin", "stdout", "--dpi", "300", "--user-words"])
+                .arg(glossary)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::null())
+                .spawn()
+                .map_err(|error| format!("avvio di Tesseract non riuscito: {error}"))?;
+            let mut stdin = child
+                .stdin
+                .take()
+                .ok_or_else(|| "input di Tesseract non disponibile".to_owned())?;
+            if let Err(error) = stdin.write_all(ppm) {
+                drop(stdin);
+                let _ = child.wait();
+                return Err(format!(
+                    "invio pagina {page_number} a Tesseract non riuscito: {error}"
+                ));
+            }
+            drop(stdin);
+            let output = child
+                .wait_with_output()
+                .map_err(|error| format!("attesa di Tesseract non riuscita: {error}"))?;
+            if !output.status.success() {
+                return Err(format!(
+                    "Tesseract fallito sulla pagina {page_number} con stato {}",
+                    output.status
+                ));
+            }
+            Ok(output)
+        },
+        |result: &Result<std::process::Output, String>| TraceValue::Data(match result {
+            Ok(output) => json!({
+                "status": format!("{}", output.status),
+                "stdout": trace_pdf_bytes(&output.stdout).to_json(),
+                "stderr": trace_pdf_bytes(&output.stderr).to_json(),
+            }),
+            Err(error) => json!({"error": trace_sensitive_text(error).to_json()}),
+        })
+    )
+}
+
+fn trace_pdf_bytes(bytes: &[u8]) -> TraceValue {
+    match std::str::from_utf8(bytes) {
+        Ok(text) => trace_sensitive_text(text),
+        Err(_) => TraceValue::Omitted(TraceOmission::UnsupportedType),
     }
-    drop(stdin);
-    let output = child
-        .wait_with_output()
-        .map_err(|error| format!("attesa di Tesseract non riuscita: {error}"))?;
-    if !output.status.success() {
-        return Err(format!(
-            "Tesseract fallito sulla pagina {page_number} con stato {}",
-            output.status
-        ));
-    }
-    Ok(output)
 }
 
 struct GlossaryFile {
     path: PathBuf,
 }
 
+/// Materializza e gestisce il glossario OCR temporaneo.
 impl GlossaryFile {
     fn create() -> Result<Self, String> {
         static NEXT_FILE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
         let bytes = include_bytes!("../assets/ocr/tesseract-medical-it.user-words");
-        for _ in 0..32 {
-            let sequence = NEXT_FILE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            let path = std::env::temp_dir().join(format!(
-                "sanikey-ocr-glossary-{}-{sequence}.txt",
-                std::process::id()
-            ));
-            let mut options = std::fs::OpenOptions::new();
-            options.write(true).create_new(true);
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::OpenOptionsExt;
-                options.mode(0o600);
-            }
-            match options.open(&path) {
-                Ok(mut file) => {
-                    if let Err(error) = file.write_all(bytes) {
-                        let _ = std::fs::remove_file(&path);
-                        return Err(format!("scrittura glossario OCR non riuscita: {error}"));
-                    }
-                    return Ok(Self { path });
+        let trace = trace_current(Component::Core, "pdf::GlossaryFile::create", || {
+            vec![TraceField::new(
+                "glossary_bytes",
+                TraceValue::Data(json!(bytes.as_slice())),
+            )]
+        });
+        let result = (|| {
+            for _ in 0..32 {
+                let sequence = NEXT_FILE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                let path = std::env::temp_dir().join(format!(
+                    "sanikey-ocr-glossary-{}-{sequence}.txt",
+                    std::process::id()
+                ));
+                let mut options = std::fs::OpenOptions::new();
+                options.write(true).create_new(true);
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::OpenOptionsExt;
+                    options.mode(0o600);
                 }
-                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
-                Err(error) => return Err(format!("creazione glossario OCR non riuscita: {error}")),
+                match options.open(&path) {
+                    Ok(mut file) => {
+                        if let Err(error) = file.write_all(bytes) {
+                            let _ = std::fs::remove_file(&path);
+                            return Err(format!("scrittura glossario OCR non riuscita: {error}"));
+                        }
+                        return Ok(Self { path });
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                    Err(error) => {
+                        return Err(format!("creazione glossario OCR non riuscita: {error}"));
+                    }
+                }
             }
+            Err("impossibile creare un file temporaneo per il glossario OCR".to_owned())
+        })();
+        if let Some(trace) = trace {
+            let _ = trace.finish(TraceValue::Data(json!({
+                "return": result.as_ref().map(|_| json!("created")).unwrap_or_else(|error| trace_sensitive_text(error).to_json()),
+                "output": {
+                    "path": result.as_ref().ok().map(|file| TraceValue::path(&file.path).to_json()),
+                    "byte_count": bytes.len(),
+                    "glossary_bytes_written": bytes.as_slice(),
+                },
+            })));
         }
-        Err("impossibile creare un file temporaneo per il glossario OCR".to_owned())
+        result
     }
 }
 
+/// Elimina il glossario temporaneo al termine dell'OCR.
 impl Drop for GlossaryFile {
     fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.path);
+        let trace = trace_current(Component::Core, "pdf::GlossaryFile::drop", || {
+            vec![TraceField::new("path", TraceValue::path(&self.path))]
+        });
+        let result = std::fs::remove_file(&self.path);
+        if let Some(trace) = trace {
+            let _ = trace.finish(TraceValue::Data(json!({
+                "return": result.as_ref().map(|_| json!("removed")).unwrap_or_else(|error| trace_sensitive_text(&error.to_string()).to_json()),
+                "output": {"removed": result.is_ok()},
+            })));
+        }
     }
 }
 
 /// Restituisce il numero di pagine quando il PDF è leggibile.
 pub fn pdf_page_count(document: &DocumentRecord) -> Option<usize> {
-    lopdf::Document::load(&document.path)
-        .ok()
-        .map(|pdf| pdf.get_pages().len())
+    trace_pdf_call!(
+        "pdf::pdf_page_count",
+        [
+            TraceField::new("document", trace_document(document)),
+            TraceField::new(
+                "pdf_file_bytes",
+                TraceValue::Omitted(TraceOmission::ExternalComponent)
+            ),
+        ],
+        lopdf::Document::load(&document.path)
+            .ok()
+            .map(|pdf| pdf.get_pages().len()),
+        |result: &Option<usize>| TraceValue::Data(json!(result))
+    )
 }
 
 #[cfg(test)]

@@ -7,6 +7,8 @@ use std::io;
 #[cfg(windows)]
 use std::path::Path;
 use std::path::PathBuf;
+#[cfg(any(windows, test))]
+use std::time::Instant;
 
 #[cfg(windows)]
 #[allow(unsafe_code)]
@@ -16,6 +18,7 @@ mod ffi;
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WindowsVolumeGuidPath(String);
 
+/// Espone il Volume GUID path nella forma nativa di Windows.
 impl WindowsVolumeGuidPath {
     /// Restituisce il Volume GUID path nella forma nativa restituita da Windows.
     #[must_use]
@@ -37,6 +40,59 @@ pub struct WindowsVolumeInfo {
     pub available_bytes: u64,
 }
 
+/// Osservazione sintetica di una singola chiamata Win32 effettuata da `inspect`.
+///
+/// I dati rappresentano input e output restituiti dall'API; non includono
+/// contenuti del filesystem né handle nativi.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum WindowsVolumeObservation {
+    /// Ricerca del mount path che contiene il target.
+    VolumePath {
+        target: PathBuf,
+        /// Microsecondi misurati attorno alla chiamata Win32.
+        duration_micros: u64,
+        success: bool,
+        mount_path: Option<PathBuf>,
+        error_code: Option<i32>,
+    },
+    /// Lettura del Volume GUID associato al mount path.
+    VolumeGuid {
+        mount_path: PathBuf,
+        /// Microsecondi misurati attorno alla chiamata Win32.
+        duration_micros: u64,
+        success: bool,
+        volume_guid_path: Option<String>,
+        error_code: Option<i32>,
+    },
+    /// Lettura del nome filesystem.
+    Filesystem {
+        mount_path: PathBuf,
+        /// Microsecondi misurati attorno alla chiamata Win32.
+        duration_micros: u64,
+        success: bool,
+        filesystem: Option<String>,
+        error_code: Option<i32>,
+    },
+    /// Lettura dello spazio disponibile per il chiamante.
+    AvailableSpace {
+        target: PathBuf,
+        /// Microsecondi misurati attorno alla chiamata Win32.
+        duration_micros: u64,
+        success: bool,
+        available_bytes: Option<u64>,
+        error_code: Option<i32>,
+    },
+}
+
+#[cfg(any(windows, test))]
+fn measure_call<T>(call: impl FnOnce() -> T) -> (T, u64) {
+    let started = Instant::now();
+    let result = call();
+    let duration_micros = u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX);
+    (result, duration_micros)
+}
+
+/// Provides access to the inspected Windows volume properties.
 impl WindowsVolumeInfo {
     #[cfg(windows)]
     pub(crate) fn from_api_parts(
@@ -60,6 +116,18 @@ impl WindowsVolumeInfo {
 /// nativo non è disponibile.
 #[cfg(windows)]
 pub fn inspect(target: &Path) -> io::Result<WindowsVolumeInfo> {
+    inspect_with_observer(target, |_| {})
+}
+
+/// Variante osservabile di [`inspect`] per il logger dell'applicazione.
+///
+/// Il callback riceve una voce per ogni chiamata Win32 raggiunta. `inspect`
+/// rimane la API ordinaria e usa un callback vuoto.
+#[cfg(windows)]
+pub fn inspect_with_observer(
+    target: &Path,
+    observer: impl FnMut(WindowsVolumeObservation),
+) -> io::Result<WindowsVolumeInfo> {
     if !target.is_dir() {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -67,7 +135,7 @@ pub fn inspect(target: &Path) -> io::Result<WindowsVolumeInfo> {
         ));
     }
     let absolute_target = target.canonicalize()?;
-    ffi::inspect(&absolute_target)
+    ffi::inspect(&absolute_target, observer)
 }
 
 #[cfg(any(windows, test))]
@@ -93,7 +161,7 @@ fn wide_to_string(buffer: &[u16]) -> io::Result<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::wide_to_string;
+    use super::{measure_call, wide_to_string};
     use std::io::ErrorKind;
 
     #[test]
@@ -108,5 +176,16 @@ mod tests {
             wide_to_string(&[0xd800, 0]).unwrap_err().kind(),
             ErrorKind::InvalidData
         );
+    }
+
+    #[test]
+    fn measured_call_includes_synthetic_call_duration() {
+        let (value, duration_micros) = measure_call(|| {
+            std::thread::sleep(std::time::Duration::from_millis(2));
+            17
+        });
+
+        assert_eq!(value, 17);
+        assert!(duration_micros >= 1_000);
     }
 }

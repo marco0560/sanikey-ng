@@ -1,6 +1,9 @@
+//! Fixture sintetiche per assemblaggio e validazione dell'immagine USB.
+
 use super::{assemble_usb_image, validate_usb_image};
 use crate::build::{BuildOptions, build_patient};
 use crate::config::AccountsProfile;
+use crate::logging::{Component, Level, Session};
 use crate::operation::{CancellationToken, OperationOutcome};
 use crate::usb_copy::mirror_validated_usb_image;
 #[cfg(target_os = "linux")]
@@ -13,6 +16,7 @@ static NEXT_DIRECTORY: AtomicUsize = AtomicUsize::new(0);
 
 struct TestDirectory(PathBuf);
 
+/// Gestisce la root temporanea usata dalle fixture USB.
 impl TestDirectory {
     fn new() -> Self {
         let id = NEXT_DIRECTORY.fetch_add(1, Ordering::Relaxed);
@@ -27,6 +31,7 @@ impl TestDirectory {
     }
 }
 
+/// Rimuove file e directory temporanei creati dal test.
 impl Drop for TestDirectory {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.0);
@@ -162,4 +167,106 @@ fn rejects_existing_targets_and_builds_missing_an_enabled_person() {
         )
         .is_err()
     );
+}
+
+#[test]
+fn usb_image_trace_records_full_native_paths_only_at_trace_level() {
+    use crate::logging::{Component, Level, Session};
+
+    for level in [Level::Events, Level::Trace] {
+        let directory = TestDirectory::new();
+        let profile = profile(&directory);
+        let builds = build_people(&profile);
+        let target = directory.path().join("exports/traced-image");
+        let (session, log_path) = Session::create_in_directory_with_level(
+            &directory.path().join("logs"),
+            Component::Core,
+            level,
+        )
+        .expect("sessione sintetica");
+
+        let result = session.scoped(|| {
+            let image = assemble_usb_image(profile.accounts(), &builds, &target)?;
+            validate_usb_image(&target)?;
+            Ok::<_, crate::operation::OperationError>(image)
+        });
+        assert!(result.is_ok());
+        drop(session);
+
+        let log = fs::read_to_string(log_path).expect("log sintetico leggibile");
+        if level == Level::Trace {
+            assert!(log.contains("usb_image::assemble_usb_image"));
+            assert!(log.contains("usb_image::assemble_staging"));
+            assert!(log.contains("usb_image::copy_source_documents_inventory"));
+            assert!(log.contains("usb_image::validate_usb_image"));
+            assert!(log.contains("native_paths"));
+            assert!(log.contains("patients/patient-a"));
+        } else {
+            assert!(!log.contains("usb_image::"));
+            assert!(!log.contains("patient-a"));
+        }
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn usb_image_path_projections_preserve_non_unicode_nested_paths() {
+    use std::os::unix::ffi::OsStringExt;
+
+    use super::{UsbImageResult, trace_config_paths, trace_usb_result_paths};
+
+    let directory = TestDirectory::new();
+    let profile = profile(&directory);
+    let mut config = profile.accounts().clone();
+    config.path = PathBuf::from(std::ffi::OsString::from_vec(b"accounts-\xff.toml".to_vec()));
+    config.people[0].ui.background_image = Some(PathBuf::from(std::ffi::OsString::from_vec(
+        b"image-\xfe.png".to_vec(),
+    )));
+    let config_paths = trace_config_paths(&config).to_json();
+    assert_eq!(
+        config_paths["value"]["config_path"]["value"]["encoding"],
+        "unix_bytes"
+    );
+    assert!(
+        config_paths["value"]["config_path"]["value"]["value"]
+            .as_array()
+            .unwrap()
+            .contains(&serde_json::json!(0xff))
+    );
+    let nested = config_paths["value"]["people"][0]["paths"]["value"]
+        .as_array()
+        .unwrap();
+    assert_eq!(nested[3]["path"]["value"]["encoding"], "unix_bytes");
+
+    let image = Ok(UsbImageResult {
+        root: PathBuf::from(std::ffi::OsString::from_vec(b"image-\xfd".to_vec())),
+        manifest: PathBuf::from(std::ffi::OsString::from_vec(b"manifest-\xfc.json".to_vec())),
+        patients: 1,
+        files: 2,
+        bytes: 3,
+    });
+    let image_paths = trace_usb_result_paths(&image).to_json();
+    assert_eq!(
+        image_paths["value"][0]["path"]["value"]["encoding"],
+        "unix_bytes"
+    );
+}
+
+#[test]
+fn usb_image_error_trace_redacts_secret_like_debug_text_without_changing_error() {
+    let directory = TestDirectory::new();
+    let (session, log_path) = Session::create_in_directory_with_level(
+        &directory.path().join("logs"),
+        Component::Core,
+        Level::Trace,
+    )
+    .expect("sessione trace sintetica");
+    let message = "api_key = synthetic-usb-secret";
+    let error = session.scoped(|| super::configuration_error(message));
+    assert_eq!(error.message(), message);
+    drop(session);
+
+    let log = fs::read_to_string(log_path).expect("log sintetico leggibile");
+    assert!(log.contains("secret_omitted"));
+    assert!(!log.contains("synthetic-usb-secret"));
 }

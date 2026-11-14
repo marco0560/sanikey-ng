@@ -3,12 +3,13 @@
 #![forbid(unsafe_code)]
 
 mod compare;
+mod log_inventory;
 
 use std::path::Path;
 use std::process::{Command, ExitCode};
 
 const PINNED_TOOLCHAIN: &str = "1.98.1";
-const HELP: &str = "Uso: cargo xtask <comando>\n\nComandi disponibili:\n  check             Esegue il gate locale completo\n  compare           Confronta originali, SQLite, JSON, testo o frontend\n  verify-toolchain  Verifica la toolchain Rust fissata\n";
+const HELP: &str = "Uso: cargo xtask <comando>\n\nComandi disponibili:\n  check             Esegue il gate locale completo\n  compare           Confronta originali, SQLite, JSON, testo o frontend\n  log-inventory     Elenca funzioni e chiusure Rust per la diagnostica\n  verify-toolchain  Verifica la toolchain Rust fissata\n";
 
 fn main() -> ExitCode {
     let mut args = std::env::args().skip(1);
@@ -31,6 +32,13 @@ fn main() -> ExitCode {
             Ok(()) => ExitCode::SUCCESS,
             Err(message) => {
                 eprintln!("xtask: confronto non riuscito: {message}");
+                ExitCode::FAILURE
+            }
+        },
+        Some("log-inventory") if args.next().is_none() => match log_inventory::run() {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(message) => {
+                eprintln!("xtask: inventario non riuscito: {message}");
                 ExitCode::FAILURE
             }
         },

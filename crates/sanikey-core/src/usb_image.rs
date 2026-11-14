@@ -5,6 +5,9 @@ mod tests;
 
 use crate::config::{AccountsConfig, PersonConfig};
 use crate::inventory::scan_document_inventory;
+use crate::logging::{
+    Component as LogComponent, TraceField, TraceValue, redact_secret_assignments, trace_current,
+};
 use crate::operation::{ErrorCode, OperationError};
 use crate::{build::PatientBuildResult, version};
 use chrono::Utc;
@@ -17,6 +20,176 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 static NEXT_STAGING: AtomicUsize = AtomicUsize::new(0);
+
+macro_rules! trace_usb_call {
+    ($function:literal, [$($name:literal => $value:expr),* $(,)?], paths [$($path_name:literal => $path:expr),* $(,)?], fields [$($field_name:literal => $field_value:expr),* $(,)?], result_paths $result_paths:expr, $body:expr) => {{
+        let trace = trace_current(LogComponent::Core, $function, || {
+            Vec::from([
+                $(TraceField::new($name, trace_debug($value)),)*
+                $(TraceField::new($path_name, TraceValue::path($path)),)*
+                $(TraceField::new($field_name, $field_value),)*
+            ])
+        });
+        let result = run_usb_body($body);
+        if let Some(trace) = trace {
+            let _ = trace.finish(TraceValue::Data(json!({
+                "format": "rust_debug",
+                "value": redact_secret_assignments(&format!("{result:#?}")),
+                "native_paths": $result_paths(&result).to_json(),
+            })));
+        }
+        result
+    }};
+    ($function:literal, [$($name:literal => $value:expr),* $(,)?], paths [$($path_name:literal => $path:expr),* $(,)?], fields [$($field_name:literal => $field_value:expr),* $(,)?], $body:expr) => {
+        trace_usb_call!($function, [$($name => $value),*], paths [$($path_name => $path),*], fields [$($field_name => $field_value),*], result_paths trace_no_paths, $body)
+    };
+    ($function:literal, [$($name:literal => $value:expr),* $(,)?], paths [$($path_name:literal => $path:expr),* $(,)?], result_paths $result_paths:expr, $body:expr) => {
+        trace_usb_call!($function, [$($name => $value),*], paths [$($path_name => $path),*], fields [], result_paths $result_paths, $body)
+    };
+    ($function:literal, [$($name:literal => $value:expr),* $(,)?], paths [$($path_name:literal => $path:expr),* $(,)?], $body:expr) => {
+        trace_usb_call!($function, [$($name => $value),*], paths [$($path_name => $path),*], fields [], result_paths trace_no_paths, $body)
+    };
+    ($function:literal, [$($name:literal => $value:expr),* $(,)?], result_paths $result_paths:expr, $body:expr) => {
+        trace_usb_call!($function, [$($name => $value),*], paths [], fields [], result_paths $result_paths, $body)
+    };
+    ($function:literal, [$($name:literal => $value:expr),* $(,)?], $body:expr) => {
+        trace_usb_call!($function, [$($name => $value),*], paths [], fields [], result_paths trace_no_paths, $body)
+    };
+}
+
+fn run_usb_body<R>(body: impl FnOnce() -> R) -> R {
+    body()
+}
+
+fn trace_debug<T: std::fmt::Debug + ?Sized>(value: &T) -> TraceValue {
+    TraceValue::Data(
+        json!({"format":"rust_debug","value":redact_secret_assignments(&format!("{value:#?}"))}),
+    )
+}
+
+fn trace_no_paths<T: ?Sized>(_: &T) -> TraceValue {
+    TraceValue::Data(json!([]))
+}
+
+fn trace_person_paths(person: &PersonConfig) -> TraceValue {
+    TraceValue::Data(json!([
+        {"name":"source_documents","path":TraceValue::path(&person.source_documents).to_json()},
+        {"name":"metadata_directory","path":TraceValue::path(&person.metadata_directory).to_json()},
+        {"name":"local_build","path":TraceValue::path(&person.local_build).to_json()},
+        {"name":"ui.background_image","path":person.ui.background_image.as_deref().map(TraceValue::path).map(|path| path.to_json())},
+        {"name":"search.dictionary","path":person.search.dictionary.as_deref().map(TraceValue::path).map(|path| path.to_json())}
+    ]))
+}
+
+fn trace_config_paths(config: &AccountsConfig) -> TraceValue {
+    TraceValue::Data(json!({
+        "config_path": TraceValue::path(&config.path).to_json(),
+        "people": config.people.iter().enumerate().map(|(index, person)| json!({"index":index,"id":person.id,"paths":trace_person_paths(person).to_json()})).collect::<Vec<_>>(),
+        "ui.background_image": config.ui.background_image.as_deref().map(TraceValue::path).map(|path| path.to_json()),
+        "search.dictionary": config.search.dictionary.as_deref().map(TraceValue::path).map(|path| path.to_json())
+    }))
+}
+
+fn trace_build_result_paths(build: &PatientBuildResult) -> Value {
+    json!({"patient_id":build.patient_id,"paths":[
+        {"name":"build_root","path":TraceValue::path(&build.build_root).to_json()},
+        {"name":"database","path":TraceValue::path(&build.database).to_json()},
+        {"name":"manifest","path":TraceValue::path(&build.manifest).to_json()},
+        {"name":"checksums","path":TraceValue::path(&build.checksums).to_json()},
+        {"name":"report","path":TraceValue::path(&build.report).to_json()}
+    ]})
+}
+
+fn trace_builds_paths(builds: &[PatientBuildResult]) -> TraceValue {
+    TraceValue::Data(Value::Array(
+        builds
+            .iter()
+            .enumerate()
+            .map(|(index, build)| json!({"index":index,"paths":trace_build_result_paths(build)}))
+            .collect(),
+    ))
+}
+
+fn trace_usb_result_paths(result: &Result<UsbImageResult, OperationError>) -> TraceValue {
+    TraceValue::Data(
+        result
+            .as_ref()
+            .map(|image| {
+                json!([
+                    {"name":"root","path":TraceValue::path(&image.root).to_json()},
+                    {"name":"manifest","path":TraceValue::path(&image.manifest).to_json()}
+                ])
+            })
+            .unwrap_or_else(|_| json!({"state":"error","paths":[]})),
+    )
+}
+
+fn trace_path_result(result: &Result<PathBuf, OperationError>) -> TraceValue {
+    TraceValue::Data(
+        json!({"state":if result.is_ok(){"complete"}else{"error"},"path":result.as_ref().ok().map(|path|TraceValue::path(path).to_json())}),
+    )
+}
+
+fn trace_assemble_staging_paths(
+    result: &Result<(PathBuf, usize, u64), OperationError>,
+) -> TraceValue {
+    TraceValue::Data(
+        result
+            .as_ref()
+            .map(|(manifest, _, _)| {
+                json!({
+                    "manifest_relative_path":TraceValue::path(manifest).to_json()
+                })
+            })
+            .unwrap_or_else(|_| json!({"state":"error","paths":[]})),
+    )
+}
+
+fn trace_path_results(result: &Result<Vec<PathBuf>, OperationError>) -> TraceValue {
+    TraceValue::Data(json!({
+        "state": if result.is_ok() {"complete"} else {"error"},
+        "paths": result.as_ref().ok().map(|paths| trace_path_slice(paths).to_json())
+    }))
+}
+
+fn trace_documents_paths(documents: &[crate::metadata::DocumentRecord]) -> TraceValue {
+    TraceValue::Data(Value::Array(
+        documents
+            .iter()
+            .enumerate()
+            .map(|(index, document)| {
+                json!({
+                    "index":index,
+                    "document_id":document.document_id,
+                    "path":TraceValue::path(&document.path).to_json(),
+                })
+            })
+            .collect(),
+    ))
+}
+
+fn trace_documents_result_projection(
+    result: &Result<Vec<crate::metadata::DocumentRecord>, OperationError>,
+) -> Value {
+    result
+        .as_ref()
+        .map(|documents| trace_documents_paths(documents).to_json())
+        .unwrap_or_else(|_| json!({"state":"error","paths":[]}))
+}
+
+fn trace_path_slice(paths: &[PathBuf]) -> TraceValue {
+    TraceValue::Data(Value::Array(
+        paths
+            .iter()
+            .enumerate()
+            .map(|(index, path)| json!({"index":index,"path":TraceValue::path(path).to_json()}))
+            .collect(),
+    ))
+}
+
+fn trace_string_path(value: &str) -> TraceValue {
+    TraceValue::path(Path::new(value))
+}
 
 /// Riepilogo di un'immagine USB completa per le persone abilitate.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -49,6 +222,13 @@ pub fn assemble_usb_image(
     destination: impl AsRef<Path>,
 ) -> Result<UsbImageResult, OperationError> {
     let destination = destination.as_ref();
+    trace_usb_call!(
+        "usb_image::assemble_usb_image",
+        ["config" => config, "builds" => builds],
+        paths ["destination" => destination],
+        fields ["config_native_paths" => trace_config_paths(config), "build_native_paths" => trace_builds_paths(builds)],
+        result_paths trace_usb_result_paths,
+        || {
     if !destination.is_absolute() {
         return Err(configuration_error(
             "la destinazione USB deve essere assoluta",
@@ -145,6 +325,8 @@ pub fn assemble_usb_image(
         files,
         bytes,
     })
+        }
+    )
 }
 
 /// Valida manifest, checksum, link, database e frontend di un'immagine USB.
@@ -155,6 +337,11 @@ pub fn assemble_usb_image(
 /// link assoluti/esterni o artefatti obbligatori assenti.
 pub fn validate_usb_image(target: impl AsRef<Path>) -> Result<(), OperationError> {
     let target = target.as_ref();
+    trace_usb_call!(
+        "usb_image::validate_usb_image",
+        [],
+        paths ["target" => target],
+        || {
     let metadata = fs::symlink_metadata(target)
         .map_err(|error| filesystem_error("directory immagine USB non leggibile", target, error))?;
     if metadata.file_type().is_symlink() || !metadata.is_dir() {
@@ -220,6 +407,8 @@ pub fn validate_usb_image(target: impl AsRef<Path>) -> Result<(), OperationError
         }
     }
     Ok(())
+        }
+    )
 }
 
 fn assemble_staging(
@@ -228,6 +417,13 @@ fn assemble_staging(
     builds: &BTreeMap<&str, &PatientBuildResult>,
     staging: &Path,
 ) -> Result<(PathBuf, usize, u64), OperationError> {
+    trace_usb_call!(
+        "usb_image::assemble_staging",
+        ["people" => people, "builds" => builds],
+        paths ["staging" => staging, "config_path" => &config.path],
+        fields ["config_native_paths" => trace_config_paths(config), "build_native_paths" => TraceValue::Data(Value::Array(builds.values().enumerate().map(|(index, build)| json!({"index":index,"paths":trace_build_result_paths(build)})).collect()))],
+        result_paths trace_assemble_staging_paths,
+        || {
     let exported_at = Utc::now().to_rfc3339();
     for person in people {
         let patient_root = staging.join("patients").join(&person.id);
@@ -303,10 +499,42 @@ fn assemble_staging(
         files.len() + 1,
         bytes,
     ))
+        }
+    )
 }
 
 fn copy_source_documents(person: &PersonConfig, destination: &Path) -> Result<(), OperationError> {
-    let inventory = scan_document_inventory(person)?;
+    trace_usb_call!(
+        "usb_image::copy_source_documents",
+        ["person" => person],
+        paths ["destination" => destination],
+        fields ["person_native_paths" => trace_person_paths(person)],
+        || {
+    let inventory_result = scan_document_inventory(person);
+    if let Some(trace) = trace_current(
+        LogComponent::Core,
+        "usb_image::copy_source_documents_inventory",
+        || {
+            Vec::from([
+                TraceField::new("person_native_paths", trace_person_paths(person)),
+                TraceField::new(
+                    "document_native_paths",
+                    inventory_result
+                        .as_ref()
+                        .map(|documents| trace_documents_paths(documents))
+                        .unwrap_or_else(|_| TraceValue::Data(json!({"state":"error","paths":[]}))),
+                ),
+            ])
+        },
+    ) {
+        let result = json!({
+            "format":"rust_debug",
+            "value":redact_secret_assignments(&format!("{inventory_result:#?}")),
+            "native_paths":trace_documents_result_projection(&inventory_result),
+        });
+        let _ = trace.finish(TraceValue::Data(result));
+    }
+    let inventory = inventory_result?;
     for document in inventory {
         let relative = document
             .path
@@ -327,9 +555,16 @@ fn copy_source_documents(person: &PersonConfig, destination: &Path) -> Result<()
         copy_file(&document.path, &destination.join(relative))?;
     }
     Ok(())
+        }
+    )
 }
 
 fn copy_dicom_viewers(build_root: &Path, destination: &Path) -> Result<(), OperationError> {
+    trace_usb_call!(
+        "usb_image::copy_dicom_viewers",
+        [],
+        paths ["build_root" => build_root, "destination" => destination],
+        || {
     let manifest = build_root.join("manifests/dicom_html_viewers.json");
     if !manifest.is_file() {
         return Ok(());
@@ -339,6 +574,33 @@ fn copy_dicom_viewers(build_root: &Path, destination: &Path) -> Result<(), Opera
     })?;
     let payload: Value = serde_json::from_slice(&bytes)
         .map_err(|error| configuration_error(format!("manifest viewer DICOM invalido: {error}")))?;
+    if let Some(trace) = trace_current(
+        LogComponent::Core,
+        "usb_image::copy_dicom_viewers_manifest_paths",
+        || {
+            let paths = payload["viewers"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .enumerate()
+                .flat_map(|(index, viewer)| {
+                    ["source_root", "relative_root"]
+                        .into_iter()
+                        .filter_map(move |key| {
+                            viewer[key].as_str().map(|path| {
+                                json!({"index":index,"name":key,"path":trace_string_path(path).to_json()})
+                            })
+                        })
+                })
+                .collect::<Vec<_>>();
+            Vec::from([
+                TraceField::new("manifest_path", TraceValue::path(&manifest)),
+                TraceField::new("viewer_native_paths", TraceValue::Data(Value::Array(paths))),
+            ])
+        },
+    ) {
+        let _ = trace.finish(TraceValue::Data(json!({"native_paths":"captured_in_arguments"})));
+    }
     if let Some(viewers) = payload["viewers"].as_array() {
         for viewer in viewers {
             let (Some(study_id), Some(source_root), Some(relative_root)) = (
@@ -357,6 +619,8 @@ fn copy_dicom_viewers(build_root: &Path, destination: &Path) -> Result<(), Opera
         }
     }
     Ok(())
+        }
+    )
 }
 
 fn write_usb_info(
@@ -365,6 +629,12 @@ fn write_usb_info(
     patient_root: &Path,
     exported_at: &str,
 ) -> Result<(), OperationError> {
+    trace_usb_call!(
+        "usb_image::write_usb_info",
+        ["config" => config, "person" => person, "exported_at" => &exported_at],
+        paths ["patient_root" => patient_root],
+        fields ["config_native_paths" => trace_config_paths(config), "person_native_paths" => trace_person_paths(person)],
+        || {
     let path = patient_root.join("web/usb-info.js");
     let payload = json!({
         "schema_version": 1,
@@ -382,9 +652,17 @@ fn write_usb_info(
         .map_err(|error| filesystem_error("directory frontend non creabile", parent, error))?;
     fs::write(&path, format!("window.SANIKEY_USB_INFO = {serialized};\n"))
         .map_err(|error| filesystem_error("impossibile scrivere usb-info.js", &path, error))
+        }
+    )
 }
 
 fn write_root_index(people: &[&PersonConfig], root: &Path) -> Result<(), OperationError> {
+    trace_usb_call!(
+        "usb_image::write_root_index",
+        ["people" => people],
+        paths ["root" => root],
+        fields ["people_native_paths" => TraceValue::Data(Value::Array(people.iter().enumerate().map(|(index, person)| json!({"index":index,"paths":trace_person_paths(person).to_json()})).collect()))],
+        || {
     let asset_dir = root.join("assets");
     fs::create_dir_all(&asset_dir)
         .map_err(|error| filesystem_error("directory asset USB non creabile", &asset_dir, error))?;
@@ -409,9 +687,16 @@ fn write_root_index(people: &[&PersonConfig], root: &Path) -> Result<(), Operati
     );
     fs::write(&index, html)
         .map_err(|error| filesystem_error("impossibile scrivere l'indice USB", &index, error))
+        }
+    )
 }
 
 fn validate_patient_links(root: &Path, id: &str) -> Result<(), OperationError> {
+    trace_usb_call!(
+        "usb_image::validate_patient_links",
+        ["id" => &id],
+        paths ["root" => root],
+        || {
     let patient = root.join("patients").join(id);
     for required in [
         patient.join("medical_archive.db"),
@@ -470,9 +755,12 @@ fn validate_patient_links(root: &Path, id: &str) -> Result<(), OperationError> {
         }
     }
     Ok(())
+        }
+    )
 }
 
 fn validate_root_links(root: &Path) -> Result<(), OperationError> {
+    trace_usb_call!("usb_image::validate_root_links", [], paths ["root" => root], || {
     let index = root.join("index.html");
     let content = fs::read_to_string(&index)
         .map_err(|error| filesystem_error("indice USB non leggibile", &index, error))?;
@@ -486,10 +774,14 @@ fn validate_root_links(root: &Path) -> Result<(), OperationError> {
         validate_local_href(root, root, src)?;
     }
     Ok(())
+    })
 }
 
 fn frontend_hrefs(value: &Value) -> Vec<&str> {
-    match value {
+    let trace = trace_current(LogComponent::Core, "usb_image::frontend_hrefs", || {
+        Vec::from([TraceField::new("value", trace_debug(value))])
+    });
+    let result = match value {
         Value::Object(object) => object
             .iter()
             .flat_map(|(key, value)| {
@@ -505,10 +797,19 @@ fn frontend_hrefs(value: &Value) -> Vec<&str> {
             .collect(),
         Value::Array(values) => values.iter().flat_map(frontend_hrefs).collect(),
         _ => Vec::new(),
+    };
+    if let Some(trace) = trace {
+        let _ = trace.finish(trace_debug(&result));
     }
+    result
 }
 
 fn validate_local_href(base: &Path, allowed_root: &Path, href: &str) -> Result<(), OperationError> {
+    trace_usb_call!(
+        "usb_image::validate_local_href",
+        ["href" => &href],
+        paths ["base" => base, "allowed_root" => allowed_root],
+        || {
     if href.contains(':') || href.starts_with('/') || href.starts_with('\\') {
         return Err(configuration_error(format!(
             "link USB assoluto o esterno: {href}"
@@ -537,18 +838,36 @@ fn validate_local_href(base: &Path, allowed_root: &Path, href: &str) -> Result<(
         )));
     }
     Ok(())
+        }
+    )
 }
 
 fn quoted_attribute_values<'a>(html: &'a str, prefix: &str) -> Vec<&'a str> {
-    html.match_indices(prefix)
+    let trace = trace_current(
+        LogComponent::Core,
+        "usb_image::quoted_attribute_values",
+        || {
+            Vec::from([
+                TraceField::new("html", trace_debug(html)),
+                TraceField::new("prefix", trace_debug(&prefix)),
+            ])
+        },
+    );
+    let result = html
+        .match_indices(prefix)
         .filter_map(|(start, _)| {
             let value = &html[start + prefix.len()..];
             value.find('"').map(|end| &value[..end])
         })
-        .collect()
+        .collect::<Vec<_>>();
+    if let Some(trace) = trace {
+        let _ = trace.finish(trace_debug(&result));
+    }
+    result
 }
 
 fn percent_decode(value: &str) -> Result<String, OperationError> {
+    trace_usb_call!("usb_image::percent_decode", ["value" => &value], || {
     let mut bytes = Vec::with_capacity(value.len());
     let input = value.as_bytes();
     let mut offset = 0;
@@ -571,16 +890,20 @@ fn percent_decode(value: &str) -> Result<String, OperationError> {
     }
     String::from_utf8(bytes)
         .map_err(|_| configuration_error("percorso UTF-8 invalido nel link USB"))
+    })
 }
 
 fn copy_tree_if_present(source: &Path, target: &Path) -> Result<(), OperationError> {
+    trace_usb_call!("usb_image::copy_tree_if_present", [], paths ["source" => source, "target" => target], || {
     if source.is_dir() {
         copy_tree(source, target)?;
     }
     Ok(())
+    })
 }
 
 fn copy_tree(source: &Path, target: &Path) -> Result<(), OperationError> {
+    trace_usb_call!("usb_image::copy_tree", [], paths ["source" => source, "target" => target], || {
     fs::create_dir_all(target)
         .map_err(|error| filesystem_error("directory export non creabile", target, error))?;
     let mut entries = fs::read_dir(source)
@@ -608,9 +931,11 @@ fn copy_tree(source: &Path, target: &Path) -> Result<(), OperationError> {
         }
     }
     Ok(())
+    })
 }
 
 fn copy_file(source: &Path, target: &Path) -> Result<(), OperationError> {
+    trace_usb_call!("usb_image::copy_file", [], paths ["source" => source, "target" => target], || {
     let parent = target
         .parent()
         .ok_or_else(|| configuration_error("file export senza directory padre"))?;
@@ -619,9 +944,11 @@ fn copy_file(source: &Path, target: &Path) -> Result<(), OperationError> {
     fs::copy(source, target)
         .map_err(|error| filesystem_error("copia artefatto USB fallita", target, error))?;
     Ok(())
+    })
 }
 
 fn collect_files(root: &Path) -> Result<Vec<PathBuf>, OperationError> {
+    trace_usb_call!("usb_image::collect_files", [], paths ["root" => root], result_paths trace_path_results, || {
     let mut pending = vec![root.to_path_buf()];
     let mut files = Vec::new();
     while let Some(directory) = pending.pop() {
@@ -653,9 +980,11 @@ fn collect_files(root: &Path) -> Result<Vec<PathBuf>, OperationError> {
     }
     files.sort();
     Ok(files)
+    })
 }
 
 fn sha256_file(path: &Path) -> Result<String, OperationError> {
+    trace_usb_call!("usb_image::sha256_file", [], paths ["path" => path], || {
     let mut file = File::open(path)
         .map_err(|error| filesystem_error("file USB non leggibile", path, error))?;
     let mut digest = Sha256::new();
@@ -670,9 +999,11 @@ fn sha256_file(path: &Path) -> Result<String, OperationError> {
         digest.update(&buffer[..length]);
     }
     Ok(format!("{:x}", digest.finalize()))
+    })
 }
 
 fn safe_relative_path(value: &str) -> Result<PathBuf, OperationError> {
+    trace_usb_call!("usb_image::safe_relative_path", ["value" => &value], paths [], fields ["input_native_path" => trace_string_path(value)], result_paths trace_path_result, || {
     if value.is_empty() || value.contains('\\') || value.starts_with('/') {
         return Err(configuration_error(format!(
             "percorso USB non relativo: {value}"
@@ -688,35 +1019,47 @@ fn safe_relative_path(value: &str) -> Result<PathBuf, OperationError> {
         )));
     }
     Ok(path.to_path_buf())
+    })
 }
 
 fn normalize_relative(path: &Path) -> String {
+    trace_usb_call!("usb_image::normalize_relative", [], paths ["path" => path], || {
     path.components()
         .map(|component| component.as_os_str().to_string_lossy())
         .collect::<Vec<_>>()
         .join("/")
+    })
 }
 
 fn overlaps(left: &Path, right: &Path) -> bool {
-    left.starts_with(right) || right.starts_with(left)
+    trace_usb_call!("usb_image::overlaps", [], paths ["left" => left, "right" => right], || {
+        left.starts_with(right) || right.starts_with(left)
+    })
 }
 
 fn escape_html(value: &str) -> String {
+    trace_usb_call!("usb_image::escape_html", ["value" => &value], || {
     value
         .replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
         .replace('"', "&quot;")
         .replace('\'', "&#39;")
+    })
 }
 
 fn filesystem_error(context: &str, path: &Path, error: std::io::Error) -> OperationError {
+    trace_usb_call!("usb_image::filesystem_error", ["context" => &context, "error" => &error], paths ["path" => path], || {
     OperationError::new(
         ErrorCode::Configuration,
         format!("{context} {}: {error}", path.display()),
     )
+    })
 }
 
 fn configuration_error(message: impl Into<String>) -> OperationError {
-    OperationError::new(ErrorCode::Configuration, message)
+    let message = message.into();
+    trace_usb_call!("usb_image::configuration_error", ["message" => &message], || {
+        OperationError::new(ErrorCode::Configuration, message)
+    })
 }

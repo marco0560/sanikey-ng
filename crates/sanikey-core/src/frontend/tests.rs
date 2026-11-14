@@ -1,7 +1,9 @@
+//! Fixture sintetiche per il generatore del frontend offline.
+
 use super::{
     APP_JS, CHART_JS, CHART_LICENSE, CHART_NAVIGATION_JS, EXTENDED_CHART_TEMPLATE, INDEX_TEMPLATE,
     MATERIAL_WEB_CSS, MATERIAL_WEB_JS, PARAMETER_CHART_JS, SANKEY_LOGO, STYLE_CSS, UI_HELPER_JS,
-    build_frontend,
+    build_frontend, write_bytes,
 };
 use crate::config::{IngestionConfig, PersonConfig, SearchConfig, UiConfig};
 use serde_json::Value;
@@ -12,6 +14,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 struct TestDirectory(PathBuf);
 
+/// Gestisce le directory di output temporanee dei test frontend.
 impl TestDirectory {
     fn new() -> Self {
         static NEXT_ID: AtomicUsize = AtomicUsize::new(0);
@@ -32,6 +35,7 @@ impl TestDirectory {
     }
 }
 
+/// Elimina le directory temporanee alla fine dei test.
 impl Drop for TestDirectory {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.0);
@@ -169,6 +173,99 @@ fn frontend_generator_copies_background_and_serializes_usb_info() {
     assert_eq!(payload["usb_uuid"], "uuid-\"sintetico\"");
     assert_eq!(payload["sanikey_version"], crate::version());
     assert!(payload["exported_at"].is_null());
+}
+
+#[test]
+fn synthetic_trace_captures_frontend_inputs_outputs_and_native_paths_while_events_omit_them() {
+    use crate::logging::{Component, Level, Session};
+
+    let directory = TestDirectory::new();
+    let background = directory.path().join("synthetic-background.bin");
+    fs::write(&background, [0, 17, 255]).expect("sfondo sintetico");
+
+    for (suffix, level) in [("events", Level::Events), ("trace", Level::Trace)] {
+        let logging = directory.path().join(format!("logs-{suffix}"));
+        let (session, log_path) =
+            Session::create_in_directory_with_level(&logging, Component::Core, level)
+                .expect("sessione sintetica");
+        let mut config = person(directory.path());
+        config.local_build = directory.path().join(format!("generated-{suffix}"));
+        config.display_name = "Synthetic <private> & name".to_owned();
+        config.ui.subtitle =
+            "Synthetic private subtitle\npassword = synthetic-frontend-secret; dettaglio conservato"
+                .to_owned();
+        config.usb_uuid = "synthetic-volume-uuid".to_owned();
+        config.ui.background_image = Some(background.clone());
+
+        let result = session
+            .scoped(|| {
+                let projected_asset = config.local_build.join("synthetic-asset.txt");
+                let bytes = b"private asset; api_key = synthetic-asset-secret";
+                write_bytes(&projected_asset, bytes).expect("scrittura asset sintetico");
+                assert_eq!(fs::read(&projected_asset).expect("asset scritto"), bytes);
+                build_frontend(&config)
+            })
+            .expect("frontend sintetico");
+        assert!(
+            fs::read_to_string(&result.index)
+                .expect("indice sintetico")
+                .contains("synthetic-frontend-secret")
+        );
+        drop(session);
+
+        let contents = fs::read_to_string(log_path).expect("log sintetico");
+        if level == Level::Trace {
+            assert!(contents.contains("frontend::build_frontend"));
+            assert!(contents.contains("frontend::render_template"));
+            assert!(contents.contains("frontend::escape_html"));
+            assert!(contents.contains("frontend::write_text"));
+            assert!(contents.contains("frontend::write_bytes"));
+            assert!(contents.contains("frontend::copy_file"));
+            assert!(contents.contains("Synthetic private subtitle"));
+            assert!(contents.contains("secret_omitted"));
+            assert!(!contents.contains("synthetic-frontend-secret"));
+            assert!(contents.contains("synthetic-volume-uuid"));
+            assert!(contents.contains("Synthetic <private> & name"));
+            assert!(contents.contains("synthetic-background.bin"));
+            assert!(contents.contains("transferred_contents"));
+            assert!(contents.contains("bytes_copied"));
+            assert!(contents.contains("external_component"));
+            assert!(contents.contains("\"bytes_copied\":3"));
+            assert!(contents.contains("private asset"));
+            assert!(contents.contains("secret_omitted"));
+            assert!(!contents.contains("synthetic-asset-secret"));
+        } else {
+            assert!(!contents.contains("function_enter"));
+            assert!(!contents.contains("Synthetic private subtitle"));
+            assert!(!contents.contains("synthetic-volume-uuid"));
+            assert!(!contents.contains("synthetic-background.bin"));
+        }
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn trace_encodes_non_unicode_frontend_paths_losslessly() {
+    use crate::logging::{Component, Level, Session};
+    use std::os::unix::ffi::OsStringExt;
+
+    let directory = TestDirectory::new();
+    let logs = directory.path().join("logs");
+    let (session, log_path) =
+        Session::create_in_directory_with_level(&logs, Component::Core, Level::Trace)
+            .expect("sessione trace sintetica");
+    let mut config = person(directory.path());
+    config.local_build = directory
+        .path()
+        .join(std::ffi::OsString::from_vec(b"build-\xff".to_vec()));
+    session
+        .scoped(|| build_frontend(&config))
+        .expect("frontend con path nativo");
+    drop(session);
+
+    let log = fs::read_to_string(log_path).expect("log trace sintetico");
+    assert!(log.contains("unix_bytes"));
+    assert!(log.contains("255"));
 }
 
 #[test]

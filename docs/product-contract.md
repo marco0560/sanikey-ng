@@ -32,6 +32,11 @@ della matrice iniziale di parità è già verificato in Rust.
 - Gli originali DICOM restano disponibili; le anteprime non sono diagnostiche.
 - Le immagini sorgente non ricevono OCR diretto; l'OCR PDF è una funzione distinta.
 - Il campione Python resta operativo fino all'approvazione della transizione.
+- La registrazione diagnostica è facoltativa e disattivata all'avvio. Il
+  livello eventi esclude dati privati; diagnostica e traccia possono contenerli
+  e richiedono un'attivazione consapevole. I segreti identificati sono esclusi.
+  La diagnostica comprende il testo mostrato dalla GUI SaniKey; eventuali
+  limiti di osservazione e della traccia sono dichiarati all'operatore.
 
 ## Compatibilità e differenze consentite
 

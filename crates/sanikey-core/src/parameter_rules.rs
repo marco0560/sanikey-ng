@@ -1,6 +1,10 @@
 //! Caricamento e validazione delle regole curate per i parametri clinici.
 
 use crate::config::SearchDictionary;
+use crate::logging::{
+    Component, TraceField, TraceValue, redact_secret_assignments, trace_current,
+    trace_sensitive_text, trace_toml_value,
+};
 use crate::metadata::{ObservationPoint, ObservationSeries};
 use crate::operation::{ErrorCode, OperationError};
 use crate::parameter_slices::{DiscoverySettings, ParameterCandidate, normalize_label};
@@ -11,6 +15,44 @@ use std::fs;
 use std::path::Path;
 use toml::{Table, Value};
 use unicode_normalization::UnicodeNormalization;
+
+macro_rules! trace_parameter_rules_call {
+    ($function:literal, [$($name:literal => $value:expr),* $(,)?], fields [$($field_name:literal => $field_value:expr),* $(,)?], $body:expr) => {{
+        let trace = trace_current(Component::Core, $function, || {
+            Vec::from([
+                $(TraceField::new($name, trace_debug(&$value)),)*
+                $(TraceField::new($field_name, $field_value),)*
+            ])
+        });
+        let result = run_parameter_rules_body($body);
+        if let Some(trace) = trace {
+            let _ = trace.finish(trace_debug(&result));
+        }
+        result
+    }};
+    ($function:literal, [$($name:literal => $value:expr),* $(,)?], $body:expr) => {
+        trace_parameter_rules_call!($function, [$($name => $value),*], fields [], $body)
+    };
+}
+
+fn run_parameter_rules_body<R>(body: impl FnOnce() -> R) -> R {
+    body()
+}
+
+fn trace_debug<T: std::fmt::Debug + ?Sized>(value: &T) -> TraceValue {
+    TraceValue::Data(serde_json::json!({
+        "format":"rust_debug",
+        "value":redact_secret_assignments(&format!("{value:#?}")),
+    }))
+}
+
+fn trace_path(path: &Path) -> TraceValue {
+    TraceValue::path(path)
+}
+
+fn trace_text(value: &str) -> TraceValue {
+    trace_sensitive_text(value)
+}
 
 const FORMATS: &[&str] = &[
     "integer",
@@ -160,6 +202,7 @@ pub fn build_parameter_slices(
     candidates: &[ParameterCandidate],
     rules: &ParameterRules,
 ) -> ParameterBuildResult {
+    trace_parameter_rules_call!("parameter_rules::build_parameter_slices", ["candidates" => candidates, "rules" => rules], || {
     let mut result = ParameterBuildResult::default();
     let mut resolved = BTreeMap::new();
     let rules_by_id = rules
@@ -283,6 +326,7 @@ pub fn build_parameter_slices(
     });
     result.series.sort_by(|left, right| left.id.cmp(&right.id));
     result
+    })
 }
 
 /// Valuta candidati contro regole abilitate senza creare punti o applicare conversioni.
@@ -297,6 +341,7 @@ pub fn evaluate_parameter_candidates(
     candidates: &[ParameterCandidate],
     rules: &[ParameterRule],
 ) -> Vec<RuleDecision> {
+    trace_parameter_rules_call!("parameter_rules::evaluate_parameter_candidates", ["candidates" => candidates, "rules" => rules], || {
     let mut decisions = Vec::new();
     for candidate in candidates {
         let mut matches = Vec::new();
@@ -332,9 +377,11 @@ pub fn evaluate_parameter_candidates(
         ))
     });
     decisions
+    })
 }
 
 fn evaluate_rule(candidate: &ParameterCandidate, rule: &ParameterRule) -> Option<String> {
+    trace_parameter_rules_call!("parameter_rules::evaluate_rule", ["candidate" => candidate, "rule" => rule], || {
     let label = normalized_nfkc(&candidate.normalized_label);
     if !rule
         .synonyms
@@ -410,16 +457,20 @@ fn evaluate_rule(candidate: &ParameterCandidate, rule: &ParameterRule) -> Option
         return Some("REJECTED_EXCLUDED_CONTEXT".into());
     }
     Some(accepted.into())
+    })
 }
 
 fn normalized_nfkc(value: &str) -> String {
-    normalize_label(&value.nfkc().collect::<String>())
+    trace_parameter_rules_call!("parameter_rules::normalized_nfkc", [], fields ["value" => trace_text(value)], || {
+        normalize_label(&value.nfkc().collect::<String>())
+    })
 }
 
 fn value_and_unit(
     candidate: &ParameterCandidate,
     rule: &ParameterRule,
 ) -> Result<(Decimal, Option<String>), &'static str> {
+    trace_parameter_rules_call!("parameter_rules::value_and_unit", ["candidate" => candidate, "rule" => rule], || {
     let Some(format) = candidate.number_format.as_deref() else {
         return Err("REJECTED_NUMBER_FORMAT");
     };
@@ -460,6 +511,7 @@ fn value_and_unit(
         return Err("REJECTED_UNKNOWN_UNIT");
     }
     check_range(value, Some(output_unit), rule)
+    })
 }
 
 fn check_range(
@@ -467,15 +519,18 @@ fn check_range(
     unit: Option<String>,
     rule: &ParameterRule,
 ) -> Result<(Decimal, Option<String>), &'static str> {
+    trace_parameter_rules_call!("parameter_rules::check_range", ["value" => value, "unit" => unit, "rule" => rule], || {
     if rule.minimum.is_some_and(|minimum| value < minimum)
         || rule.maximum.is_some_and(|maximum| value > maximum)
     {
         return Err("REJECTED_OUT_OF_RANGE");
     }
     Ok((value, unit))
+    })
 }
 
 fn parse_decimal(raw: &str, format: &str) -> Option<Decimal> {
+    trace_parameter_rules_call!("parameter_rules::parse_decimal", [], fields ["raw" => trace_text(raw), "format" => trace_text(format)], || {
     let canonical = match format {
         "integer" => raw.to_owned(),
         "decimal-comma" => raw.replace(',', "."),
@@ -485,13 +540,17 @@ fn parse_decimal(raw: &str, format: &str) -> Option<Decimal> {
         _ => return None,
     };
     Decimal::from_str_exact(&canonical).ok()
+    })
 }
 
 fn unit_key(value: &str) -> String {
-    normalize_unit(value).to_lowercase()
+    trace_parameter_rules_call!("parameter_rules::unit_key", [], fields ["value" => trace_text(value)], || {
+        normalize_unit(value).to_lowercase()
+    })
 }
 
 fn unit_slug(value: &str) -> String {
+    trace_parameter_rules_call!("parameter_rules::unit_slug", [], fields ["value" => trace_text(value)], || {
     let slug = value
         .to_lowercase()
         .chars()
@@ -509,11 +568,14 @@ fn unit_slug(value: &str) -> String {
     } else {
         slug.into()
     }
+    })
 }
 
 fn decimal_to_f64(value: Decimal) -> Option<f64> {
+    trace_parameter_rules_call!("parameter_rules::decimal_to_f64", ["value" => value], || {
     let converted = value.to_string().parse::<f64>().ok()?;
     converted.is_finite().then_some(converted)
+    })
 }
 
 fn resolved_series(
@@ -522,6 +584,7 @@ fn resolved_series(
     unit: Option<&str>,
     id: &str,
 ) {
+    trace_parameter_rules_call!("parameter_rules::resolved_series", ["series" => series, "rule" => rule, "unit" => unit, "id" => id], || {
     if series.iter().any(|item| item.id == id) {
         return;
     }
@@ -540,6 +603,7 @@ fn resolved_series(
             .filter(|unit| rule.canonical_unit.as_deref() != Some(*unit))
             .map(str::to_owned),
     });
+    })
 }
 
 /// Carica le regole TOML, risolvendo gli alias dal dizionario di ricerca.
@@ -556,6 +620,7 @@ pub fn load_parameter_rules(
     dictionary: &SearchDictionary,
 ) -> Result<ParameterRules, OperationError> {
     let path = path.as_ref();
+    trace_parameter_rules_call!("parameter_rules::load_parameter_rules", [], fields ["path" => trace_path(path), "dictionary" => trace_debug(dictionary)], || {
     let Ok(source) = fs::read_to_string(path) else {
         if !path.exists() {
             return Ok(ParameterRules {
@@ -571,6 +636,7 @@ pub fn load_parameter_rules(
     let data: Value = toml::from_str(&source)
         .map_err(|cause| config_error(format!("TOML non valido in {}: {cause}", path.display())))?;
     parse_parameter_rules(&data, dictionary, path)
+    })
 }
 
 /// Carica le regole comuni e sostituisce per intero quelle ridefinite dal paziente.
@@ -589,6 +655,7 @@ pub fn load_patient_parameter_rules(
 ) -> Result<ParameterRules, OperationError> {
     let common_path = common_path.as_ref();
     let patient_path = patient_path.as_ref();
+    trace_parameter_rules_call!("parameter_rules::load_patient_parameter_rules", [], fields ["common_path" => trace_path(common_path), "patient_path" => trace_path(patient_path), "dictionary" => trace_debug(dictionary)], || {
     if !common_path.is_file() {
         return Err(config_error(format!(
             "regole parametri comuni assenti: {}",
@@ -617,6 +684,7 @@ pub fn load_patient_parameter_rules(
         discovery,
         rules: rules.into_values().collect(),
     })
+    })
 }
 
 fn parse_parameter_rules(
@@ -624,6 +692,7 @@ fn parse_parameter_rules(
     dictionary: &SearchDictionary,
     path: &Path,
 ) -> Result<ParameterRules, OperationError> {
+    trace_parameter_rules_call!("parameter_rules::parse_parameter_rules", [], fields ["data" => trace_toml_value(data), "dictionary" => trace_debug(dictionary), "path" => trace_path(path)], || {
     let root = data
         .as_table()
         .ok_or_else(|| config_error(format!("file parametri non valido: {}", path.display())))?;
@@ -653,9 +722,11 @@ fn parse_parameter_rules(
         .collect::<Result<Vec<_>, _>>()?;
     rules.sort_by(|left, right| left.id.cmp(&right.id));
     Ok(ParameterRules { discovery, rules })
+    })
 }
 
 fn has_discovery(path: &Path) -> bool {
+    trace_parameter_rules_call!("parameter_rules::has_discovery", [], fields ["path" => trace_path(path)], || {
     fs::read_to_string(path)
         .ok()
         .and_then(|source| toml::from_str::<Value>(&source).ok())
@@ -665,12 +736,14 @@ fn has_discovery(path: &Path) -> bool {
                 .map(|table| table.contains_key("discovery"))
         })
         .unwrap_or(false)
+    })
 }
 
 fn parse_discovery(
     value: Option<&Value>,
     path: &Path,
 ) -> Result<DiscoverySettings, OperationError> {
+    trace_parameter_rules_call!("parameter_rules::parse_discovery", [], fields ["value" => value.map_or(TraceValue::Data(serde_json::Value::Null), trace_toml_value), "path" => trace_path(path)], || {
     let Some(value) = value else {
         return Ok(DiscoverySettings::default());
     };
@@ -701,6 +774,7 @@ fn parse_discovery(
         )));
     }
     Ok(settings)
+    })
 }
 
 fn parse_rule(
@@ -709,6 +783,7 @@ fn parse_rule(
     dictionary: &SearchDictionary,
     path: &Path,
 ) -> Result<ParameterRule, OperationError> {
+    trace_parameter_rules_call!("parameter_rules::parse_rule", [], fields ["id" => trace_text(id), "value" => trace_toml_value(value), "dictionary" => trace_debug(dictionary), "path" => trace_path(path)], || {
     let context = format!("{} parameters.{id}", path.display());
     let table = value
         .as_table()
@@ -830,6 +905,7 @@ fn parse_rule(
     let mut rule = rule;
     rule.digest = digest_rule(&rule);
     Ok(rule)
+    })
 }
 
 fn parse_conversions(
@@ -837,6 +913,7 @@ fn parse_conversions(
     path: &Path,
     id: &str,
 ) -> Result<Vec<UnitConversion>, OperationError> {
+    trace_parameter_rules_call!("parameter_rules::parse_conversions", [], fields ["value" => value.map_or(TraceValue::Data(serde_json::Value::Null), trace_toml_value), "path" => trace_path(path), "id" => trace_text(id)], || {
     let Some(value) = value else {
         return Ok(Vec::new());
     };
@@ -874,9 +951,11 @@ fn parse_conversions(
         ))
     });
     Ok(conversions)
+    })
 }
 
 fn reject_unknown(table: &Table, allowed: &[&str], context: &str) -> Result<(), OperationError> {
+    trace_parameter_rules_call!("parameter_rules::reject_unknown", [], fields ["table" => trace_toml_value(&Value::Table(table.clone())), "allowed" => trace_debug(allowed), "context" => trace_text(context)], || {
     let mut unknown = table
         .keys()
         .filter(|key| !allowed.contains(&key.as_str()))
@@ -891,6 +970,7 @@ fn reject_unknown(table: &Table, allowed: &[&str], context: &str) -> Result<(), 
             unknown.join(", ")
         )))
     }
+    })
 }
 
 fn positive(
@@ -899,6 +979,7 @@ fn positive(
     default: Option<i64>,
     path: &Path,
 ) -> Result<i64, OperationError> {
+    trace_parameter_rules_call!("parameter_rules::positive", [], fields ["table" => trace_toml_value(&Value::Table(table.clone())), "key" => trace_text(key), "default" => trace_debug(&default), "path" => trace_path(path)], || {
     let value = match table.get(key) {
         Some(value) => value.as_integer(),
         None => default,
@@ -909,6 +990,7 @@ fn positive(
             path.display()
         ))
     })
+    })
 }
 
 fn positive_usize(
@@ -917,15 +999,18 @@ fn positive_usize(
     default: Option<i64>,
     path: &Path,
 ) -> Result<usize, OperationError> {
+    trace_parameter_rules_call!("parameter_rules::positive_usize", [], fields ["table" => trace_toml_value(&Value::Table(table.clone())), "key" => trace_text(key), "default" => trace_debug(&default), "path" => trace_path(path)], || {
     usize::try_from(positive(table, key, default, path)?).map_err(|_| {
         config_error(format!(
             "{} campo {key} supera il limite supportato",
             path.display()
         ))
     })
+    })
 }
 
 fn string(value: Option<&Value>, path: &Path, key: &str) -> Result<String, OperationError> {
+    trace_parameter_rules_call!("parameter_rules::string", [], fields ["value" => value.map_or(TraceValue::Data(serde_json::Value::Null), trace_toml_value), "path" => trace_path(path), "key" => trace_text(key)], || {
     value
         .and_then(Value::as_str)
         .map(str::trim)
@@ -937,6 +1022,7 @@ fn string(value: Option<&Value>, path: &Path, key: &str) -> Result<String, Opera
                 path.display()
             ))
         })
+    })
 }
 
 fn optional_string(
@@ -944,10 +1030,13 @@ fn optional_string(
     path: &Path,
     key: &str,
 ) -> Result<Option<String>, OperationError> {
-    value.map(|_| string(value, path, key)).transpose()
+    trace_parameter_rules_call!("parameter_rules::optional_string", [], fields ["value" => value.map_or(TraceValue::Data(serde_json::Value::Null), trace_toml_value), "path" => trace_path(path), "key" => trace_text(key)], || {
+        value.map(|_| string(value, path, key)).transpose()
+    })
 }
 
 fn strings(value: Option<&Value>, path: &Path, key: &str) -> Result<Vec<String>, OperationError> {
+    trace_parameter_rules_call!("parameter_rules::strings", [], fields ["value" => value.map_or(TraceValue::Data(serde_json::Value::Null), trace_toml_value), "path" => trace_path(path), "key" => trace_text(key)], || {
     let Some(value) = value else {
         return Ok(Vec::new());
     };
@@ -962,6 +1051,7 @@ fn strings(value: Option<&Value>, path: &Path, key: &str) -> Result<Vec<String>,
         .iter()
         .map(|item| string(Some(item), path, key))
         .collect()
+    })
 }
 
 fn normalized_strings(
@@ -969,10 +1059,12 @@ fn normalized_strings(
     path: &Path,
     key: &str,
 ) -> Result<Vec<String>, OperationError> {
+    trace_parameter_rules_call!("parameter_rules::normalized_strings", [], fields ["value" => value.map_or(TraceValue::Data(serde_json::Value::Null), trace_toml_value), "path" => trace_path(path), "key" => trace_text(key)], || {
     Ok(strings(value, path, key)?
         .into_iter()
         .map(|item| normalize_label(&item))
         .collect())
+    })
 }
 
 fn decimal(
@@ -980,6 +1072,7 @@ fn decimal(
     path: &Path,
     key: &str,
 ) -> Result<Option<Decimal>, OperationError> {
+    trace_parameter_rules_call!("parameter_rules::decimal", [], fields ["value" => value.map_or(TraceValue::Data(serde_json::Value::Null), trace_toml_value), "path" => trace_path(path), "key" => trace_text(key)], || {
     let Some(value) = value else {
         return Ok(None);
     };
@@ -1005,18 +1098,22 @@ fn decimal(
         )));
     };
     Ok(Some(number))
+    })
 }
 
 fn normalize_unit(value: &str) -> String {
+    trace_parameter_rules_call!("parameter_rules::normalize_unit", [], fields ["value" => trace_text(value)], || {
     value
         .nfkc()
         .collect::<String>()
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ")
+    })
 }
 
 fn digest_rule(rule: &ParameterRule) -> String {
+    trace_parameter_rules_call!("parameter_rules::digest_rule", ["rule" => rule], || {
     let conversions = rule
         .conversions
         .iter()
@@ -1054,14 +1151,20 @@ fn digest_rule(rule: &ParameterRule) -> String {
     });
     let canonical = serde_json::to_vec(&value).expect("regola serializzabile in JSON");
     format!("{:x}", Sha256::digest(canonical))
+    })
 }
 
 fn canonical_number(value: Decimal) -> String {
-    value.to_string()
+    trace_parameter_rules_call!("parameter_rules::canonical_number", ["value" => value], || {
+        value.to_string()
+    })
 }
 
 fn config_error(message: impl Into<String>) -> OperationError {
-    OperationError::new(ErrorCode::Configuration, message)
+    let message = message.into();
+    trace_parameter_rules_call!("parameter_rules::config_error", [], fields ["message" => trace_text(&message)], || {
+        OperationError::new(ErrorCode::Configuration, message)
+    })
 }
 
 #[cfg(test)]

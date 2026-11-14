@@ -13,6 +13,7 @@ pub mod frontend;
 pub mod inventory;
 #[cfg(target_os = "linux")]
 pub mod linux_volume;
+pub mod logging;
 pub mod macos_volume;
 pub mod metadata;
 pub mod observation_imports;
@@ -47,12 +48,20 @@ pub const fn version() -> &'static str {
 /// Builds the machine-facing identity output used by the `info` command.
 #[must_use]
 pub fn project_info() -> OperationRun<String> {
-    run_operation("cli.info", &CancellationToken::default(), |_| {
+    let trace = logging::trace_current(logging::Component::Core, "project_info", Vec::new);
+    let result = run_operation("cli.info", &CancellationToken::default(), |_| {
         Ok(format!(
             "progetto=sanikey\npackage=sanikey\ncli=sanikey\nversione={}\n",
             version()
         ))
-    })
+    });
+    if let Some(trace) = trace {
+        let _ = trace.finish(logging::TraceValue::Data(serde_json::json!({
+            "format": "rust_debug",
+            "value": format!("{result:?}"),
+        })));
+    }
+    result
 }
 
 #[cfg(test)]

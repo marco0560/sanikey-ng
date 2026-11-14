@@ -1,3 +1,5 @@
+//! Fixture sintetiche per estrazione PDF digitale e OCR.
+
 use super::{
     PdfExtractionOptions, bind_pdfium, extract_pdf_text, extract_pdf_text_with_options,
     find_tesseract, pdf_page_count, run_tesseract,
@@ -12,6 +14,7 @@ static NEXT_DIRECTORY: AtomicUsize = AtomicUsize::new(0);
 
 struct TestDirectory(PathBuf);
 
+/// Gestisce i PDF sintetici e i loro percorsi temporanei.
 impl TestDirectory {
     fn new() -> Self {
         let sequence = NEXT_DIRECTORY.fetch_add(1, Ordering::Relaxed);
@@ -28,6 +31,7 @@ impl TestDirectory {
     }
 }
 
+/// Rimuove i PDF sintetici quando i test terminano.
 impl Drop for TestDirectory {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.0);
@@ -209,4 +213,100 @@ fn medical_glossary_is_canonical_and_matches_the_baseline() {
     assert_eq!(unique.len(), entries.len());
     assert!(entries.contains(&"HbA1c"));
     assert!(!entries.contains(&"HbAlc"));
+}
+
+#[test]
+fn synthetic_trace_captures_pdf_text_and_ocr_boundary_while_events_omit_it() {
+    use super::rgba_to_ppm;
+    use crate::logging::{Component, Level, Session};
+
+    let directory = TestDirectory::new();
+    let pdf_path = {
+        #[cfg(unix)]
+        {
+            use std::os::unix::ffi::OsStringExt;
+            directory
+                .0
+                .join(std::ffi::OsString::from_vec(b"synthetic-\xff.pdf".to_vec()))
+        }
+        #[cfg(not(unix))]
+        {
+            directory.0.join("synthetic.pdf")
+        }
+    };
+    fs::write(
+        &pdf_path,
+        synthetic_pdf(&[
+            "Synthetic private PDF text with enough characters to avoid OCR; password = synthetic-pdf-secret; detail retained.",
+        ]),
+    )
+    .expect("PDF sintetico");
+    let record = document(&pdf_path);
+
+    for (suffix, level) in [("events", Level::Events), ("trace", Level::Trace)] {
+        let logs = directory.0.join(format!("logs-{suffix}"));
+        let (session, log_path) =
+            Session::create_in_directory_with_level(&logs, Component::Core, level)
+                .expect("sessione sintetica");
+        session.scoped(|| {
+            let trace =
+                crate::logging::trace_current(Component::Core, "pdf::synthetic_ocr_stdout", || {
+                    vec![crate::logging::TraceField::new(
+                        "stdout",
+                        super::trace_pdf_bytes(
+                            b"api_key = synthetic-ocr-secret; private OCR output retained",
+                        ),
+                    )]
+                });
+            if let Some(trace) = trace {
+                let _ = trace.finish(crate::logging::TraceValue::data("completed"));
+            }
+        });
+        let extracted = session.scoped(|| extract_pdf_text(&record));
+        assert!(extracted.text.contains("Synthetic private PDF text"));
+        assert_eq!(session.scoped(|| pdf_page_count(&record)), Some(1));
+        let ppm = session
+            .scoped(|| rgba_to_ppm(&[10, 20, 30, 255, 40, 50, 60, 255], 2, 1))
+            .expect("PPM sintetico");
+        let tesseract = session.scoped(|| {
+            run_tesseract(
+                Path::new("/missing/sanikey-test-tesseract"),
+                Path::new("/missing/sanikey-test-glossary"),
+                &ppm,
+                1,
+            )
+        });
+        assert!(tesseract.is_err());
+        drop(session);
+
+        let log = fs::read_to_string(log_path).expect("log sintetico");
+        if level == Level::Trace {
+            assert!(log.contains("pdf::extract_pdf_text"));
+            assert!(log.contains("pdf::extract_digital_pdf_text"));
+            assert!(log.contains("pdf::has_sufficient_pdf_text"));
+            assert!(log.contains("pdf::pdf_page_count"));
+            assert!(log.contains("pdf_file_bytes"));
+            assert!(log.contains("external_component"));
+            assert!(log.contains("Synthetic private PDF text"));
+            assert!(log.contains("secret_omitted"));
+            assert!(log.contains("detail retained"));
+            assert!(log.contains("private OCR output retained"));
+            assert!(!log.contains("synthetic-pdf-secret"));
+            assert!(!log.contains("synthetic-ocr-secret"));
+            assert!(log.contains("pdf::rgba_to_ppm"));
+            assert!(log.contains("pdf::run_tesseract"));
+            assert!(log.contains("stdin_ppm_bytes"));
+            assert!(log.contains("stderr_capture"));
+            #[cfg(unix)]
+            {
+                assert!(log.contains("unix_bytes"));
+                assert!(log.contains("255"));
+            }
+        } else {
+            assert!(!log.contains("function_enter"));
+            assert!(!log.contains("Synthetic private PDF text"));
+            assert!(!log.contains("synthetic-pdf-secret"));
+            assert!(!log.contains("synthetic-"));
+        }
+    }
 }

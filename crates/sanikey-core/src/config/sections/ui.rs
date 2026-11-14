@@ -1,6 +1,9 @@
 //! UI section parsing.
 
 use super::super::UiConfig;
+use super::super::trace::{
+    trace_config_call, trace_optional_ui_paths, trace_toml_value, trace_ui_result,
+};
 use super::super::validation::{
     optional_choice, optional_color, optional_float, optional_short_string, reject_unknown,
     table_or_empty,
@@ -26,6 +29,13 @@ pub(in crate::config) fn parse_ui(
     base_dir: &Path,
     base: Option<&UiConfig>,
 ) -> Result<UiConfig, OperationError> {
+    trace_config_call!(
+        "config::parse_ui",
+        ["context" => &context, "base" => &base],
+        paths ["base_dir" => base_dir],
+        fields ["value" => trace_toml_value(value), "base_ui_native_paths" => trace_optional_ui_paths(base)],
+        result_paths trace_ui_result,
+        || {
     let table = table_or_empty(Some(value), context)?;
     reject_unknown(&table, UI_FIELDS, context)?;
     let defaults = base.cloned().unwrap_or_default();
@@ -77,4 +87,6 @@ pub(in crate::config) fn parse_ui(
             1.0,
         )?,
     })
+        }
+    )
 }

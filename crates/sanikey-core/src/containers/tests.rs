@@ -1,6 +1,10 @@
+//! Fixture sintetiche per estrazione e staging dei contenitori.
+
 use super::{is_container_path, safe_member_path, stage_container_documents};
 use crate::config::{IngestionConfig, PersonConfig, SearchConfig, UiConfig};
 use crate::inventory::scan_document_inventory;
+use crate::logging::{Component, Level, Session};
+use crate::metadata::DocumentRecord;
 use serde_json::Value;
 use std::fs;
 use std::io::{Cursor, Write};
@@ -9,6 +13,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 struct TestDirectory(PathBuf);
 
+/// Gestisce le directory temporanee create dai test contenitori.
 impl TestDirectory {
     fn new() -> Self {
         static NEXT_ID: AtomicUsize = AtomicUsize::new(0);
@@ -26,6 +31,7 @@ impl TestDirectory {
     }
 }
 
+/// Rimuove gli artefatti temporanei al termine del test.
 impl Drop for TestDirectory {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.0);
@@ -155,6 +161,159 @@ fn stages_zip_members_and_writes_a_provenance_manifest() {
     assert_eq!(manifest["patient_id"], "patient-a");
     assert_eq!(manifest["members"].as_array().expect("membri").len(), 2);
     assert!(manifest["warnings"].as_array().expect("warning").is_empty());
+}
+
+#[test]
+fn container_trace_records_archive_boundary_and_keeps_events_terse() {
+    let directory = TestDirectory::new();
+    let base_person = person(directory.path());
+    fs::create_dir_all(&base_person.source_documents).expect("directory documenti");
+    #[cfg(unix)]
+    let archive_name = {
+        use std::os::unix::ffi::OsStringExt;
+        std::ffi::OsString::from_vec(b"private-\xff.zip".to_vec())
+    };
+    #[cfg(not(unix))]
+    let archive_name = std::ffi::OsString::from("private.zip");
+
+    for (suffix, level) in [("events", Level::Events), ("trace", Level::Trace)] {
+        let mut config = base_person.clone();
+        config.local_build = directory.path().join(format!("build-{suffix}"));
+        let archive = config.source_documents.join(&archive_name);
+        write_zip(
+            &archive,
+            &[("private/report.txt", b"Synthetic private archive member")],
+        );
+        let inventory = source_inventory(&config);
+        let logs = directory.path().join(format!("logs-{suffix}"));
+        let (session, log_path) =
+            Session::create_in_directory_with_level(&logs, Component::Core, level)
+                .expect("sessione sintetica");
+        let result = session
+            .scoped(|| stage_container_documents(&config, &inventory))
+            .expect("staging archivio sintetico");
+        assert_eq!(result.documents.len(), 1);
+        assert_eq!(
+            fs::read(&result.documents[0].path).expect("membro estratto"),
+            b"Synthetic private archive member"
+        );
+        drop(session);
+
+        let log = fs::read_to_string(log_path).expect("log sintetico");
+        if level == Level::Trace {
+            assert!(log.contains("containers::stage_container_documents"));
+            assert!(log.contains("containers::extract_container"));
+            assert!(log.contains("containers::extract_zip"));
+            assert!(log.contains("archive_payload"));
+            assert!(log.contains("member_contents"));
+            assert!(log.contains("external_component"));
+            assert!(log.contains("members"));
+            assert!(log.contains("sha256"));
+            #[cfg(unix)]
+            assert!(log.contains("unix_bytes"));
+        } else {
+            assert!(!log.contains("function_enter"));
+            assert!(!log.contains("Synthetic private archive member"));
+            assert!(!log.contains("private-"));
+        }
+    }
+}
+
+#[test]
+fn trace_redacts_secret_assignments_in_member_names_and_records_impl_spans() {
+    let directory = TestDirectory::new();
+    let mut config = person(directory.path());
+    config.local_build = directory.path().join("build-trace");
+    fs::create_dir_all(&config.source_documents).expect("directory documenti sintetica");
+    let archive = config.source_documents.join("private.zip");
+    let secret = "SECRET-SYNTHETIC-MEMBER";
+    let member_name = format!("api_key={secret}/report.txt");
+    write_zip(&archive, &[("report.txt", b"contenuto sintetico")]);
+    let inventory = source_inventory(&config);
+    let logs = directory.path().join("logs");
+    let (session, log_path) =
+        Session::create_in_directory_with_level(&logs, Component::Core, Level::Trace)
+            .expect("sessione trace sintetica");
+
+    let result = session
+        .scoped(|| {
+            let listing = format!("----------\nPath = {member_name}\nSize = 19\n");
+            super::parse_7z_listing(&listing);
+            let _ = safe_member_path(&config.local_build, &member_name);
+            stage_container_documents(&config, &inventory)
+        })
+        .expect("staging ZIP sintetico");
+    assert_eq!(result.documents.len(), 1);
+    assert_eq!(
+        result.documents[0].internal_path.as_deref(),
+        Some("report.txt")
+    );
+    assert_eq!(
+        fs::read(&result.documents[0].path).unwrap(),
+        b"contenuto sintetico"
+    );
+    drop(session);
+
+    let log = fs::read_to_string(log_path).expect("log trace sintetico");
+    assert!(!log.contains(secret));
+    assert!(log.contains("secret_omitted"));
+    for function in [
+        "containers::stage_container_documents_impl",
+        "containers::extract_container_impl",
+        "containers::extract_zip_impl",
+        "containers::parse_7z_listing_impl",
+        "containers::safe_member_path_impl",
+        "containers::checked_output_path",
+        "containers::write_member",
+        "containers::create_member",
+        "containers::regular_files",
+        "containers::member_record",
+        "containers::write_manifest",
+    ] {
+        assert!(log.contains(function), "span mancante: {function}");
+    }
+}
+
+#[test]
+fn ingestion_config_trace_redacts_secret_assignments_and_keeps_private_values() {
+    let directory = TestDirectory::new();
+    let ingestion = IngestionConfig {
+        exclude_patterns: vec!["api_key=synthetic-ingestion-secret".to_owned()],
+        include_patterns: vec!["private-pattern-synthetic".to_owned()],
+    };
+    let document = DocumentRecord {
+        document_id: "document-synthetic".to_owned(),
+        patient_id: "patient-synthetic".to_owned(),
+        path: directory.path().join("document.txt"),
+        title: "Titolo privato sintetico".to_owned(),
+        category: "uncategorized".to_owned(),
+        kind: "text".to_owned(),
+        sha256: "digest-synthetic".to_owned(),
+        date: None,
+        series: None,
+        tags: Vec::new(),
+        origin: "source".to_owned(),
+        container_id: None,
+        internal_path: None,
+    };
+    let (session, log_path) = Session::create_in_directory_with_level(
+        &directory.path().join("logs"),
+        Component::Core,
+        Level::Trace,
+    )
+    .expect("sessione trace sintetica");
+
+    assert!(session.scoped(|| super::should_ingest_staged_document(&ingestion, &document)));
+    drop(session);
+
+    let contents = fs::read_to_string(log_path).expect("log sintetico");
+    assert!(
+        contents.contains("private-pattern-synthetic"),
+        "ordinary private pattern missing from trace: {contents}"
+    );
+    assert!(contents.contains("Titolo privato sintetico"));
+    assert!(contents.contains("secret_omitted"));
+    assert!(!contents.contains("synthetic-ingestion-secret"));
 }
 
 #[test]

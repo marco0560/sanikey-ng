@@ -1,8 +1,11 @@
+//! Fixture sintetiche per caricamento e applicazione delle regole.
+
 use super::{
     ParameterBuildResult, RuleDecision, build_parameter_slices, evaluate_parameter_candidates,
     load_parameter_rules, load_patient_parameter_rules,
 };
 use crate::config::SearchDictionary;
+use crate::logging::{Component, Level, Session};
 use crate::operation::ErrorCode;
 use crate::parameter_slices::ParameterCandidate;
 use indexmap::IndexMap;
@@ -14,6 +17,7 @@ static NEXT_DIRECTORY: AtomicUsize = AtomicUsize::new(0);
 
 struct TestDirectory(PathBuf);
 
+/// Gestisce i file temporanei di configurazione delle regole.
 impl TestDirectory {
     fn new() -> Self {
         let id = NEXT_DIRECTORY.fetch_add(1, Ordering::Relaxed);
@@ -26,6 +30,7 @@ impl TestDirectory {
     }
 }
 
+/// Rimuove i file di configurazione temporanei.
 impl Drop for TestDirectory {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.0);
@@ -427,4 +432,71 @@ fn normalizes_configured_unit_typography_and_applies_missing_unit_policies() {
     );
     assert_eq!(assumed.points[0].normalized_unit.as_deref(), Some("g/dL"));
     assert_eq!(assumed.series[0].id, "emoglobina--g-dl");
+}
+
+#[test]
+fn trace_records_parameter_pipeline_and_redacts_secret_assignments() {
+    for level in [Level::Events, Level::Trace] {
+        let directory = TestDirectory::new();
+        let rules_path = directory.0.join("parameters.toml");
+        fs::write(&rules_path, rule_toml("Emoglobina", 1)).expect("rule file");
+        let log_directory = directory.0.join("logs");
+        let (session, log_path) =
+            Session::create_in_directory_with_level(&log_directory, Component::Core, level)
+                .expect("synthetic log session");
+
+        session.scoped(|| {
+            let rules = load_parameter_rules(&rules_path, &dictionary()).expect("valid rules");
+            let mut input = candidate(
+                "hb",
+                "Hb: 13,7 g/dL\npassword = synthetic-parameter-rules-secret",
+            );
+            input.context = input.original_line.clone();
+            let decisions = evaluate_parameter_candidates(&[input.clone()], &rules.rules);
+            assert!(decisions[0].accepted);
+            let result = build_parameter_slices(&[input], &rules);
+            assert_eq!(result.points.len(), 1);
+        });
+        session.finish(Component::Core).expect("finish log session");
+        drop(session);
+
+        let contents = fs::read_to_string(&log_path).expect("read synthetic log");
+        if level == Level::Trace {
+            assert!(contents.contains("parameter_rules::load_parameter_rules"));
+            assert!(contents.contains("parameter_rules::evaluate_parameter_candidates"));
+            assert!(contents.contains("parameter_rules::build_parameter_slices"));
+            assert!(contents.contains("Hb: 13,7 g/dL"));
+            assert!(contents.contains("secret_omitted"));
+            assert!(!contents.contains("synthetic-parameter-rules-secret"));
+        } else {
+            assert!(!contents.contains("parameter_rules::"));
+            assert!(!contents.contains("Hb: 13,7 g/dL"));
+        }
+    }
+}
+
+#[test]
+fn trace_redacts_secret_keys_recursively_in_parsed_parameter_toml() {
+    let directory = TestDirectory::new();
+    let path = directory.0.join("parameters.toml");
+    fs::write(
+        &path,
+        "[unexpected]\ndescription = \"synthetic-config-note\"\n[unexpected.nested]\napi_key = \"synthetic-config-secret\"\n",
+    )
+    .expect("malformed synthetic rules");
+    let log_directory = directory.0.join("logs");
+    let (session, log_path) =
+        Session::create_in_directory_with_level(&log_directory, Component::Core, Level::Trace)
+            .expect("synthetic log session");
+    session.scoped(|| {
+        let error = load_parameter_rules(&path, &dictionary()).expect_err("unknown root field");
+        assert_eq!(error.code(), ErrorCode::Configuration);
+    });
+    session.finish(Component::Core).expect("finish log session");
+    drop(session);
+
+    let contents = fs::read_to_string(log_path).expect("read synthetic log");
+    assert!(contents.contains("synthetic-config-note"));
+    assert!(contents.contains("secret_omitted"));
+    assert!(!contents.contains("synthetic-config-secret"));
 }

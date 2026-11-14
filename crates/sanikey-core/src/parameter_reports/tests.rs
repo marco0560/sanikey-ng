@@ -1,7 +1,10 @@
+//! Fixture sintetiche per i report dei parametri.
+
 use super::{
     ParameterDiagnosticExtra, write_parameter_extraction_reports, write_parameter_rejections,
     write_parameter_reports,
 };
+use crate::logging::{Component, Level, Session};
 use crate::metadata::{DocumentRecord, ObservationPoint, ObservationSeries};
 use crate::parameter_rules::{ParameterBuildResult, RuleDecision};
 use crate::parameter_slices::{DiscoverySettings, discover_candidates};
@@ -14,6 +17,7 @@ static NEXT_DIRECTORY: AtomicUsize = AtomicUsize::new(0);
 
 struct TestDirectory(PathBuf);
 
+/// Gestisce la directory temporanea dei report di test.
 impl TestDirectory {
     fn new() -> Self {
         let id = NEXT_DIRECTORY.fetch_add(1, Ordering::Relaxed);
@@ -26,6 +30,7 @@ impl TestDirectory {
     }
 }
 
+/// Rimuove i report creati dalle fixture.
 impl Drop for TestDirectory {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.0);
@@ -286,4 +291,98 @@ fn writes_accepted_rejected_json_and_aligned_text_with_extra_diagnostics() {
     assert!(accepted_text.contains("ACCEPTED_CONFIGURED_SYNONYM"));
     assert!(rejected_text.contains("REJECTED_SPECIMEN_AMBIGUOUS"));
     assert!(rejected_text.contains("REJECTED_OUT_OF_RANGE"));
+}
+
+#[test]
+fn report_trace_is_private_redacts_secret_assignments_and_preserves_written_artifacts() {
+    for level in [Level::Events, Level::Trace] {
+        let directory = TestDirectory::new();
+        let mut discovery = discover_candidates(
+            &[
+                document("doc-a", "2026-01-02"),
+                document("doc-b", "2026-02-03"),
+            ],
+            &[
+                ExtractedText {
+                    document_id: "doc-a".into(),
+                    text: "Hb: 13.7 g/dL\n".into(),
+                    warnings: Vec::new(),
+                    page_spans: Vec::new(),
+                },
+                ExtractedText {
+                    document_id: "doc-b".into(),
+                    text: "Hb: 14.1 g/dL\n".into(),
+                    warnings: Vec::new(),
+                    page_spans: Vec::new(),
+                },
+            ],
+            None,
+            &DiscoverySettings::default(),
+            None,
+        )
+        .expect("synthetic discovery");
+        let secret_line = "Hb: 13.7 g/dL; password = synthetic-report-secret";
+        discovery.candidates[0].original_line = secret_line.into();
+        discovery.candidates[0].context = secret_line.into();
+        for group in &mut discovery.proposed_groups {
+            for candidate in &mut group.candidates {
+                if candidate.document_id == "doc-a" {
+                    candidate.original_line = secret_line.into();
+                    candidate.context = secret_line.into();
+                }
+            }
+        }
+
+        let log_directory = directory.0.join("logs");
+        let (session, log_path) =
+            Session::create_in_directory_with_level(&log_directory, Component::Core, level)
+                .expect("synthetic logging session");
+        let reports = directory.0.join("build");
+        session.scoped(|| {
+            let paths = write_parameter_reports(&reports, &discovery, None)
+                .expect("synthetic parameter reports");
+            let written = fs::read_to_string(paths.candidates).expect("candidate JSON");
+            assert!(written.contains("synthetic-report-secret"));
+        });
+        session.finish(Component::Core).expect("finish log session");
+        drop(session);
+
+        let contents = fs::read_to_string(log_path).expect("read synthetic log");
+        if level == Level::Trace {
+            assert!(contents.contains("parameter_reports::write_parameter_reports"));
+            assert!(contents.contains("parameter_reports::write_json"));
+            assert!(contents.contains("Hb: 13.7 g/dL"));
+            assert!(contents.contains("secret_omitted"));
+            assert!(!contents.contains("synthetic-report-secret"));
+        } else {
+            assert!(!contents.contains("parameter_reports::"));
+            assert!(!contents.contains("Hb: 13.7 g/dL"));
+        }
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn report_path_trace_keeps_non_unicode_path_bytes() {
+    use std::ffi::OsString;
+    use std::os::unix::ffi::OsStringExt;
+
+    let path = PathBuf::from(OsString::from_vec(b"/synthetic/report-\xff.json".to_vec()));
+    let result = Ok(super::ParameterReportPaths {
+        candidates: path.clone(),
+        proposed_rules: path.clone(),
+        slices_json: Some(path.clone()),
+        slices_javascript: Some(path),
+    });
+    let encoded = super::trace_parameter_report_paths(&result).to_json();
+    assert_eq!(
+        encoded["value"]["paths"]["candidates"]["value"]["encoding"],
+        "unix_bytes"
+    );
+    assert!(
+        encoded["value"]["paths"]["candidates"]["value"]["value"]
+            .as_array()
+            .unwrap()
+            .contains(&serde_json::json!(0xff))
+    );
 }

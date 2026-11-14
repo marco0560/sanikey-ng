@@ -1,5 +1,6 @@
 //! Primitive value validation.
 
+use super::super::trace::{trace_config_call, trace_toml_table};
 use super::error;
 use crate::operation::OperationError;
 use toml::{Table, Value};
@@ -10,6 +11,7 @@ pub(in crate::config) fn optional_string(
     context: &str,
     default: Option<&str>,
 ) -> Result<Option<String>, OperationError> {
+    trace_config_call!("config::validation::optional_string", ["field" => &field, "context" => &context, "default" => &default], paths [], fields ["table" => trace_toml_table(table)], || {
     match table.get(field) {
         None => Ok(default.map(str::to_owned)),
         Some(Value::String(value)) if !value.trim().is_empty() => Ok(Some(value.trim().to_owned())),
@@ -23,6 +25,7 @@ pub(in crate::config) fn optional_string(
             "{context} campo {field} deve essere una stringa non vuota"
         ))),
     }
+    })
 }
 
 pub(in crate::config) fn optional_nullable_string(
@@ -30,6 +33,7 @@ pub(in crate::config) fn optional_nullable_string(
     field: &str,
     context: &str,
 ) -> Result<Option<String>, OperationError> {
+    trace_config_call!("config::validation::optional_nullable_string", ["field" => &field, "context" => &context], paths [], fields ["table" => trace_toml_table(table)], || {
     match table.get(field) {
         None => Ok(None),
         Some(Value::String(value)) if !value.trim().is_empty() => Ok(Some(value.trim().to_owned())),
@@ -40,6 +44,7 @@ pub(in crate::config) fn optional_nullable_string(
             "{context} campo {field} deve essere una stringa non vuota o nullo"
         ))),
     }
+    })
 }
 
 pub(in crate::config) fn optional_bool(
@@ -48,6 +53,7 @@ pub(in crate::config) fn optional_bool(
     context: &str,
     default: bool,
 ) -> Result<bool, OperationError> {
+    trace_config_call!("config::validation::optional_bool", ["field" => &field, "context" => &context, "default" => &default], paths [], fields ["table" => trace_toml_table(table)], || {
     match table.get(field) {
         None => Ok(default),
         Some(Value::Boolean(value)) => Ok(*value),
@@ -55,6 +61,7 @@ pub(in crate::config) fn optional_bool(
             "{context} campo {field} deve essere booleano"
         ))),
     }
+    })
 }
 
 pub(in crate::config) fn optional_positive_integer(
@@ -63,6 +70,7 @@ pub(in crate::config) fn optional_positive_integer(
     context: &str,
     default: i64,
 ) -> Result<i64, OperationError> {
+    trace_config_call!("config::validation::optional_positive_integer", ["field" => &field, "context" => &context, "default" => &default], paths [], fields ["table" => trace_toml_table(table)], || {
     match table.get(field) {
         None => Ok(default),
         Some(Value::Integer(value)) if *value > 0 => Ok(*value),
@@ -70,6 +78,7 @@ pub(in crate::config) fn optional_positive_integer(
             "{context} campo {field} deve essere un intero positivo"
         ))),
     }
+    })
 }
 
 pub(in crate::config) fn optional_choice(
@@ -79,6 +88,7 @@ pub(in crate::config) fn optional_choice(
     choices: &[&str],
     default: &str,
 ) -> Result<String, OperationError> {
+    trace_config_call!("config::validation::optional_choice", ["field" => &field, "context" => &context, "choices" => choices, "default" => &default], paths [], fields ["table" => trace_toml_table(table)], || {
     let Some(value) = table.get(field) else {
         return Ok(default.to_owned());
     };
@@ -98,6 +108,7 @@ pub(in crate::config) fn optional_choice(
             sorted.join(", ")
         )))
     }
+    })
 }
 
 pub(in crate::config) fn optional_color(
@@ -106,6 +117,7 @@ pub(in crate::config) fn optional_color(
     context: &str,
     default: &str,
 ) -> Result<String, OperationError> {
+    trace_config_call!("config::validation::optional_color", ["field" => &field, "context" => &context, "default" => &default], paths [], fields ["table" => trace_toml_table(table)], || {
     let Some(value) = table.get(field) else {
         return Ok(default.to_owned());
     };
@@ -122,6 +134,7 @@ pub(in crate::config) fn optional_color(
             "{context} campo {field} deve essere un colore #rrggbb"
         )))
     }
+    })
 }
 
 pub(in crate::config) fn optional_short_string(
@@ -130,6 +143,7 @@ pub(in crate::config) fn optional_short_string(
     context: &str,
     default: &str,
 ) -> Result<String, OperationError> {
+    trace_config_call!("config::validation::optional_short_string", ["field" => &field, "context" => &context, "default" => &default], paths [], fields ["table" => trace_toml_table(table)], || {
     let Some(value) = table.get(field) else {
         return Ok(default.to_owned());
     };
@@ -145,6 +159,7 @@ pub(in crate::config) fn optional_short_string(
         )));
     }
     Ok(rendered.to_owned())
+    })
 }
 
 pub(in crate::config) fn optional_float(
@@ -155,6 +170,7 @@ pub(in crate::config) fn optional_float(
     minimum: f64,
     maximum: f64,
 ) -> Result<f64, OperationError> {
+    trace_config_call!("config::validation::optional_float", ["field" => &field, "context" => &context, "default" => &default, "minimum" => &minimum, "maximum" => &maximum], paths [], fields ["table" => trace_toml_table(table)], || {
     let Some(value) = table.get(field) else {
         return Ok(default);
     };
@@ -173,6 +189,7 @@ pub(in crate::config) fn optional_float(
         )));
     }
     Ok(number)
+    })
 }
 
 pub(in crate::config) fn optional_string_list(
@@ -180,6 +197,7 @@ pub(in crate::config) fn optional_string_list(
     field: &str,
     context: &str,
 ) -> Result<Vec<String>, OperationError> {
+    trace_config_call!("config::validation::optional_string_list", ["field" => &field, "context" => &context], paths [], fields ["table" => trace_toml_table(table)], || {
     let Some(value) = table.get(field) else {
         return Ok(Vec::new());
     };
@@ -197,4 +215,5 @@ pub(in crate::config) fn optional_string_list(
             ))),
         })
         .collect()
+    })
 }

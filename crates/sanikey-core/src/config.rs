@@ -3,15 +3,24 @@
 mod parse;
 mod profile;
 mod sections;
+pub(crate) mod trace;
 mod validation;
 
 #[cfg(test)]
 mod tests;
 
+#[cfg(test)]
+mod trace_tests;
+
+use crate::logging::{
+    Component as LogComponent, TraceField, TraceValue, redact_secret_assignments, trace_current,
+};
 use indexmap::IndexMap;
 pub use parse::{default_accounts_path, load_accounts, parse_accounts_data};
 pub use profile::AccountsProfile;
+use serde_json::json;
 use std::path::PathBuf;
+use trace::{trace_accounts_paths, trace_config_call, trace_debug};
 
 /// Configurazione dell'interfaccia statica associata a una persona.
 #[derive(Clone, Debug, PartialEq)]
@@ -37,6 +46,7 @@ pub struct UiConfig {
 /// Fornisce i default storici dell'interfaccia di consultazione.
 impl Default for UiConfig {
     fn default() -> Self {
+        trace_config_call!("config::UiConfig::default", [], result_paths trace::trace_ui_paths, || {
         Self {
             accent_color: "#2563eb".to_owned(),
             density: "comfortable".to_owned(),
@@ -47,6 +57,7 @@ impl Default for UiConfig {
             background_image: None,
             background_opacity: 0.1,
         }
+        })
     }
 }
 
@@ -73,11 +84,13 @@ pub struct SearchConfig {
 /// Fornisce i default storici della ricerca avanzata.
 impl Default for SearchConfig {
     fn default() -> Self {
+        trace_config_call!("config::SearchConfig::default", [], result_paths trace::trace_search_paths, || {
         Self {
             dictionary: None,
             dictionary_data: SearchDictionary::default(),
             advanced_index_warning_mb: 25,
         }
+        })
     }
 }
 
@@ -106,12 +119,14 @@ pub struct UsbConfig {
 /// Fornisce i default storici della distribuzione USB.
 impl Default for UsbConfig {
     fn default() -> Self {
-        Self {
-            usb_uuid: None,
-            require_exfat: false,
-            min_free_space_mb: 256,
-            copy_strategy: "rsync-preferred".to_owned(),
-        }
+        trace_config_call!("config::UsbConfig::default", [], || {
+            Self {
+                usb_uuid: None,
+                require_exfat: false,
+                min_free_space_mb: 256,
+                copy_strategy: "rsync-preferred".to_owned(),
+            }
+        })
     }
 }
 
@@ -163,6 +178,33 @@ pub struct AccountsConfig {
 impl AccountsConfig {
     /// Restituisce le persone abilitate conservandone l'ordine.
     pub fn enabled_people(&self) -> impl Iterator<Item = &PersonConfig> {
+        let trace = trace_current(
+            LogComponent::Core,
+            "config::AccountsConfig::enabled_people",
+            || {
+                vec![
+                    TraceField::new("accounts", trace_debug(self)),
+                    TraceField::new("native_paths", trace_accounts_paths(self)),
+                ]
+            },
+        );
+        if let Some(trace) = trace {
+            let people = self
+                .people
+                .iter()
+                .enumerate()
+                .filter(|(_, person)| person.enabled)
+                .map(|(index, person)| {
+                    json!({
+                        "index": index,
+                        "format": "rust_debug",
+                        "value": redact_secret_assignments(&format!("{person:#?}")),
+                        "native_paths": trace::trace_person_paths(person).to_json(),
+                    })
+                })
+                .collect::<Vec<_>>();
+            let _ = trace.finish(TraceValue::Data(json!({"people": people})));
+        }
         self.people.iter().filter(|person| person.enabled)
     }
 }

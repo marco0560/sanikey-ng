@@ -1,7 +1,10 @@
+//! Fixture sintetiche per conversioni e consultazione Office.
+
 use super::{
     OfficeConverter, OfficeRenderOutcome, converter_for_suffix, find_program, find_program_in_path,
     is_valid_pdf, path_to_file_url, render_office_document, supports_conversion,
 };
+use crate::logging::{Component, Level, Session};
 use crate::metadata::DocumentRecord;
 use crate::pdf::test_support::synthetic_pdf;
 use std::fs;
@@ -166,6 +169,102 @@ fn converter_process_timeout_kills_the_child() {
     assert!(child.try_wait().expect("processo terminato").is_some());
 }
 
+#[cfg(unix)]
+#[test]
+fn process_trace_captures_native_command_and_exit_but_events_stay_terse() {
+    use super::run_process;
+    use std::ffi::OsString;
+
+    let directory = TestDirectory::new();
+    for (suffix, level) in [("events", Level::Events), ("trace", Level::Trace)] {
+        let logs = directory.path().join(format!("logs-{suffix}"));
+        let (session, log_path) =
+            Session::create_in_directory_with_level(&logs, Component::Core, level)
+                .expect("sessione sintetica");
+        session.scoped(|| {
+            let status = run_process(
+                PathBuf::from("/bin/sh").as_path(),
+                &[OsString::from("-c"), OsString::from("exit 0")],
+            )
+            .expect("processo sintetico");
+            assert!(status.success());
+        });
+        drop(session);
+
+        let log = fs::read_to_string(log_path).expect("log sintetico");
+        if level == Level::Trace {
+            assert!(log.contains("office::run_process"));
+            assert!(log.contains("office::wait_for_process"));
+            assert!(log.contains("/bin/sh"));
+            assert!(log.contains("arguments_native"));
+            assert!(log.contains("exit_code"));
+            assert!(log.contains("external_component"));
+        } else {
+            assert!(!log.contains("function_enter"));
+            assert!(!log.contains("/bin/sh"));
+        }
+    }
+}
+
+#[test]
+fn render_trace_marks_source_contents_as_unobserved_for_unsupported_formats() {
+    let directory = TestDirectory::new();
+    let source = directory.path().join("Synthetic Private Office.pptx");
+    let output = directory.path().join("generated");
+    let logs = directory.path().join("logs");
+    let (session, log_path) =
+        Session::create_in_directory_with_level(&logs, Component::Core, Level::Trace)
+            .expect("sessione sintetica");
+    let outcome = session
+        .scoped(|| render_office_document(&source, &output, &source).expect("warning non fatale"));
+    assert!(matches!(outcome, OfficeRenderOutcome::Warning(_)));
+    drop(session);
+
+    let log = fs::read_to_string(log_path).expect("log sintetico");
+    assert!(log.contains("office::render_office_document"));
+    assert!(log.contains("source_document_contents"));
+    assert!(log.contains("external_component"));
+    assert!(log.contains("Synthetic Private Office.pptx"));
+    assert!(!source.exists());
+}
+
+#[test]
+fn pdf_copy_trace_records_reported_byte_count_without_reading_payload() {
+    use super::copy_pdf;
+
+    let directory = TestDirectory::new();
+    let source = directory.path().join("Synthetic private PDF source.pdf");
+    fs::write(&source, b"%PDF-synthetic-private-payload").expect("PDF sintetico");
+    let payload_length = fs::metadata(&source).expect("metadata sorgente").len();
+
+    for (suffix, level) in [("events", Level::Events), ("trace", Level::Trace)] {
+        let logs = directory.path().join(format!("copy-logs-{suffix}"));
+        let (session, log_path) =
+            Session::create_in_directory_with_level(&logs, Component::Core, level)
+                .expect("sessione sintetica");
+        let target = directory.path().join(format!("target-{suffix}.pdf"));
+        let copied = session.scoped(|| copy_pdf(&source, &target).expect("copia sintetica"));
+        assert_eq!(copied, payload_length);
+        assert_eq!(
+            fs::read(&target).expect("PDF copiato"),
+            b"%PDF-synthetic-private-payload"
+        );
+        drop(session);
+
+        let log = fs::read_to_string(log_path).expect("log sintetico");
+        if level == Level::Trace {
+            assert!(log.contains("office::copy_pdf"));
+            assert!(log.contains("copied_pdf_contents"));
+            assert!(log.contains("bytes_copied"));
+            assert!(log.contains("external_component"));
+            assert!(!log.contains("synthetic-private-payload"));
+        } else {
+            assert!(!log.contains("function_enter"));
+            assert!(!log.contains("synthetic-private-payload"));
+        }
+    }
+}
+
 fn document_record(path: &str, kind: &str) -> DocumentRecord {
     DocumentRecord {
         document_id: "synthetic-id".to_owned(),
@@ -199,6 +298,7 @@ fn assert_pdf_contains(outcome: &OfficeRenderOutcome, expected: &str) {
 
 struct TestDirectory(PathBuf);
 
+/// Gestisce file di input e output temporanei per i test Office.
 impl TestDirectory {
     fn new() -> Self {
         static NEXT_DIRECTORY: std::sync::atomic::AtomicUsize =
@@ -217,6 +317,7 @@ impl TestDirectory {
     }
 }
 
+/// Elimina gli artefatti Office generati dalle fixture.
 impl Drop for TestDirectory {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.0);

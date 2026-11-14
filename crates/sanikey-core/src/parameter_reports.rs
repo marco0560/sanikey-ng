@@ -1,5 +1,9 @@
 //! Report locali e artefatti statici delle slice dei parametri.
 
+use crate::logging::{
+    Component, TraceField, TraceValue, redact_secret_assignments, trace_current, trace_json_value,
+    trace_sensitive_text,
+};
 use crate::operation::{ErrorCode, OperationError};
 use crate::parameter_rules::ParameterBuildResult;
 use crate::parameter_slices::{CandidateGroup, DiscoveryResult, ParameterCandidate};
@@ -8,6 +12,73 @@ use serde_json::{Value, json};
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
+
+macro_rules! trace_parameter_report_call {
+    ($function:literal, [$($name:literal => $value:expr),* $(,)?], fields [$($field_name:literal => $field_value:expr),* $(,)?], output $output:expr, $body:expr) => {{
+        let trace = trace_current(Component::Core, $function, || {
+            Vec::from([
+                $(TraceField::new($name, trace_debug(&$value)),)*
+                $(TraceField::new($field_name, $field_value),)*
+            ])
+        });
+        let result = run_parameter_report_body($body);
+        if let Some(trace) = trace {
+            let _ = trace.finish(($output)(&result));
+        }
+        result
+    }};
+    ($function:literal, [$($name:literal => $value:expr),* $(,)?], fields [$($field_name:literal => $field_value:expr),* $(,)?], $body:expr) => {
+        trace_parameter_report_call!($function, [$($name => $value),*], fields [$($field_name => $field_value),*], output trace_debug, $body)
+    };
+    ($function:literal, [$($name:literal => $value:expr),* $(,)?], $body:expr) => {
+        trace_parameter_report_call!($function, [$($name => $value),*], fields [], $body)
+    };
+}
+
+fn run_parameter_report_body<R>(body: impl FnOnce() -> R) -> R {
+    body()
+}
+
+fn trace_debug<T: std::fmt::Debug + ?Sized>(value: &T) -> TraceValue {
+    TraceValue::Data(json!({
+        "format":"rust_debug",
+        "value":redact_secret_assignments(&format!("{value:#?}")),
+    }))
+}
+
+fn trace_path(path: &Path) -> TraceValue {
+    TraceValue::path(path)
+}
+
+fn trace_text(value: &str) -> TraceValue {
+    trace_sensitive_text(value)
+}
+
+fn trace_parameter_report_paths(
+    result: &Result<ParameterReportPaths, OperationError>,
+) -> TraceValue {
+    TraceValue::Data(json!({
+        "state":if result.is_ok(){"complete"}else{"error"},
+        "value":trace_debug(result).to_json(),
+        "paths":result.as_ref().ok().map(|paths| json!({
+            "candidates":trace_path(&paths.candidates).to_json(),
+            "proposed_rules":trace_path(&paths.proposed_rules).to_json(),
+            "slices_json":paths.slices_json.as_deref().map(trace_path).map(|path|path.to_json()),
+            "slices_javascript":paths.slices_javascript.as_deref().map(trace_path).map(|path|path.to_json()),
+        })),
+    }))
+}
+
+fn trace_two_paths(result: &Result<(PathBuf, PathBuf), OperationError>) -> TraceValue {
+    TraceValue::Data(json!({
+        "state":if result.is_ok(){"complete"}else{"error"},
+        "value":trace_debug(result).to_json(),
+        "paths":result.as_ref().ok().map(|(first, second)| json!({
+            "first":trace_path(first).to_json(),
+            "second":trace_path(second).to_json(),
+        })),
+    }))
+}
 
 /// Percorsi degli artefatti generati dai report dei parametri.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -52,6 +123,7 @@ pub fn write_parameter_reports(
     result: Option<&ParameterBuildResult>,
 ) -> Result<ParameterReportPaths, OperationError> {
     let build_root = build_root.as_ref();
+    trace_parameter_report_call!("parameter_reports::write_parameter_reports", [], fields ["build_root" => trace_path(build_root), "discovery" => trace_debug(discovery), "result" => result.map_or(TraceValue::Data(Value::Null), trace_debug)], output trace_parameter_report_paths, || {
     let reports = build_root.join("reports");
     create_directory(&reports)?;
     create_directory(&build_root.join("exports"))?;
@@ -86,6 +158,7 @@ pub fn write_parameter_reports(
         slices_json: Some(export),
         slices_javascript: Some(script),
     })
+    })
 }
 
 /// Scrive gli export macchina JSON e JavaScript delle serie, dei punti e delle
@@ -100,6 +173,7 @@ pub fn write_parameter_extraction_reports(
     result: &ParameterBuildResult,
 ) -> Result<(PathBuf, PathBuf), OperationError> {
     let build_root = build_root.as_ref();
+    trace_parameter_report_call!("parameter_reports::write_parameter_extraction_reports", ["result" => result], fields ["build_root" => trace_path(build_root)], output trace_two_paths, || {
     let reports = build_root.join("reports");
     let exports = build_root.join("exports");
     let data = build_root.join("web/data");
@@ -133,6 +207,7 @@ pub fn write_parameter_extraction_reports(
         &format!("window.SANIKEY_PARAMETER_SLICES = {compact};\n"),
     )?;
     Ok((export, script))
+    })
 }
 
 /// Scrive report JSON e testuali separati per esiti accettati e rifiutati.
@@ -151,7 +226,9 @@ pub fn write_parameter_rejections(
     result: &ParameterBuildResult,
     extra: &[ParameterDiagnosticExtra],
 ) -> Result<(PathBuf, PathBuf), OperationError> {
-    let reports = build_root.as_ref().join("reports");
+    let build_root = build_root.as_ref();
+    trace_parameter_report_call!("parameter_reports::write_parameter_rejections", [], fields ["build_root" => trace_path(build_root), "discovery" => trace_debug(discovery), "result" => trace_debug(result), "extra" => trace_debug(extra)], output trace_two_paths, || {
+    let reports = build_root.join("reports");
     create_directory(&reports)?;
     let candidates = discovery
         .candidates
@@ -204,6 +281,7 @@ pub fn write_parameter_rejections(
     let rejected_text = reports.join("parameter-rejected.txt");
     write_decision_report(&reports, "rejected", &rejected)?;
     Ok((rejected_json, rejected_text))
+    })
 }
 
 fn write_decision_report(
@@ -211,6 +289,7 @@ fn write_decision_report(
     status: &str,
     rows: &[Value],
 ) -> Result<(), OperationError> {
+    trace_parameter_report_call!("parameter_reports::write_decision_report", [], fields ["reports" => trace_path(reports), "status" => trace_text(status), "rows" => TraceValue::Data(Value::Array(rows.iter().map(|row| trace_json_value(row).to_json()).collect()))], || {
     let json_path = reports.join(format!("parameter-{status}.json"));
     write_json(&json_path, &json!({"schema_version": "1.0", status: rows}))?;
     let headings = [
@@ -250,25 +329,31 @@ fn write_decision_report(
         &reports.join(format!("parameter-{status}.txt")),
         &format!("{}\n", lines.join("\n")),
     )
+    })
 }
 
 fn json_cell(value: &Value) -> String {
+    trace_parameter_report_call!("parameter_reports::json_cell", [], fields ["value" => trace_json_value(value)], || {
     match value {
         Value::Null => "None".into(),
         Value::String(value) => value.clone(),
         value => value.to_string(),
     }
+    })
 }
 
 fn render_table_row(row: &[String; 7], widths: &[usize; 7]) -> String {
+    trace_parameter_report_call!("parameter_reports::render_table_row", ["row" => row, "widths" => widths], || {
     row.iter()
         .zip(widths)
         .map(|(cell, width)| format!("{cell:<width$}"))
         .collect::<Vec<_>>()
         .join(" | ")
+    })
 }
 
 fn candidate_value(candidate: &ParameterCandidate) -> Value {
+    trace_parameter_report_call!("parameter_reports::candidate_value", ["candidate" => candidate], || {
     json!({
         "stable_id": candidate.stable_id,
         "document_id": candidate.document_id,
@@ -296,16 +381,20 @@ fn candidate_value(candidate: &ParameterCandidate) -> Value {
         "page_label": candidate.page_label,
         "section_specimen": candidate.section_specimen,
     })
+    })
 }
 
 fn group_value(group: &CandidateGroup) -> Value {
+    trace_parameter_report_call!("parameter_reports::group_value", ["group" => group], || {
     json!({
         "normalized_label": group.normalized_label,
         "candidates": group.candidates.iter().map(candidate_value).collect::<Vec<_>>(),
     })
+    })
 }
 
 fn series_value(series: &crate::metadata::ObservationSeries) -> Value {
+    trace_parameter_report_call!("parameter_reports::series_value", ["series" => series], || {
     json!({
         "id": series.id,
         "name": series.name,
@@ -319,9 +408,11 @@ fn series_value(series: &crate::metadata::ObservationSeries) -> Value {
         "parameter_rule_digest": series.parameter_rule_digest,
         "unit_variant": series.unit_variant,
     })
+    })
 }
 
 fn point_value(point: &crate::metadata::ObservationPoint) -> Value {
+    trace_parameter_report_call!("parameter_reports::point_value", ["point" => point], || {
     json!({
         "id": point.id,
         "series_id": point.series_id,
@@ -356,9 +447,11 @@ fn point_value(point: &crate::metadata::ObservationPoint) -> Value {
         "rule_digest": point.rule_digest,
         "reason_code": point.reason_code,
     })
+    })
 }
 
 fn render_proposed_rules(groups: &[CandidateGroup]) -> String {
+    trace_parameter_report_call!("parameter_reports::render_proposed_rules", ["groups" => groups], || {
     let mut output = String::from(
         "# Proposte determinate: revisionare prima di copiare in parameters.toml.\n\
          # Nessuna regola qui generata e' abilitata automaticamente.\n",
@@ -405,9 +498,11 @@ fn render_proposed_rules(groups: &[CandidateGroup]) -> String {
         }
     }
     output
+    })
 }
 
 fn title_case(value: &str) -> String {
+    trace_parameter_report_call!("parameter_reports::title_case", [], fields ["value" => trace_text(value)], || {
     let mut capitalize = true;
     value
         .chars()
@@ -426,13 +521,17 @@ fn title_case(value: &str) -> String {
             }
         })
         .collect()
+    })
 }
 
 fn toml_string(value: &str) -> String {
-    serde_json::to_string(value).expect("una stringa è sempre serializzabile in JSON/TOML")
+    trace_parameter_report_call!("parameter_reports::toml_string", [], fields ["value" => trace_text(value)], || {
+        serde_json::to_string(value).expect("una stringa è sempre serializzabile in JSON/TOML")
+    })
 }
 
 fn toml_strings(values: &BTreeSet<String>) -> String {
+    trace_parameter_report_call!("parameter_reports::toml_strings", ["values" => values], || {
     format!(
         "[{}]",
         values
@@ -441,27 +540,33 @@ fn toml_strings(values: &BTreeSet<String>) -> String {
             .collect::<Vec<_>>()
             .join(", ")
     )
+    })
 }
 
 fn create_directory(path: &Path) -> Result<(), OperationError> {
+    trace_parameter_report_call!("parameter_reports::create_directory", [], fields ["path" => trace_path(path)], || {
     fs::create_dir_all(path).map_err(|error| {
         OperationError::new(
             ErrorCode::Configuration,
             format!("creazione directory report parametri non riuscita: {error}"),
         )
     })
+    })
 }
 
 fn write_text(path: &Path, content: &str) -> Result<(), OperationError> {
+    trace_parameter_report_call!("parameter_reports::write_text", [], fields ["path" => trace_path(path), "content" => trace_text(content)], || {
     fs::write(path, content).map_err(|error| {
         OperationError::new(
             ErrorCode::Configuration,
             format!("scrittura report parametri non riuscita: {error}"),
         )
     })
+    })
 }
 
 fn write_json(path: &Path, payload: &Value) -> Result<(), OperationError> {
+    trace_parameter_report_call!("parameter_reports::write_json", [], fields ["path" => trace_path(path), "payload" => trace_json_value(payload)], || {
     let mut bytes = serde_json::to_vec_pretty(payload).map_err(json_error)?;
     bytes.push(b'\n');
     fs::write(path, bytes).map_err(|error| {
@@ -470,13 +575,16 @@ fn write_json(path: &Path, payload: &Value) -> Result<(), OperationError> {
             format!("scrittura JSON parametri non riuscita: {error}"),
         )
     })
+    })
 }
 
 fn json_error(error: serde_json::Error) -> OperationError {
+    trace_parameter_report_call!("parameter_reports::json_error", [], fields ["error" => trace_text(&error.to_string())], || {
     OperationError::new(
         ErrorCode::Configuration,
         format!("serializzazione JSON parametri non riuscita: {error}"),
     )
+    })
 }
 
 #[cfg(test)]

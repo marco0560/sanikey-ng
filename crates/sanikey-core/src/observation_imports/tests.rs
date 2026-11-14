@@ -1,4 +1,7 @@
+//! Fixture sintetiche per importazione e aggiornamento delle osservazioni.
+
 use super::{ensure_observation_imports_current, import_observations};
+use crate::logging::{Component, Level, Session};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -7,6 +10,7 @@ static NEXT_ID: AtomicU64 = AtomicU64::new(0);
 
 struct TestDirectory(PathBuf);
 
+/// Gestisce le directory metadata e documenti create dalle fixture.
 impl TestDirectory {
     fn new() -> Self {
         let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
@@ -27,6 +31,7 @@ impl TestDirectory {
     }
 }
 
+/// Rimuove le directory sintetiche dopo i test.
 impl Drop for TestDirectory {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.0);
@@ -183,6 +188,107 @@ fn supports_xlsx_spreadsheets() {
     let result = import_observations(&metadata, &documents).expect("lettura XLSX");
     assert_eq!(result.points[0].observation_date, "2026-01-02");
     assert_eq!(result.points[0].numeric_value, Some(70.5));
+}
+
+#[test]
+fn trace_records_private_import_content_but_redacts_identified_secrets() {
+    let secret = "synthetic-secret-observation-9274";
+    let private_note = "nota privata sintetica controllo 4821";
+    let (directory, metadata, documents) = setup(
+        &format!("Data,Peso,Nota,api_key\n2026-01-02,70.5,{private_note},{secret}\n"),
+        &format!(
+            "[[series]]\nid='peso'\nname='Peso'\nvalue_type='numeric'\napi_key='{secret}'\n\n[[source]]\npath='input.csv'\nseries_id='peso'\n[source.columns]\ndate='Data'\nnumeric_value='Peso'\nnote='api_key'\n"
+        ),
+    );
+    let log_directory = directory.0.join("trace-log");
+    let (session, log_path) =
+        Session::create_in_directory_with_level(&log_directory, Component::Core, Level::Trace)
+            .expect("sessione Trace sintetica");
+
+    let imported = session
+        .scoped(|| import_observations(&metadata, &documents))
+        .expect("importazione sintetica");
+    assert_eq!(imported.points[0].note.as_deref(), Some(secret));
+    drop(session);
+
+    let log = fs::read_to_string(log_path).expect("log Trace sintetico");
+    assert!(log.contains(private_note));
+    assert!(log.contains("secret_omitted"));
+    for function in [
+        "observation_imports::csv_cell",
+        "observation_imports::headers_from_rows",
+        "observation_imports::mapped_value",
+        "observation_imports::compound_values",
+        "observation_imports::cell_text",
+        "observation_imports::array",
+        "observation_imports::required_string",
+        "observation_imports::write_outputs_inner",
+        "observation_imports::atomic_write_inner",
+    ] {
+        assert!(log.contains(function), "missing trace span {function}");
+    }
+    assert!(
+        !log.contains(secret),
+        "secret escaped through trace record(s): {}",
+        log.lines()
+            .filter(|line| line.contains(secret))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+}
+
+#[test]
+fn events_level_does_not_record_private_import_cells() {
+    let private_note = "nota privata sintetica controllo 6382";
+    let (_directory, metadata, documents) = setup(
+        &format!("Data,Nota\n2026-01-02,{private_note}\n"),
+        "[[series]]\nid='peso'\nname='Peso'\nvalue_type='numeric'\n\n[[source]]\npath='input.csv'\nseries_id='peso'\n[source.columns]\ndate='Data'\nnote='Nota'\n",
+    );
+    let log_directory = metadata.join("event-log");
+    let (session, log_path) =
+        Session::create_in_directory_with_level(&log_directory, Component::Core, Level::Events)
+            .expect("sessione Events sintetica");
+
+    session
+        .scoped(|| import_observations(&metadata, &documents))
+        .expect("importazione sintetica");
+    drop(session);
+
+    let log = fs::read_to_string(log_path).expect("log Events sintetico");
+    assert!(!log.contains(private_note));
+}
+
+#[test]
+fn error_text_is_redacted_in_trace_without_changing_the_returned_error() {
+    let secret = "synthetic-secret-error-3817";
+    let policy = format!("password={secret}");
+    let (directory, metadata, documents) = setup(
+        "Anno,Peso\n2025,70.5\n",
+        &format!(
+            "[[series]]\nid='peso'\nname='Peso'\nvalue_type='numeric'\n\n[[source]]\npath='input.csv'\n[[source.extract]]\nseries_id='peso'\ndate_policy='{policy}'\n[source.extract.columns]\ndate='Anno'\nnumeric_value='Peso'\n"
+        ),
+    );
+    let log_directory = directory.0.join("error-log");
+    let (session, log_path) =
+        Session::create_in_directory_with_level(&log_directory, Component::Core, Level::Trace)
+            .expect("sessione Trace sintetica");
+
+    let error = session
+        .scoped(|| import_observations(&metadata, &documents))
+        .expect_err("policy data non supportata");
+    assert!(error.message().contains(&policy));
+    drop(session);
+
+    let log = fs::read_to_string(log_path).expect("log Trace sintetico");
+    assert!(
+        !log.contains(secret),
+        "secret escaped through trace record(s): {}",
+        log.lines()
+            .filter(|line| line.contains(secret))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+    assert!(log.contains("secret_omitted"));
 }
 
 fn write_xlsx(path: &Path) {

@@ -1,6 +1,7 @@
 //! Per-person account parsing and cross-person validation.
 
 use super::super::sections::{parse_ingestion, parse_search, parse_ui};
+use super::super::trace::{trace_config_call, trace_person_result, trace_toml_value};
 use super::super::validation::{
     error, optional_bool, optional_nullable_string, reject_unknown, require_table, required_string,
 };
@@ -41,6 +42,13 @@ pub(super) fn parse_person(
     global_ingestion: &IngestionConfig,
     global_usb: &UsbConfig,
 ) -> Result<PersonConfig, OperationError> {
+    trace_config_call!(
+        "config::parse_person",
+        ["index" => &index, "global_ui" => global_ui, "global_search" => global_search, "global_ingestion" => global_ingestion, "global_usb" => global_usb],
+        paths ["base_dir" => base_dir],
+        fields ["value" => trace_toml_value(value), "global_ui_native_paths" => super::super::trace::trace_ui_paths(global_ui), "global_search_native_paths" => super::super::trace::trace_search_paths(global_search)],
+        result_paths trace_person_result,
+        || {
     let context = format!("voce [[person]] {index}");
     let table = require_table(value, &context)?;
     reject_unknown(table, PERSON_FIELDS, &context)?;
@@ -101,9 +109,12 @@ pub(super) fn parse_person(
         search,
         ingestion,
     })
+        }
+    )
 }
 
 fn valid_person_id(value: &str) -> bool {
+    trace_config_call!("config::valid_person_id", ["value" => &value], || {
     let bytes = value.as_bytes();
     !bytes.is_empty()
         && bytes[0].is_ascii_lowercase()
@@ -116,13 +127,22 @@ fn valid_person_id(value: &str) -> bool {
                     && is_id_letter_or_digit(bytes[index - 1])
                     && is_id_letter_or_digit(bytes[index + 1]))
         })
+    })
 }
 
 fn is_id_letter_or_digit(value: u8) -> bool {
-    value.is_ascii_lowercase() || value.is_ascii_digit()
+    trace_config_call!("config::is_id_letter_or_digit", ["value" => &value], || {
+        value.is_ascii_lowercase() || value.is_ascii_digit()
+    })
 }
 
 pub(super) fn validate_unique_ids(people: &[PersonConfig]) -> Result<(), OperationError> {
+    trace_config_call!(
+        "config::validate_unique_ids",
+        ["people" => people],
+        paths [],
+        fields ["people_native_paths" => crate::config::trace::trace_people_paths(people)],
+        || {
     let mut seen = BTreeSet::new();
     for person in people {
         if !seen.insert(&person.id) {
@@ -130,12 +150,20 @@ pub(super) fn validate_unique_ids(people: &[PersonConfig]) -> Result<(), Operati
         }
     }
     Ok(())
+        }
+    )
 }
 
 pub(super) fn validate_enabled_usb_uuid(
     people: &[PersonConfig],
     usb: &UsbConfig,
 ) -> Result<(), OperationError> {
+    trace_config_call!(
+        "config::validate_enabled_usb_uuid",
+        ["people" => people, "usb" => usb],
+        paths [],
+        fields ["people_native_paths" => crate::config::trace::trace_people_paths(people)],
+        || {
     let enabled_uuids: BTreeSet<_> = people
         .iter()
         .filter(|person| person.enabled)
@@ -158,6 +186,8 @@ pub(super) fn validate_enabled_usb_uuid(
         ));
     }
     Ok(())
+        }
+    )
 }
 
 #[cfg(test)]

@@ -8,6 +8,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 pub(super) struct TestDirectory(PathBuf);
 
+/// Crea e legge fixture temporanee per i test metadata.
 impl TestDirectory {
     pub(super) fn new() -> Self {
         static NEXT_ID: AtomicUsize = AtomicUsize::new(0);
@@ -31,6 +32,7 @@ impl TestDirectory {
     }
 }
 
+/// Elimina le fixture condivise alla fine del test.
 impl Drop for TestDirectory {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.0);

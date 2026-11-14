@@ -1,11 +1,15 @@
-use super::{generate_exports, render_markdown};
+//! Fixture sintetiche per la generazione degli export.
+
+use super::{generate_exports, render_markdown, write_json, write_script};
 use crate::config::{IngestionConfig, PersonConfig, SearchConfig, SearchDictionary, UiConfig};
 use crate::dicom::DicomStudy;
+use crate::logging::{Component, Level, Session};
 use crate::metadata::{
     ClinicalProblem, CuratedMetadata, DocumentRecord, Medication, MedicationLeaflet,
     MedicationLeafletExclusion, Observation, ObservationPoint, ObservationSeries, Procedure,
     TherapyEpisode,
 };
+use crate::operation::{ErrorCode, OperationError};
 use serde_json::Value;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -13,6 +17,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 struct TestDirectory(PathBuf);
 
+/// Gestisce le directory temporanee create dai test export.
 impl TestDirectory {
     fn new() -> Self {
         static NEXT_ID: AtomicUsize = AtomicUsize::new(0);
@@ -30,6 +35,7 @@ impl TestDirectory {
     }
 }
 
+/// Rimuove i file generati dalle fixture.
 impl Drop for TestDirectory {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.0);
@@ -174,6 +180,200 @@ fn exports_clinical_search_timeline_and_file_url_javascript() {
 }
 
 #[test]
+fn exports_trace_captures_private_payloads_and_native_paths_only_at_trace_level() {
+    let directory = TestDirectory::new();
+    let person = person(directory.path(), "patient-trace");
+    let mut document = document(&person, "initial.md");
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStringExt;
+        document.path = person
+            .source_documents
+            .join(std::ffi::OsString::from_vec(b"report-\xff.md".to_vec()));
+    }
+    fs::write(
+        &document.path,
+        "password = synthetic-markdown-source-secret; private Markdown detail",
+    )
+    .expect("sorgente Markdown sintetica");
+    let mut metadata = CuratedMetadata {
+        clinical_summary: Some("Synthetic private clinical summary".into()),
+        ..CuratedMetadata::default()
+    };
+    metadata.medications.push(Medication {
+        id: "synthetic-drug".into(),
+        name: "Private medication detail".into(),
+        active_ingredient: Some("Synthetic ingredient".into()),
+        form: None,
+        strength_per_unit: None,
+    });
+    metadata.medication_leaflets.push(MedicationLeaflet {
+        medication_id: "synthetic-drug".into(),
+        codice_sis: "fixture-sis".into(),
+        aic6: "fixture-aic".into(),
+        downloaded_at: Some("2026-02-03".into()),
+        source_fingerprint: None,
+    });
+
+    for (suffix, level) in [("events", Level::Events), ("trace", Level::Trace)] {
+        let mut config = person.clone();
+        config.local_build = directory.path().join(format!("build-{suffix}"));
+        let logs = directory.path().join(format!("logs-{suffix}"));
+        let (session, log_path) =
+            Session::create_in_directory_with_level(&logs, Component::Core, level)
+                .expect("sessione sintetica");
+        let extracted = crate::pdf::ExtractedText {
+            document_id: document.document_id.clone(),
+            text: "Synthetic private extracted source text".into(),
+            warnings: vec![],
+            page_spans: vec![],
+        };
+        let result = session.scoped(|| {
+            let unsafe_url =
+                super::unsafe_markdown_url("javascript:api_key = synthetic-url-secret", false);
+            assert!(unsafe_url);
+            let error = super::export_error(
+                "password = synthetic-export-error-secret; private error detail".to_owned(),
+            );
+            assert_eq!(error.code(), ErrorCode::Configuration);
+            assert!(error.message().contains("private error detail"));
+            generate_exports(
+                &config,
+                std::slice::from_ref(&document),
+                &metadata,
+                &[],
+                std::slice::from_ref(&extracted),
+            )
+        });
+        assert!(result.is_ok());
+        drop(session);
+
+        let log = fs::read_to_string(log_path).expect("log sintetico");
+        if level == Level::Trace {
+            assert!(log.contains("exports::generate_exports"));
+            assert!(log.contains("exports::write_bytes"));
+            assert!(log.contains("exports::generate_exports_impl"));
+            assert!(log.contains("exports::document_payload_impl"));
+            assert!(log.contains("exports::clinical_payload_impl"));
+            assert!(log.contains("exports::render_markdown_impl"));
+            assert!(log.contains("exports::write_json_impl"));
+            assert!(log.contains("exports::write_script_impl"));
+            assert!(log.contains("exports::write_bytes_impl"));
+            assert!(log.contains("exports::document_search_payload"));
+            assert!(log.contains("exports::document_search_payload_impl"));
+            assert!(log.contains("exports::metadata_search_payloads"));
+            assert!(log.contains("exports::metadata_search_payloads_impl"));
+            assert!(log.contains("exports::timeline_payload"));
+            assert!(log.contains("exports::timeline_payload_impl"));
+            assert!(log.contains("exports::write_technical_documents"));
+            assert!(log.contains("exports::write_technical_documents_impl"));
+            assert!(log.contains("exports::write_dicom_viewer_manifest"));
+            assert!(log.contains("exports::write_dicom_viewer_manifest_impl"));
+            assert!(log.contains("exports::resolved_tags"));
+            assert!(log.contains("exports::consultation_href"));
+            assert!(log.contains("exports::source_href"));
+            assert!(log.contains("exports::source_href_from_path"));
+            assert!(log.contains("exports::display_path"));
+            assert!(log.contains("exports::join_present"));
+            assert!(log.contains("exports::visible_fields"));
+            assert!(log.contains("exports::entity_subtitle"));
+            assert!(log.contains("exports::download_date"));
+            assert!(log.contains("exports::download_date_impl"));
+            assert!(log.contains("exports::aifa_url"));
+            assert!(log.contains("exports::markdown_summary"));
+            assert!(log.contains("exports::unsafe_markdown_url"));
+            assert!(log.contains("exports::escape_html"));
+            assert!(log.contains("exports::serialize_python_json"));
+            assert!(log.contains("exports::export_error"));
+            assert!(log.contains("Synthetic private clinical summary"));
+            assert!(log.contains("Synthetic private extracted source text"));
+            assert!(log.contains("private Markdown detail"));
+            assert!(log.contains("private error detail"));
+            assert!(log.contains("secret_omitted"));
+            assert!(!log.contains("synthetic-markdown-source-secret"));
+            assert!(!log.contains("synthetic-url-secret"));
+            assert!(!log.contains("synthetic-export-error-secret"));
+            #[cfg(unix)]
+            assert!(log.contains("unix_bytes"));
+        } else {
+            assert!(!log.contains("function_enter"));
+            assert!(!log.contains("Synthetic private clinical summary"));
+            assert!(!log.contains("Synthetic private extracted source text"));
+            assert!(!log.contains("private Markdown detail"));
+            assert!(!log.contains("private error detail"));
+            assert!(!log.contains("synthetic-markdown-source-secret"));
+            assert!(!log.contains("synthetic-url-secret"));
+            assert!(!log.contains("synthetic-export-error-secret"));
+            assert!(!log.contains("unix_bytes"));
+        }
+    }
+
+    let error = OperationError::new(
+        ErrorCode::Configuration,
+        "password = synthetic-export-secret",
+    );
+    let projected = super::trace_result::<()>(&Err(error)).to_json().to_string();
+    assert!(projected.contains("secret_omitted"));
+    assert!(!projected.contains("synthetic-export-secret"));
+}
+
+#[test]
+fn export_trace_redacts_secret_keys_and_assignments_without_changing_files() {
+    let directory = TestDirectory::new();
+    let value = serde_json::json!({
+        "ordinary_private_data": "private export detail",
+        "nested": {"API_Key": "synthetic-json-secret"},
+        "note": "password = synthetic-inline-secret; clinical detail retained",
+    });
+
+    for (suffix, level) in [("events", Level::Events), ("trace", Level::Trace)] {
+        let logs = directory.path().join(format!("logs-{suffix}"));
+        let (session, log_path) =
+            Session::create_in_directory_with_level(&logs, Component::Core, level)
+                .expect("sessione sintetica");
+        let json_path = directory.path().join(format!("export-{suffix}.json"));
+        let script_path = directory.path().join(format!("export-{suffix}.js"));
+        session.scoped(|| {
+            write_json(&json_path, &value).expect("scrittura JSON sintetica");
+            write_script(&script_path, "SyntheticExport", &value)
+                .expect("scrittura script sintetico");
+            assert!(
+                render_markdown("password = synthetic-markdown-secret; dettaglio privato")
+                    .contains("synthetic-markdown-secret")
+            );
+        });
+        assert!(
+            fs::read_to_string(&json_path)
+                .expect("export JSON")
+                .contains("synthetic-json-secret")
+        );
+        assert!(
+            fs::read_to_string(&script_path)
+                .expect("export JS")
+                .contains("synthetic-inline-secret")
+        );
+        drop(session);
+
+        let log = fs::read_to_string(log_path).expect("log sintetico");
+        if level == Level::Trace {
+            assert!(log.contains("secret_omitted"));
+            assert!(log.contains("private export detail"));
+            assert!(log.contains("clinical detail retained"));
+            assert!(log.contains("exports::serialize_python_json::serialize"));
+            assert!(!log.contains("synthetic-json-secret"));
+            assert!(!log.contains("synthetic-inline-secret"));
+            assert!(!log.contains("synthetic-markdown-secret"));
+        } else {
+            assert!(!log.contains("function_enter"));
+            assert!(!log.contains("private export detail"));
+            assert!(!log.contains("synthetic-json-secret"));
+            assert!(!log.contains("synthetic-inline-secret"));
+            assert!(!log.contains("synthetic-markdown-secret"));
+        }
+    }
+}
+
+#[test]
 fn exports_for_two_people_use_disjoint_build_roots() {
     let directory = TestDirectory::new();
     let first = person(&directory.path().join("first"), "patient-a");
@@ -304,6 +504,8 @@ fn exports_advanced_search_dictionary_and_size_warning() {
 
 #[test]
 fn exports_dicom_viewer_links_and_manifest_for_a_synthetic_study() {
+    use crate::logging::{Component, Level, Session};
+
     let directory = TestDirectory::new();
     let person = person(directory.path(), "patient-a");
     let support = document(&person, "20260102 TAC.zip");
@@ -327,14 +529,26 @@ fn exports_dicom_viewer_links_and_manifest_for_a_synthetic_study() {
         support_paths: vec![support.path.clone()],
     };
 
-    let result = generate_exports(
-        &person,
-        &[support],
-        &CuratedMetadata::default(),
-        &[study],
-        &[],
-    )
-    .expect("export DICOM");
+    let logs = directory.path().join("logs");
+    let (session, log_path) =
+        Session::create_in_directory_with_level(&logs, Component::Core, Level::Trace)
+            .expect("sessione trace DICOM");
+    let result = session
+        .scoped(|| {
+            assert!(
+                super::dicom_studies_for_document(&support, std::slice::from_ref(&study)).is_some()
+            );
+            generate_exports(
+                &person,
+                &[support],
+                &CuratedMetadata::default(),
+                &[study],
+                &[],
+            )
+        })
+        .expect("export DICOM");
+    drop(session);
+    let log = fs::read_to_string(log_path).expect("log DICOM");
     let search: Value = serde_json::from_slice(&fs::read(result.search).expect("search JSON"))
         .expect("search valido");
     let manifest: Value = serde_json::from_slice(
@@ -345,6 +559,12 @@ fn exports_dicom_viewer_links_and_manifest_for_a_synthetic_study() {
     let expected_href = "../dicom-viewers/study-a/IHE_PDI/PAGES/STUDIES/STUDY1.HTM";
 
     assert_eq!(search[0]["viewer_href"], expected_href);
+    assert!(log.contains("exports::consultation_href_impl"));
+    assert!(log.contains("exports::dicom_studies_for_document"));
+    assert!(log.contains("exports::dicom_viewer_href"));
+    assert!(log.contains("exports::dicom_preview_href_impl"));
+    assert!(log.contains("exports::dicom_media_href"));
+    assert!(log.contains("exports::dicom_media_href_impl"));
     assert_eq!(manifest["viewers"][0]["relative_root"], "IHE_PDI");
     assert_eq!(
         manifest["viewers"][0]["entrypoint"],
@@ -385,6 +605,8 @@ fn exports_technical_documents_with_quoted_csv_and_escaped_html() {
 
 #[test]
 fn exports_longitudinal_observation_series_and_missing_values_without_zeroes() {
+    use crate::logging::{Component, Level, Session};
+
     let directory = TestDirectory::new();
     let person = person(directory.path(), "patient-a");
     let mut metadata = CuratedMetadata::default();
@@ -436,8 +658,14 @@ fn exports_longitudinal_observation_series_and_missing_values_without_zeroes() {
         reason_code: None,
     });
 
-    let result =
-        generate_exports(&person, &[], &metadata, &[], &[]).expect("export parametri sintetici");
+    let logs = directory.path().join("logs");
+    let (session, log_path) =
+        Session::create_in_directory_with_level(&logs, Component::Core, Level::Trace)
+            .expect("sessione Trace sintetica");
+    let result = session
+        .scoped(|| generate_exports(&person, &[], &metadata, &[], &[]))
+        .expect("export parametri sintetici");
+    drop(session);
     let script = fs::read_to_string(result.data_script).expect("script dati");
     let payload: Value = serde_json::from_str(
         script
@@ -457,6 +685,9 @@ fn exports_longitudinal_observation_series_and_missing_values_without_zeroes() {
             .unwrap_or_default()
             .contains("120/80 FC 60")
     );
+    let log = fs::read_to_string(log_path).expect("log osservazioni");
+    assert!(log.contains("exports::point_value"));
+    assert!(log.contains("exports::format_number"));
 }
 
 #[test]

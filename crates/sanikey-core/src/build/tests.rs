@@ -1,7 +1,11 @@
-use super::{BuildMode, BuildOptions, build_all, build_patient};
+use super::{
+    BuildCounts, BuildMode, BuildOptions, PatientBuildResult, build_all, build_error,
+    build_patient, collect_files, trace_patient_result_paths, trace_person_paths,
+};
 use crate::config::{
     AccountsConfig, IngestionConfig, PersonConfig, SearchConfig, UiConfig, UsbConfig,
 };
+use crate::logging::{Component, Level, Session};
 use serde_json::Value;
 use std::fs;
 use std::io::{Cursor, Write};
@@ -334,6 +338,421 @@ fn invalid_parameter_rules_fail_before_creating_build_output() {
 
     assert!(build_patient(&person, BuildOptions::default()).is_err());
     assert!(!person.local_build.exists());
+}
+
+#[test]
+fn public_build_traces_record_synthetic_inputs_and_results_only_at_trace_level() {
+    for (level, expect_trace) in [(Level::Events, false), (Level::Trace, true)] {
+        let temp = TestDirectory::new();
+        let patient = person(&temp.0, "private-synthetic-patient");
+        fs::create_dir_all(&patient.metadata_directory).expect("metadata sintetici");
+        fs::write(
+            patient.metadata_directory.join("parameters.toml"),
+            "[rules\n",
+        )
+        .expect("regole sintetiche invalide");
+        let config = accounts_config(&temp.0, vec![patient.clone()]);
+        let (session, log_path) =
+            Session::create_in_directory_with_level(&temp.0.join("logs"), Component::Core, level)
+                .expect("sessione sintetica");
+
+        let (patient_result, all_result) = session.scoped(|| {
+            (
+                build_patient(&patient, BuildOptions::default()),
+                build_all(&config, BuildOptions::default()),
+            )
+        });
+        assert!(patient_result.is_err());
+        assert!(all_result.is_err());
+
+        let log = fs::read_to_string(log_path).expect("log sintetico leggibile");
+        if expect_trace {
+            assert!(log.contains("build::build_patient"));
+            assert!(log.contains("build::build_all"));
+            assert!(log.contains("build::load_person_parameter_rules"));
+            assert!(log.contains("private-synthetic-patient"));
+            assert!(log.contains("Configuration"));
+            assert!(log.contains("rust_debug"));
+        } else {
+            assert!(!log.contains("build::build_patient"));
+            assert!(!log.contains("build::build_all"));
+            assert!(!log.contains("private-synthetic-patient"));
+        }
+    }
+}
+
+#[test]
+fn collect_files_trace_distinguishes_before_and_after_output_state() {
+    let temp = TestDirectory::new();
+    let scan_root = temp.0.join("scan-root");
+    fs::create_dir_all(scan_root.join("nested")).expect("directory sintetica annidata");
+    fs::write(scan_root.join("first-after.txt"), b"synthetic one").expect("primo file sintetico");
+    fs::write(scan_root.join("nested/second-after.txt"), b"synthetic two")
+        .expect("secondo file sintetico");
+    let (session, log_path) = Session::create_in_directory_with_level(
+        &temp.0.join("logs"),
+        Component::Core,
+        Level::Trace,
+    )
+    .expect("sessione trace sintetica");
+    let mut files = vec![PathBuf::from("before-marker.txt")];
+
+    let result = session.scoped(|| collect_files(&scan_root, &mut files, 0));
+
+    assert!(result.is_ok());
+    assert_eq!(files.len(), 3);
+    let records: Vec<Value> = fs::read_to_string(log_path)
+        .expect("log sintetico leggibile")
+        .lines()
+        .map(|line| serde_json::from_str(line).expect("record JSON valido"))
+        .collect();
+    let entry = records
+        .iter()
+        .find(|record| {
+            record["type"] == "function_enter" && record["function"] == "build::collect_files"
+        })
+        .expect("record di ingresso collect_files");
+    let before = entry["arguments"]
+        .as_array()
+        .expect("argomenti JSON")
+        .iter()
+        .find(|argument| argument["name"] == "files_before")
+        .expect("snapshot iniziale")
+        .pointer("/content/value/rust_debug")
+        .and_then(Value::as_str)
+        .expect("vettore iniziale rappresentato");
+    let exit = records
+        .iter()
+        .find(|record| {
+            record["type"] == "function_exit"
+                && record["call_id"] == entry["call_id"]
+                && record["function"] == "build::collect_files"
+        })
+        .expect("record di uscita collect_files");
+    let after = &exit["result"]["value"]["value"]["files_after"]["value"];
+
+    assert!(before.contains("before-marker.txt"));
+    assert!(!before.contains("first-after.txt"));
+    assert_eq!(after["paths"].as_array().expect("path finali").len(), 3);
+    assert_eq!(
+        after["rust_debug"]
+            .as_str()
+            .unwrap()
+            .matches("after.txt")
+            .count(),
+        2
+    );
+    let delta_records: Vec<_> = records
+        .iter()
+        .filter(|record| {
+            record["type"] == "function_exit"
+                && record["function"] == "build::collect_files"
+                && record["result"]["value"]["value"]["paths_added"].is_array()
+        })
+        .collect();
+    let added: Vec<_> = delta_records
+        .iter()
+        .flat_map(|record| {
+            record["result"]["value"]["value"]["paths_added"]
+                .as_array()
+                .unwrap()
+                .iter()
+        })
+        .collect();
+    assert_eq!(added.len(), 2);
+    let mut added_indices = added
+        .iter()
+        .map(|item| item["index"].as_u64().unwrap())
+        .collect::<Vec<_>>();
+    added_indices.sort_unstable();
+    assert_eq!(added_indices, vec![1, 2]);
+    let mut reconstructed = entry["arguments"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|argument| argument["name"] == "files_before")
+        .unwrap()["content"]["value"]["paths"]
+        .as_array()
+        .unwrap()
+        .clone();
+    let mut additions = added.into_iter().cloned().collect::<Vec<_>>();
+    additions.sort_by_key(|item| item["index"].as_u64().unwrap());
+    for addition in additions {
+        assert_eq!(
+            addition["index"].as_u64().unwrap() as usize,
+            reconstructed.len()
+        );
+        reconstructed.push(serde_json::json!({
+            "index": addition["index"],
+            "path": addition["path"],
+        }));
+    }
+    assert_eq!(&reconstructed, after["paths"].as_array().unwrap());
+    let root_call_id = entry["call_id"].clone();
+    let call_entries = records
+        .iter()
+        .filter(|record| {
+            record["type"] == "function_enter" && record["function"] == "build::collect_files"
+        })
+        .collect::<Vec<_>>();
+    let call_ids = call_entries
+        .iter()
+        .map(|record| record["call_id"].clone())
+        .collect::<Vec<_>>();
+    assert!(call_ids.contains(&root_call_id));
+    assert!(
+        call_entries.len() >= 2,
+        "fixture annidata tracciata per frame"
+    );
+
+    for call in call_entries {
+        let arguments = call["arguments"].as_array().unwrap();
+        let depth = arguments
+            .iter()
+            .find(|argument| argument["name"] == "depth")
+            .unwrap()["content"]["value"]["value"]
+            .as_str()
+            .unwrap()
+            .parse::<usize>()
+            .unwrap();
+        let length_at_entry = if depth == 0 {
+            arguments
+                .iter()
+                .find(|argument| argument["name"] == "files_before")
+                .unwrap()["content"]["value"]["paths"]
+                .as_array()
+                .unwrap()
+                .len()
+        } else {
+            arguments
+                .iter()
+                .find(|argument| argument["name"] == "files_state_reference")
+                .unwrap()["content"]["value"]["length_at_entry"]
+                .as_u64()
+                .unwrap() as usize
+        };
+        let exit = records
+            .iter()
+            .find(|record| {
+                record["type"] == "function_exit"
+                    && record["function"] == "build::collect_files"
+                    && record["call_id"] == call["call_id"]
+            })
+            .expect("uscita del frame correlata con call_id");
+        let length_after = exit["result"]["value"]["value"]["files_length_after"]
+            .as_u64()
+            .unwrap() as usize;
+        assert!(length_at_entry <= length_after);
+        assert!(length_after <= after["paths"].as_array().unwrap().len());
+        assert_eq!(
+            &after["paths"].as_array().unwrap()[..length_at_entry],
+            &reconstructed[..length_at_entry],
+            "input ricostruito per call_id {}",
+            call["call_id"]
+        );
+        assert_eq!(
+            &after["paths"].as_array().unwrap()[..length_after],
+            &reconstructed[..length_after],
+            "output ricostruito per call_id {}",
+            call["call_id"]
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn trace_path_projections_preserve_non_unicode_nested_and_result_paths() {
+    use std::os::unix::ffi::OsStringExt;
+
+    let root = PathBuf::from(std::ffi::OsString::from_vec(
+        b"synthetic-\xff-root".to_vec(),
+    ));
+    let mut person = person(&root, "synthetic-person");
+    person.ui.background_image = Some(PathBuf::from(std::ffi::OsString::from_vec(
+        b"synthetic-\xfe-background.png".to_vec(),
+    )));
+    person.search.dictionary = Some(PathBuf::from(std::ffi::OsString::from_vec(
+        b"synthetic-\xfd-dictionary.toml".to_vec(),
+    )));
+    let person_paths = trace_person_paths(&person).to_json();
+    let paths = person_paths["value"]
+        .as_array()
+        .expect("proiezione dei path");
+    assert_eq!(paths[0]["path"]["value"]["encoding"], "unix_bytes");
+    assert_eq!(paths[0]["path"]["value"]["value"][0], b's');
+    assert_eq!(paths[3]["path"]["value"]["value"][10], 0xfe);
+    assert_eq!(paths[4]["path"]["value"]["value"][10], 0xfd);
+
+    let result = Ok(PatientBuildResult {
+        patient_id: person.id,
+        build_root: root.join("build"),
+        counts: BuildCounts::default(),
+        duplicates: 0,
+        warnings: 0,
+        warning_messages: Vec::new(),
+        database: root.join("db.sqlite"),
+        manifest: root.join("manifest.json"),
+        checksums: root.join("checksums.sha256"),
+        report: root.join("report.json"),
+    });
+    let result_paths = trace_patient_result_paths(&result).to_json();
+    assert_eq!(result_paths["value"]["state"], "complete");
+    assert_eq!(
+        result_paths["value"]["paths"][0]["path"]["value"]["encoding"],
+        "unix_bytes"
+    );
+
+    let temp = TestDirectory::new();
+    let directory = temp.0.join("scan");
+    fs::create_dir_all(&directory).expect("directory scan sintetica");
+    let non_unicode_name = std::ffi::OsString::from_vec(b"scan-\xfc.txt".to_vec());
+    fs::write(directory.join(non_unicode_name), b"synthetic").expect("file sintetico");
+    let (session, log_path) = Session::create_in_directory_with_level(
+        &temp.0.join("logs"),
+        Component::Core,
+        Level::Trace,
+    )
+    .expect("sessione trace sintetica");
+    let mut files = Vec::new();
+    assert!(
+        session
+            .scoped(|| collect_files(&directory, &mut files, 0))
+            .is_ok()
+    );
+    let records: Vec<Value> = fs::read_to_string(log_path)
+        .expect("log sintetico leggibile")
+        .lines()
+        .map(|line| serde_json::from_str(line).expect("record JSON valido"))
+        .collect();
+    let root_exit = records
+        .iter()
+        .find(|record| {
+            record["type"] == "function_exit"
+                && record["function"] == "build::collect_files"
+                && record["result"]["value"]["value"]["depth"] == 0
+        })
+        .expect("risultato root collect_files");
+    let path_bytes =
+        root_exit["result"]["value"]["value"]["files_after"]["value"]["paths"][0]["path"]["value"]
+            ["value"]
+            .as_array()
+            .expect("byte UTF-8 nativi");
+    assert!(path_bytes.iter().any(|byte| byte == 0xfc));
+}
+
+#[test]
+fn collect_files_trace_keeps_prepopulated_state_on_root_error() {
+    let temp = TestDirectory::new();
+    let missing = temp.0.join("missing-directory");
+    let (session, log_path) = Session::create_in_directory_with_level(
+        &temp.0.join("logs"),
+        Component::Core,
+        Level::Trace,
+    )
+    .expect("sessione trace sintetica");
+    let marker = temp.0.join("prepopulated-marker");
+    let mut files = vec![marker.clone()];
+
+    let result = session.scoped(|| collect_files(&missing, &mut files, 0));
+
+    assert!(result.is_err());
+    assert_eq!(files, vec![marker]);
+    let records: Vec<Value> = fs::read_to_string(log_path)
+        .expect("log sintetico leggibile")
+        .lines()
+        .map(|line| serde_json::from_str(line).expect("record JSON valido"))
+        .collect();
+    let exit = records
+        .iter()
+        .find(|record| {
+            record["type"] == "function_exit" && record["function"] == "build::collect_files"
+        })
+        .expect("risultato errore collect_files");
+    assert!(
+        exit["result"]["value"]["value"]["return"]
+            .as_str()
+            .unwrap()
+            .contains("Err")
+    );
+    assert_eq!(exit["result"]["value"]["value"]["files_length_after"], 1);
+    assert_eq!(
+        exit["result"]["value"]["value"]["files_after"]["value"]["paths"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+}
+
+#[test]
+fn collect_files_delta_replay_uses_absolute_index_not_exit_sequence() {
+    let initial = vec![serde_json::json!({"index":0,"path":"prepopulated"})];
+    // Simula un figlio che termina prima del padre: il padre aveva aggiunto
+    // il proprio file (indice 1) prima della discesa, ma registra l'uscita dopo.
+    let deltas = [
+        serde_json::json!({"sequence":12,"index":1,"path":"parent-file"}),
+        serde_json::json!({"sequence":11,"index":2,"path":"child-file"}),
+    ];
+    assert!(deltas[0]["sequence"].as_u64().unwrap() > deltas[1]["sequence"].as_u64().unwrap());
+    let mut replay = initial;
+    let mut ordered = deltas.to_vec();
+    ordered.sort_by_key(|delta| delta["index"].as_u64().unwrap());
+    for delta in ordered {
+        assert_eq!(delta["index"].as_u64().unwrap() as usize, replay.len());
+        replay.push(serde_json::json!({
+            "index": delta["index"],
+            "path": delta["path"],
+        }));
+    }
+    assert_eq!(
+        replay
+            .iter()
+            .map(|entry| entry["path"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        vec!["prepopulated", "parent-file", "child-file"]
+    );
+}
+
+#[test]
+fn collect_files_does_not_write_trace_records_at_events_level() {
+    let temp = TestDirectory::new();
+    let directory = temp.0.join("scan");
+    fs::create_dir_all(&directory).expect("directory scan sintetica");
+    fs::write(directory.join("file.txt"), b"synthetic").expect("file sintetico");
+    let (session, log_path) = Session::create_in_directory_with_level(
+        &temp.0.join("logs"),
+        Component::Core,
+        Level::Events,
+    )
+    .expect("sessione events sintetica");
+    let mut files = Vec::new();
+    assert!(
+        session
+            .scoped(|| collect_files(&directory, &mut files, 0))
+            .is_ok()
+    );
+    let log = fs::read_to_string(log_path).expect("log sintetico leggibile");
+    assert!(!log.contains("build::collect_files"));
+    assert!(!log.contains("paths_added"));
+}
+
+#[test]
+fn build_error_trace_redacts_secret_like_debug_text_without_changing_error() {
+    let temp = TestDirectory::new();
+    let (session, log_path) = Session::create_in_directory_with_level(
+        &temp.0.join("logs"),
+        Component::Core,
+        Level::Trace,
+    )
+    .expect("sessione trace sintetica");
+    let message = "password = synthetic-build-secret";
+    let error = session.scoped(|| build_error(message));
+    assert_eq!(error.message(), message);
+    drop(session);
+
+    let log = fs::read_to_string(log_path).expect("log sintetico leggibile");
+    assert!(log.contains("secret_omitted"));
+    assert!(!log.contains("synthetic-build-secret"));
 }
 
 fn accounts_config(root: &Path, people: Vec<PersonConfig>) -> AccountsConfig {

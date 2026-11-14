@@ -1,8 +1,10 @@
 //! Interfaccia desktop SaniKey per importare un profilo e scegliere persone e cartelle.
 
+mod presentation;
+
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, Sender};
-use std::thread;
+use std::thread::{self, JoinHandle};
 
 #[cfg(target_os = "linux")]
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -10,6 +12,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 static NEXT_USB_IMAGE: AtomicUsize = AtomicUsize::new(0);
 
 use eframe::egui::{self, Key, Modifiers};
+use presentation::{Classification, PresentedText};
 use sanikey_core::aifa::{
     AifaCandidate, AifaCandidateSearch, ConfirmedReferenceDecision, LeafletDownloadFailure,
     confirm_aifa_candidate, lookup_aifa_candidate_search, medication_fingerprint,
@@ -20,6 +23,11 @@ use sanikey_core::config::{AccountsConfig, AccountsProfile, PersonConfig};
 use sanikey_core::inventory::{find_duplicate_documents, scan_document_inventory};
 #[cfg(target_os = "linux")]
 use sanikey_core::linux_volume::{LinuxVolumeInfo, inspect_linux_volume};
+use sanikey_core::logging::{
+    Activity, Component, DisplayControl, DisplayPart, FailureCategory, Level, Operation, Outcome,
+    ProgressPhase, Session, TraceField, TraceLink, TraceOmission, TraceValue,
+    default_log_directory, trace_current, trace_sensitive_text,
+};
 use sanikey_core::metadata::{
     CuratedMetadata, Medication, MedicationLeaflet, MedicationLeafletExclusion,
     load_curated_metadata, prepare_people_metadata,
@@ -34,10 +42,244 @@ use sanikey_core::usb_image::UsbImageResult;
 #[cfg(target_os = "linux")]
 use sanikey_core::usb_image::assemble_usb_image;
 
+// The same classified value is passed to the widget and the capture sink.
+macro_rules! presented {
+    ($app:ident, $control:expr, $classification:expr, $value:expr) => {{
+        let value = ($value).to_string();
+        let presented = PresentedText::new(&value, $classification);
+        presented
+            .capture($app.log_session.as_ref(), &mut $app.log_failure, $control)
+            .to_owned()
+    }};
+}
+
+macro_rules! trace_desktop_call {
+    ($function:literal, fields [$($name:literal => $value:expr),* $(,)?], output $output:expr, $body:expr) => {{
+        let trace = trace_current(Component::Desktop, $function, || {
+            Vec::from([$(TraceField::new($name, $value),)*])
+        });
+        let result = run_desktop_body($body);
+        if let Some(trace) = trace {
+            let _ = trace.finish(($output)(&result));
+        }
+        result
+    }};
+    ($function:literal, fields [$($name:literal => $value:expr),* $(,)?], $body:expr) => {
+        trace_desktop_call!($function, fields [$($name => $value),*], output trace_desktop_debug, $body)
+    };
+}
+
+fn run_desktop_body<R>(body: impl FnOnce() -> R) -> R {
+    body()
+}
+
+fn trace_desktop_debug<T: std::fmt::Debug + ?Sized>(value: &T) -> TraceValue {
+    TraceValue::record(&[
+        TraceField::new("format", TraceValue::data("rust_debug")),
+        TraceField::new("value", trace_desktop_text(&format!("{value:#?}"))),
+    ])
+}
+
+fn trace_desktop_path(path: &Path) -> TraceValue {
+    TraceValue::path(path)
+}
+
+fn trace_desktop_text(value: &str) -> TraceValue {
+    trace_sensitive_text(value)
+}
+
+fn trace_egui_boundary() -> TraceValue {
+    TraceValue::Omitted(TraceOmission::ExternalComponent)
+}
+
+fn trace_person_paths(person: &PersonConfig) -> TraceValue {
+    TraceValue::record(&[
+        TraceField::new("id", trace_desktop_text(&person.id)),
+        TraceField::new(
+            "source_documents",
+            trace_desktop_path(&person.source_documents),
+        ),
+        TraceField::new(
+            "metadata_directory",
+            trace_desktop_path(&person.metadata_directory),
+        ),
+        TraceField::new("local_build", trace_desktop_path(&person.local_build)),
+    ])
+}
+
+fn trace_people(people: &[PersonConfig]) -> TraceValue {
+    TraceValue::record(&[
+        TraceField::new("count", TraceValue::data(people.len())),
+        TraceField::new(
+            "details",
+            TraceValue::data(
+                people
+                    .iter()
+                    .map(|person| {
+                        TraceValue::record(&[
+                            TraceField::new("person", trace_desktop_debug(person)),
+                            TraceField::new("native_paths", trace_person_paths(person)),
+                        ])
+                        .to_json()
+                    })
+                    .collect::<Vec<_>>(),
+            ),
+        ),
+    ])
+}
+
+fn trace_selections(selections: &[PersonSelection]) -> TraceValue {
+    TraceValue::data(
+        selections
+            .iter()
+            .map(|selection| {
+                TraceValue::record(&[
+                    TraceField::new("selected", TraceValue::data(selection.selected)),
+                    TraceField::new(
+                        "source_documents",
+                        trace_desktop_path(&selection.source_documents),
+                    ),
+                    TraceField::new(
+                        "metadata_directory",
+                        trace_desktop_path(&selection.metadata_directory),
+                    ),
+                    TraceField::new("local_build", trace_desktop_path(&selection.local_build)),
+                ])
+                .to_json()
+            })
+            .collect::<Vec<_>>(),
+    )
+}
+
+fn trace_config_paths(config: &AccountsConfig) -> TraceValue {
+    TraceValue::record(&[
+        TraceField::new("config_path", trace_desktop_path(&config.path)),
+        TraceField::new("people", trace_people(&config.people)),
+    ])
+}
+
+fn trace_optional_config(config: &Option<AccountsConfig>) -> TraceValue {
+    config.as_ref().map_or(TraceValue::data(()), |config| {
+        TraceValue::record(&[
+            TraceField::new("config", trace_desktop_debug(config)),
+            TraceField::new("native_paths", trace_config_paths(config)),
+        ])
+    })
+}
+
+fn trace_path_result(result: &Path) -> TraceValue {
+    trace_desktop_path(result)
+}
+
+fn trace_selection_result(result: &PersonSelection) -> TraceValue {
+    TraceValue::record(&[
+        TraceField::new("selected", TraceValue::data(result.selected)),
+        TraceField::new(
+            "source_documents",
+            trace_desktop_path(&result.source_documents),
+        ),
+        TraceField::new(
+            "metadata_directory",
+            trace_desktop_path(&result.metadata_directory),
+        ),
+        TraceField::new("local_build", trace_desktop_path(&result.local_build)),
+    ])
+}
+
+fn trace_review_result(result: &Result<ReviewSummary, String>) -> TraceValue {
+    TraceValue::record(&[
+        TraceField::new(
+            "state",
+            TraceValue::data(if result.is_ok() { "complete" } else { "error" }),
+        ),
+        TraceField::new("value", trace_desktop_debug(result)),
+        TraceField::new(
+            "duplicate_paths",
+            result
+                .as_ref()
+                .ok()
+                .map_or(TraceValue::data(()), |summary| {
+                    TraceValue::data(
+                        summary
+                            .duplicate_groups
+                            .iter()
+                            .map(|(_, _, paths)| {
+                                TraceValue::data(
+                                    paths
+                                        .iter()
+                                        .map(|path| trace_desktop_path(path).to_json())
+                                        .collect::<Vec<_>>(),
+                                )
+                                .to_json()
+                            })
+                            .collect::<Vec<_>>(),
+                    )
+                }),
+        ),
+    ])
+}
+
+fn trace_aifa_people_result(result: &Result<Vec<AifaPersonReview>, String>) -> TraceValue {
+    TraceValue::record(&[
+        TraceField::new(
+            "state",
+            TraceValue::data(if result.is_ok() { "complete" } else { "error" }),
+        ),
+        TraceField::new("value", trace_desktop_debug(result)),
+        TraceField::new(
+            "metadata_directories",
+            result.as_ref().ok().map_or(TraceValue::data(()), |people| {
+                TraceValue::data(
+                    people
+                        .iter()
+                        .map(|person| trace_desktop_path(&person.metadata_directory).to_json())
+                        .collect::<Vec<_>>(),
+                )
+            }),
+        ),
+    ])
+}
+
+fn trace_app_summary(app: &DesktopApp) -> TraceValue {
+    TraceValue::record(&[
+        TraceField::new("profile_loaded", TraceValue::data(app.profile.is_some())),
+        TraceField::new(
+            "selected_people",
+            TraceValue::data(
+                app.selections
+                    .iter()
+                    .filter(|person| person.selected)
+                    .count(),
+            ),
+        ),
+        TraceField::new("review_loaded", TraceValue::data(app.review.is_some())),
+        TraceField::new(
+            "worker_active",
+            TraceValue::data(app.worker_handle.is_some()),
+        ),
+        TraceField::new("log_active", TraceValue::data(app.log_session.is_some())),
+    ])
+}
+
+fn trace_deferred_log_action(action: &Option<DeferredLogSessionAction>) -> TraceValue {
+    match action {
+        Some(DeferredLogSessionAction::Start { path, level, .. }) => TraceValue::record(&[
+            TraceField::new("action", TraceValue::data("start")),
+            TraceField::new("path", trace_desktop_path(path)),
+            TraceField::new("level", trace_desktop_debug(level)),
+        ]),
+        Some(DeferredLogSessionAction::Stop) => {
+            TraceValue::record(&[TraceField::new("action", TraceValue::data("stop"))])
+        }
+        None => TraceValue::data("no pending change"),
+    }
+}
+
 const STRAW_BACKGROUND: egui::Color32 = egui::Color32::from_rgb(248, 241, 198);
 const FIELD_BACKGROUND: egui::Color32 = egui::Color32::from_rgb(255, 252, 229);
 const BLUE_TEXT: egui::Color32 = egui::Color32::from_rgb(0, 51, 204);
 const MIN_PATH_FIELD_WIDTH: f32 = 64.0;
+const WINDOW_TITLE: &str = "SaniKey";
 
 #[derive(Clone, Debug)]
 struct PersonSelection {
@@ -110,6 +352,21 @@ struct AifaDecisionSaved {
     status: String,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PendingLogAction {
+    Start(Level),
+    Stop,
+}
+
+enum DeferredLogSessionAction {
+    Start {
+        session: Session,
+        path: PathBuf,
+        level: Level,
+    },
+    Stop,
+}
+
 #[derive(Clone, Debug)]
 enum AifaDecision {
     Confirm(Box<AifaCandidate>),
@@ -123,6 +380,16 @@ enum AifaUiAction {
 }
 
 struct DesktopApp {
+    log_session: Option<Session>,
+    log_failure: bool,
+    log_path: Option<PathBuf>,
+    log_directory: Option<PathBuf>,
+    selected_log_level: Level,
+    active_log_level: Option<Level>,
+    confirm_sensitive_logging: bool,
+    pending_log_action: Option<PendingLogAction>,
+    log_action_error: Option<String>,
+    worker_handle: Option<JoinHandle<()>>,
     profile_path: String,
     profile: Option<AccountsProfile>,
     selections: Vec<PersonSelection>,
@@ -149,7 +416,27 @@ struct DesktopApp {
 /// Inizializza la schermata in attesa dell'importazione di un profilo.
 impl Default for DesktopApp {
     fn default() -> Self {
+        trace_desktop_call!("desktop::DesktopApp::default", fields [], output trace_app_summary, || {
+        let (log_directory, log_action_error) = match default_log_directory() {
+            Ok(path) => (Some(path), None),
+            Err(error) => (
+                None,
+                Some(format!(
+                    "Cartella predefinita dei log non disponibile: {error}"
+                )),
+            ),
+        };
         Self {
+            log_session: None,
+            log_failure: false,
+            log_path: None,
+            log_directory,
+            selected_log_level: Level::Events,
+            active_log_level: None,
+            confirm_sensitive_logging: false,
+            pending_log_action: None,
+            log_action_error,
+            worker_handle: None,
             profile_path: String::new(),
             profile: None,
             selections: Vec::new(),
@@ -172,14 +459,74 @@ impl Default for DesktopApp {
             #[cfg(target_os = "linux")]
             usb_copy: None,
         }
+        })
     }
 }
 
 /// Gestisce il profilo di sessione e gli eventi di preflight e build.
 impl DesktopApp {
+    fn launch_operation_worker(
+        &mut self,
+        activity: Activity,
+        worker: impl FnOnce(Option<&Operation>) -> Outcome + Send + 'static,
+    ) {
+        trace_desktop_call!("desktop::DesktopApp::launch_operation_worker", fields [
+            "activity" => trace_desktop_debug(&activity),
+            "worker" => TraceValue::Omitted(TraceOmission::UnsupportedType),
+        ], || {
+        let operation = self.log_session.as_ref().and_then(|session| {
+            match session.start_operation(Component::Desktop, activity) {
+                Ok(operation) => Some(operation),
+                Err(_) => {
+                    self.log_failure = true;
+                    None
+                }
+            }
+        });
+        self.worker_handle = Some(spawn_logged_worker(operation, None, move |operation| {
+            Some(worker(operation))
+        }));
+        })
+    }
+
+    fn launch_session_worker(&mut self, worker: impl FnOnce() + Send + 'static) {
+        trace_desktop_call!("desktop::DesktopApp::launch_session_worker", fields [
+            "trace_link_present" => TraceValue::data(self.log_session.is_some()),
+            "worker" => TraceValue::Omitted(TraceOmission::UnsupportedType),
+        ], || {
+        self.worker_handle = Some(spawn_logged_worker(
+            None,
+            self.log_session.as_ref().map(Session::trace_link),
+            move |_| {
+                worker();
+                None
+            },
+        ));
+        })
+    }
+
     fn import_profile(&mut self, path: &Path) {
+        trace_desktop_call!("desktop::DesktopApp::import_profile", fields ["path" => trace_desktop_path(path)], || {
         self.profile_path = path.display().to_string();
-        match AccountsProfile::import(path) {
+        let operation = self.log_session.as_ref().and_then(|session| {
+            match session.start_operation(Component::Desktop, Activity::Profile) {
+                Ok(operation) => Some(operation),
+                Err(_) => {
+                    self.log_failure = true;
+                    None
+                }
+            }
+        });
+        let imported = operation.as_ref().map_or_else(
+            || AccountsProfile::import(path),
+            |operation| operation.scoped(|| AccountsProfile::import(path)),
+        );
+        let outcome = if imported.is_ok() {
+            Outcome::Succeeded
+        } else {
+            Outcome::FailedWith(FailureCategory::Configuration)
+        };
+        match imported {
             Ok(profile) => {
                 self.selections = profile
                     .accounts()
@@ -213,18 +560,30 @@ impl DesktopApp {
                 self.status = format!("{}: {}", error.code().as_str(), error.message());
             }
         }
+        if let Some(operation) = operation
+            && operation.finish(outcome).is_err()
+        {
+            self.log_failure = true;
+        }
+        })
     }
 
     fn open_profile_dialog(&mut self) {
+        trace_desktop_call!("desktop::DesktopApp::open_profile_dialog", fields ["file_dialog" => trace_egui_boundary()], || {
         if let Some(path) = rfd::FileDialog::new()
             .add_filter("Profili account TOML", &["toml"])
             .pick_file()
         {
             self.import_profile(&path);
         }
+        })
     }
 
     fn effective_config(&self) -> Option<AccountsConfig> {
+        trace_desktop_call!("desktop::DesktopApp::effective_config", fields [
+            "profile_loaded" => TraceValue::data(self.profile.is_some()),
+            "selections" => trace_selections(&self.selections),
+        ], output trace_optional_config, || {
         let profile = self.profile.as_ref()?;
         let base_directory = profile.base_directory();
         let mut config = profile.accounts().clone();
@@ -237,9 +596,14 @@ impl DesktopApp {
             person.local_build = resolve_session_path(base_directory, &selection.local_build);
         }
         Some(config)
+        })
     }
 
     fn start_preflight(&mut self) {
+        trace_desktop_call!("desktop::DesktopApp::start_preflight", fields [
+            "profile_loaded" => TraceValue::data(self.profile.is_some()),
+            "selected_people" => TraceValue::data(self.selections.iter().filter(|person| person.selected).count()),
+        ], || {
         if self
             .selections
             .iter()
@@ -282,13 +646,20 @@ impl DesktopApp {
             self.confirm_usb_target = false;
         }
         self.status = "Controllo privacy, metadati, documenti e duplicati…".to_owned();
-        thread::spawn(move || {
+        self.launch_operation_worker(Activity::Preflight, move |_| {
             let result = review_profile(&config, &root);
+            let outcome = outcome_from_result(&result, FailureCategory::Other);
             let _ = sender.send(DesktopEvent::Preflight(result));
+            outcome
         });
+        })
     }
 
     fn start_build(&mut self) {
+        trace_desktop_call!("desktop::DesktopApp::start_build", fields [
+            "profile_loaded" => TraceValue::data(self.profile.is_some()),
+            "selected_people" => TraceValue::data(self.selections.iter().filter(|person| person.selected).count()),
+        ], || {
         let Some(config) = self.effective_config() else {
             return;
         };
@@ -317,10 +688,15 @@ impl DesktopApp {
         self.status =
             "Build in corso; l'annullamento viene applicato al termine della persona corrente."
                 .to_owned();
-        thread::spawn(move || build_selected_people(selected, cancellation, sender));
+        self.launch_session_worker(move || build_selected_people(selected, cancellation, sender));
+        })
     }
 
     fn start_observation_import(&mut self) {
+        trace_desktop_call!("desktop::DesktopApp::start_observation_import", fields [
+            "profile_loaded" => TraceValue::data(self.profile.is_some()),
+            "selected_people" => TraceValue::data(self.selections.iter().filter(|person| person.selected).count()),
+        ], || {
         let Some(config) = self.effective_config() else {
             return;
         };
@@ -338,13 +714,20 @@ impl DesktopApp {
         self.completed_builds.clear();
         self.usb_image = None;
         self.status = "Importazione delle osservazioni selezionate…".to_owned();
-        thread::spawn(move || {
+        self.launch_operation_worker(Activity::Observations, move |_| {
             let result = import_selected_observations(&selected);
+            let outcome = outcome_from_result(&result, FailureCategory::Other);
             let _ = sender.send(DesktopEvent::ObservationsImported(result));
+            outcome
         });
+        })
     }
 
     fn start_aifa_review(&mut self) {
+        trace_desktop_call!("desktop::DesktopApp::start_aifa_review", fields [
+            "profile_loaded" => TraceValue::data(self.profile.is_some()),
+            "selected_people" => TraceValue::data(self.selections.iter().filter(|person| person.selected).count()),
+        ], || {
         let Some(config) = self.effective_config() else {
             return;
         };
@@ -357,13 +740,22 @@ impl DesktopApp {
         let (sender, receiver) = mpsc::channel();
         self.receiver = Some(receiver);
         self.status = "Caricamento dei farmaci e dei riferimenti AIFA…".to_owned();
-        thread::spawn(move || {
+        self.launch_operation_worker(Activity::Aifa, move |_| {
             let result = load_aifa_people(&people);
+            let outcome = outcome_from_result(&result, FailureCategory::Other);
             let _ = sender.send(DesktopEvent::AifaMetadataLoaded(result));
+            outcome
         });
+        })
     }
 
     fn start_aifa_search(&mut self, person_index: usize, medication_index: usize, manual: bool) {
+        trace_desktop_call!("desktop::DesktopApp::start_aifa_search", fields [
+            "person_index" => TraceValue::data(person_index),
+            "medication_index" => TraceValue::data(medication_index),
+            "manual_query" => TraceValue::data(manual),
+            "query_text" => TraceValue::data("captured by PresentedText"),
+        ], || {
         let Some(people) = self.aifa_people.as_ref() else {
             return;
         };
@@ -389,14 +781,21 @@ impl DesktopApp {
         let (sender, receiver) = mpsc::channel();
         self.receiver = Some(receiver);
         self.status = format!("Ricerca AIFA in corso per {medication_id}…");
-        thread::spawn(move || {
+        self.launch_operation_worker(Activity::Aifa, move |_| {
             let result = lookup_aifa_candidate_search(&medication, query.as_deref());
+            let outcome = if result.is_some() {
+                Outcome::Succeeded
+            } else {
+                Outcome::FailedWith(FailureCategory::Other)
+            };
             let _ = sender.send(DesktopEvent::AifaSearchFinished {
                 person_id,
                 medication_id,
                 result,
             });
+            outcome
         });
+        })
     }
 
     fn start_aifa_decision(
@@ -405,6 +804,12 @@ impl DesktopApp {
         medication_index: usize,
         decision: AifaDecision,
     ) {
+        trace_desktop_call!("desktop::DesktopApp::start_aifa_decision", fields [
+            "person_index" => TraceValue::data(person_index),
+            "medication_index" => TraceValue::data(medication_index),
+            "decision_kind" => TraceValue::data(match &decision { AifaDecision::Confirm(_) => "confirm", AifaDecision::MarkNotApplicable => "mark_not_applicable" }),
+            "candidate_details" => TraceValue::data("captured by PresentedText"),
+        ], || {
         let Some(people) = self.aifa_people.as_ref() else {
             return;
         };
@@ -422,7 +827,7 @@ impl DesktopApp {
         let (sender, receiver) = mpsc::channel();
         self.receiver = Some(receiver);
         self.status = format!("Verifica e salvataggio AIFA in corso per {medication_id}…");
-        thread::spawn(move || {
+        self.launch_operation_worker(Activity::Aifa, move |_| {
             let result = save_aifa_decision(
                 &metadata_directory,
                 metadata,
@@ -430,16 +835,23 @@ impl DesktopApp {
                 decision,
                 probe_leaflet_documents,
             );
+            let outcome = outcome_from_result(&result, FailureCategory::Other);
             let _ = sender.send(DesktopEvent::AifaDecisionSaved {
                 person_id,
                 medication_id,
                 result,
             });
+            outcome
         });
+        })
     }
 
     #[cfg(target_os = "linux")]
     fn prepare_usb_image(&mut self) {
+        trace_desktop_call!("desktop::DesktopApp::prepare_usb_image", fields [
+            "completed_builds" => TraceValue::data(self.completed_builds.len()),
+            "selected_people" => TraceValue::data(self.selections.iter().filter(|person| person.selected).count()),
+        ], || {
         let Some(config) = self.effective_config() else {
             return;
         };
@@ -462,15 +874,22 @@ impl DesktopApp {
         self.receiver = Some(receiver);
         self.progress = None;
         self.status = "Preparazione e validazione dell'immagine USB multi-persona…".to_owned();
-        thread::spawn(move || {
-            let result = assemble_usb_image(&config, &builds, destination)
-                .map_err(|error| format!("{}: {}", error.code().as_str(), error.message()));
+        self.launch_operation_worker(Activity::Usb, move |_| {
+            let result = assemble_usb_image(&config, &builds, destination);
+            let outcome = outcome_from_result(&result, FailureCategory::Usb);
+            let result =
+                result.map_err(|error| format!("{}: {}", error.code().as_str(), error.message()));
             let _ = sender.send(DesktopEvent::ImagePrepared(result));
+            outcome
         });
+        })
     }
 
     #[cfg(target_os = "linux")]
     fn choose_usb_target(&mut self) {
+        trace_desktop_call!("desktop::DesktopApp::choose_usb_target", fields [
+            "file_dialog" => trace_egui_boundary(),
+        ], || {
         let Some(target) = rfd::FileDialog::new().pick_folder() else {
             return;
         };
@@ -479,19 +898,28 @@ impl DesktopApp {
         self.receiver = Some(receiver);
         self.progress = None;
         self.status = "Lettura del filesystem e dello spazio libero del volume…".to_owned();
-        thread::spawn(move || {
-            let result = inspect_linux_volume(&worker_target)
-                .map_err(|error| format!("{}: {}", error.code().as_str(), error.message()));
+        self.launch_operation_worker(Activity::Usb, move |_| {
+            let result = inspect_linux_volume(&worker_target);
+            let outcome = outcome_from_result(&result, FailureCategory::Usb);
+            let result =
+                result.map_err(|error| format!("{}: {}", error.code().as_str(), error.message()));
             let _ = sender.send(DesktopEvent::TargetInspected(result));
+            outcome
         });
         self.usb_target = Some(target);
         self.usb_volume = None;
         self.confirm_usb_target = false;
         self.usb_copy = None;
+        })
     }
 
     #[cfg(target_os = "linux")]
     fn copy_usb_image(&mut self) {
+        trace_desktop_call!("desktop::DesktopApp::copy_usb_image", fields [
+            "image_ready" => TraceValue::data(self.usb_image.is_some()),
+            "target_selected" => TraceValue::data(self.usb_target.is_some()),
+            "target_confirmed" => TraceValue::data(self.confirm_usb_target),
+        ], || {
         let (Some(config), Some(image), Some(target)) = (
             self.effective_config(),
             self.usb_image.clone(),
@@ -507,7 +935,7 @@ impl DesktopApp {
         self.receiver = Some(receiver);
         self.progress = None;
         self.status = "Copia USB in corso; verifica finale in attesa…".to_owned();
-        thread::spawn(move || {
+        self.launch_session_worker(move || {
             let run = mirror_validated_usb_image_on_linux_volume(
                 &config,
                 &image.root,
@@ -516,9 +944,14 @@ impl DesktopApp {
             );
             let _ = sender.send(DesktopEvent::UsbCopied(run.outcome));
         });
+        })
     }
 
     fn receive_worker_events(&mut self) {
+        trace_desktop_call!("desktop::DesktopApp::receive_worker_events", fields [
+            "receiver_active" => TraceValue::data(self.receiver.is_some()),
+            "event_payloads" => TraceValue::Omitted(TraceOmission::UnsupportedType),
+        ], || {
         let mut messages = Vec::new();
         let mut disconnected = false;
         if let Some(receiver) = &self.receiver {
@@ -739,18 +1172,44 @@ impl DesktopApp {
             self.cancellation = None;
             self.status = "Operazione interrotta senza esito; controlla gli artefatti e ripeti la build incrementale.".to_owned();
         }
+        if self.receiver.is_none()
+            && self
+                .worker_handle
+                .as_ref()
+                .is_some_and(JoinHandle::is_finished)
+        {
+            self.join_worker();
+        }
+        })
+    }
+
+    fn join_worker(&mut self) {
+        trace_desktop_call!("desktop::DesktopApp::join_worker", fields [
+            "worker_present" => TraceValue::data(self.worker_handle.is_some()),
+            "worker_finished" => TraceValue::data(self.worker_handle.as_ref().is_some_and(JoinHandle::is_finished)),
+        ], || {
+        if let Some(worker) = self.worker_handle.take()
+            && worker.join().is_err()
+        {
+            self.log_action_error =
+                Some("Il worker desktop si è interrotto in modo inatteso.".to_owned());
+        }
+        })
     }
 }
 
 fn resolve_session_path(base_directory: &Path, path: &Path) -> PathBuf {
+    trace_desktop_call!("desktop::resolve_session_path", fields ["base_directory" => trace_desktop_path(base_directory), "path" => trace_desktop_path(path)], output trace_path_result, || {
     if path.is_absolute() {
         path.to_path_buf()
     } else {
         base_directory.join(path)
     }
+    })
 }
 
 fn review_profile(config: &AccountsConfig, root: &Path) -> Result<ReviewSummary, String> {
+    trace_desktop_call!("desktop::review_profile", fields ["config" => trace_desktop_debug(config), "native_paths" => trace_config_paths(config), "root" => trace_desktop_path(root)], output trace_review_result, || {
     prepare_people_metadata(config, root)
         .map_err(|error| format!("{}: {}", error.code().as_str(), error.message()))?;
     let mut summary = ReviewSummary::default();
@@ -771,11 +1230,13 @@ fn review_profile(config: &AccountsConfig, root: &Path) -> Result<ReviewSummary,
         }
     }
     Ok(summary)
+    })
 }
 
 fn import_selected_observations(
     people: &[PersonConfig],
 ) -> Result<ObservationImportSummary, String> {
+    trace_desktop_call!("desktop::import_selected_observations", fields ["people" => trace_people(people)], || {
     let mut summary = ObservationImportSummary::default();
     for person in people {
         let imported = import_observations(&person.metadata_directory, &person.source_documents)
@@ -798,9 +1259,11 @@ fn import_selected_observations(
         );
     }
     Ok(summary)
+    })
 }
 
 fn load_aifa_people(people: &[PersonConfig]) -> Result<Vec<AifaPersonReview>, String> {
+    trace_desktop_call!("desktop::load_aifa_people", fields ["people" => trace_people(people)], output trace_aifa_people_result, || {
     people
         .iter()
         .map(|person| {
@@ -833,46 +1296,101 @@ fn load_aifa_people(people: &[PersonConfig]) -> Result<Vec<AifaPersonReview>, St
             })
         })
         .collect()
+    })
 }
 
 fn candidates_for_review(search: &AifaCandidateSearch) -> &[AifaCandidate] {
+    trace_desktop_call!("desktop::candidates_for_review", fields ["search" => trace_desktop_debug(search)], || {
     if search.exact.is_empty() {
         &search.review
     } else {
         &search.exact
     }
+    })
 }
 
-fn show_aifa_candidate(ui: &mut egui::Ui, candidate: &AifaCandidate) {
-    ui.label(format!(
-        "Principi attivi: {}",
-        candidate.active_ingredients.join(", ")
-    ));
-    ui.label(format!(
-        "Forma: {}",
-        candidate.form.as_deref().unwrap_or("non indicata")
-    ));
-    ui.label(format!(
-        "Dosaggio: {}",
-        candidate.strength.as_deref().unwrap_or("non indicato")
-    ));
-    ui.label(format!(
-        "Titolare: {}",
-        candidate.company.as_deref().unwrap_or("non indicato")
-    ));
-    ui.label(format!("ATC: {}", candidate.atc.join(", ")));
-    ui.label(format!("Vie: {}", candidate.routes.join(", ")));
-    ui.label(format!("Confezioni: {}", candidate.packages.join("; ")));
-    ui.label(format!(
-        "Identificativo AIFA: {}/{}",
-        candidate.codice_sis, candidate.aic6
-    ));
+fn show_aifa_candidate(
+    ui: &mut egui::Ui,
+    candidate: &AifaCandidate,
+    session: Option<&Session>,
+    log_failure: &mut bool,
+    person_index: usize,
+    medication_index: usize,
+) {
+    trace_desktop_call!("desktop::show_aifa_candidate", fields [
+        "ui" => trace_egui_boundary(),
+        "candidate_fields" => TraceValue::data("captured by PresentedText"),
+        "person_index" => TraceValue::data(person_index),
+        "medication_index" => TraceValue::data(medication_index),
+        "presentation_values" => TraceValue::data("captured by PresentedText"),
+    ], || {
+    let fields = [
+        (
+            "aifa_ingredients",
+            format!(
+                "Principi attivi: {}",
+                candidate.active_ingredients.join(", ")
+            ),
+        ),
+        (
+            "aifa_form",
+            format!(
+                "Forma: {}",
+                candidate.form.as_deref().unwrap_or("non indicata")
+            ),
+        ),
+        (
+            "aifa_strength",
+            format!(
+                "Dosaggio: {}",
+                candidate.strength.as_deref().unwrap_or("non indicato")
+            ),
+        ),
+        (
+            "aifa_company",
+            format!(
+                "Titolare: {}",
+                candidate.company.as_deref().unwrap_or("non indicato")
+            ),
+        ),
+        ("aifa_atc", format!("ATC: {}", candidate.atc.join(", "))),
+        (
+            "aifa_routes",
+            format!("Vie: {}", candidate.routes.join(", ")),
+        ),
+        (
+            "aifa_packages",
+            format!("Confezioni: {}", candidate.packages.join("; ")),
+        ),
+        (
+            "aifa_identifier",
+            format!(
+                "Identificativo AIFA: {}/{}",
+                candidate.codice_sis, candidate.aic6
+            ),
+        ),
+    ];
+    for (name, text) in &fields {
+        let text = PresentedText::new(text, Classification::Private);
+        ui.label(text.capture(
+            session,
+            log_failure,
+            DisplayControl::indexed(name, person_index, Some(medication_index)),
+        ));
+    }
     if !candidate.mismatches.is_empty() {
+        let text = format!("Campi da verificare: {}", candidate.mismatches.join(", "));
+        let text = PresentedText::new(&text, Classification::Private);
         ui.colored_label(
             warning_text_color(ui.visuals().dark_mode),
-            format!("Campi da verificare: {}", candidate.mismatches.join(", ")),
+            text.capture(
+                session,
+                log_failure,
+                DisplayControl::indexed("aifa_mismatches", person_index, Some(medication_index)),
+            ),
         );
     }
+    })
 }
 
 fn save_aifa_decision(
@@ -882,7 +1400,15 @@ fn save_aifa_decision(
     decision: AifaDecision,
     probe: impl FnOnce(&MedicationLeaflet) -> Vec<LeafletDownloadFailure>,
 ) -> Result<AifaDecisionSaved, String> {
-    save_aifa_decision_with(metadata_directory, metadata, medication, decision, probe)
+    trace_desktop_call!("desktop::save_aifa_decision", fields [
+        "metadata_directory" => trace_desktop_path(metadata_directory),
+        "metadata" => trace_desktop_debug(&metadata),
+        "medication" => trace_desktop_debug(medication),
+        "decision_kind" => TraceValue::data(match &decision { AifaDecision::Confirm(_) => "confirm", AifaDecision::MarkNotApplicable => "mark_not_applicable" }),
+        "probe" => TraceValue::Omitted(TraceOmission::UnsupportedType),
+    ], || {
+        save_aifa_decision_with(metadata_directory, metadata, medication, decision, probe)
+    })
 }
 
 fn save_aifa_decision_with(
@@ -892,6 +1418,13 @@ fn save_aifa_decision_with(
     decision: AifaDecision,
     probe: impl FnOnce(&MedicationLeaflet) -> Vec<LeafletDownloadFailure>,
 ) -> Result<AifaDecisionSaved, String> {
+    trace_desktop_call!("desktop::save_aifa_decision_with", fields [
+        "metadata_directory" => trace_desktop_path(metadata_directory),
+        "metadata" => trace_desktop_debug(&metadata),
+        "medication" => trace_desktop_debug(medication),
+        "decision_kind" => TraceValue::data(match &decision { AifaDecision::Confirm(_) => "confirm", AifaDecision::MarkNotApplicable => "mark_not_applicable" }),
+        "probe" => TraceValue::Omitted(TraceOmission::UnsupportedType),
+    ], || {
     let expected_reference = metadata
         .medication_leaflets
         .iter()
@@ -940,6 +1473,7 @@ fn save_aifa_decision_with(
     )
     .map_err(|error| format!("{}: {}", error.code().as_str(), error.message()))?;
     Ok(AifaDecisionSaved { metadata, status })
+    })
 }
 
 fn build_selected_people(
@@ -947,9 +1481,15 @@ fn build_selected_people(
     cancellation: CancellationToken,
     sender: Sender<DesktopEvent>,
 ) {
+    trace_desktop_call!("desktop::build_selected_people", fields [
+        "people" => trace_desktop_debug(&people),
+        "cancellation_requested" => TraceValue::data(cancellation.is_cancelled()),
+        "event_sender" => TraceValue::Omitted(TraceOmission::UnsupportedType),
+    ], || {
     build_selected_people_with(people, cancellation, sender, |person| {
         build_patient(person, BuildOptions::default())
     });
+    })
 }
 
 fn build_selected_people_with(
@@ -960,6 +1500,12 @@ fn build_selected_people_with(
         &PersonConfig,
     ) -> Result<PatientBuildResult, sanikey_core::operation::OperationError>,
 ) {
+    trace_desktop_call!("desktop::build_selected_people_with", fields [
+        "people" => trace_desktop_debug(&people),
+        "cancellation_requested" => TraceValue::data(cancellation.is_cancelled()),
+        "event_sender" => TraceValue::Omitted(TraceOmission::UnsupportedType),
+        "build_callback" => TraceValue::Omitted(TraceOmission::UnsupportedType),
+    ], || {
     let total = people.len() as u64;
     let _ = sender.send(DesktopEvent::Progress(OperationEvent::Started {
         operation: "build.generate",
@@ -992,31 +1538,157 @@ fn build_selected_people_with(
         let _ = sender.send(DesktopEvent::Terminal(event.clone()));
     }
     let _outcome = run.outcome;
+    })
 }
 
 fn selection_from_person(person: &PersonConfig) -> PersonSelection {
+    trace_desktop_call!("desktop::selection_from_person", fields [
+        "person" => trace_desktop_debug(person),
+        "paths" => TraceValue::record(&[
+            TraceField::new("source_documents", trace_desktop_path(&person.source_documents)),
+            TraceField::new("metadata_directory", trace_desktop_path(&person.metadata_directory)),
+            TraceField::new("local_build", trace_desktop_path(&person.local_build)),
+        ]),
+    ], output trace_selection_result, || {
     PersonSelection {
         selected: person.enabled,
         source_documents: person.source_documents.clone(),
         metadata_directory: person.metadata_directory.clone(),
         local_build: person.local_build.clone(),
     }
+    })
 }
 
-fn choose_folder(ui: &mut egui::Ui, label_text: &str, path: &mut PathBuf) {
-    let label = ui.label(label_text);
+fn spawn_logged_worker(
+    operation: Option<Operation>,
+    log_link: Option<TraceLink>,
+    worker: impl FnOnce(Option<&Operation>) -> Option<Outcome> + Send + 'static,
+) -> JoinHandle<()> {
+    trace_desktop_call!("desktop::spawn_logged_worker", fields [
+        "operation_present" => TraceValue::data(operation.is_some()),
+        "trace_link_present" => TraceValue::data(log_link.is_some()),
+        "worker_callback" => TraceValue::Omitted(TraceOmission::UnsupportedType),
+    ], output |_| TraceValue::data("worker thread spawned"), || {
+    thread::spawn(move || {
+        let mut worker = Some(worker);
+        if let Some(operation) = operation {
+            let outcome = operation.scoped(|| {
+                let trace = trace_current(Component::Desktop, "desktop::spawn_logged_worker::run", || {
+                    Vec::from([
+                        TraceField::new("operation_present", TraceValue::data(true)),
+                        TraceField::new("worker_callback", TraceValue::Omitted(TraceOmission::UnsupportedType)),
+                    ])
+                });
+                let _ = operation.phase(ProgressPhase::Processing);
+                let outcome = worker
+                    .take()
+                    .expect("worker callback used exactly once")(Some(&operation))
+                    .unwrap_or(Outcome::Failed);
+                if let Some(trace) = trace {
+                    let _ = trace.finish(trace_desktop_debug(&outcome));
+                }
+                outcome
+            });
+            let _ = operation.finish(outcome);
+        } else if let Some(link) = log_link {
+            link.scoped(|| {
+                let trace = trace_current(Component::Desktop, "desktop::spawn_logged_worker::run", || {
+                    Vec::from([
+                        TraceField::new("trace_link_present", TraceValue::data(true)),
+                        TraceField::new("worker_callback", TraceValue::Omitted(TraceOmission::UnsupportedType)),
+                    ])
+                });
+                let result = worker.take().expect("worker callback used exactly once")(None);
+                if let Some(trace) = trace {
+                    let _ = trace.finish(trace_desktop_debug(&result));
+                }
+                result
+            });
+        } else {
+            worker.take().expect("worker callback used exactly once")(None);
+        }
+    })
+    })
+}
+
+fn outcome_from_result<T, E>(result: &Result<T, E>, category: FailureCategory) -> Outcome {
+    trace_desktop_call!("desktop::outcome_from_result", fields [
+        "success" => TraceValue::data(result.is_ok()),
+        "failure_category" => trace_desktop_debug(&category),
+    ], || {
+    match result {
+        Ok(_) => Outcome::Succeeded,
+        Err(_) => Outcome::FailedWith(category),
+    }
+    })
+}
+
+fn record_ui_action(
+    session: Option<&Session>,
+    log_failure: &mut bool,
+    activity: Activity,
+    target: DisplayControl,
+) {
+    trace_desktop_call!("desktop::record_ui_action", fields [
+        "session_active" => TraceValue::data(session.is_some()),
+        "activity" => trace_desktop_debug(&activity),
+        "target" => trace_desktop_debug(&target),
+    ], || {
+    let Some(session) = session else {
+        return;
+    };
+    match session.start_control_action(activity, target) {
+        Ok(operation) => {
+            if operation.finish(Outcome::Succeeded).is_err() {
+                *log_failure = true;
+            }
+        }
+        Err(_) => *log_failure = true,
+    }
+    })
+}
+
+fn choose_folder(
+    ui: &mut egui::Ui,
+    label_text: &str,
+    path: &mut PathBuf,
+    session: Option<&Session>,
+    log_failure: &mut bool,
+    control: DisplayControl,
+) {
+    trace_desktop_call!("desktop::choose_folder", fields [
+        "ui" => trace_egui_boundary(),
+        "control" => trace_desktop_debug(&control),
+        "label_text" => TraceValue::data("captured by PresentedText"),
+        "path_text" => TraceValue::data("captured by PresentedText"),
+    ], || {
+    let label_text = PresentedText::new(label_text, Classification::Public);
+    let label =
+        ui.label(label_text.capture(session, log_failure, control.with_part(DisplayPart::Label)));
     let mut text = path.display().to_string();
     ui.horizontal_wrapped(|ui| {
         let response = add_responsive_path_edit(ui, label.id, &mut text, 100.0);
         if response.changed() {
             *path = PathBuf::from(&text);
+            record_ui_action(session, log_failure, Activity::GuiFolderEdited, control);
         }
-        if ui.button("Scegli…").clicked()
+        let button = PresentedText::new("Scegli…", Classification::Public);
+        if ui
+            .button(button.capture(session, log_failure, control.with_part(DisplayPart::Action)))
+            .clicked()
             && let Some(chosen) = rfd::FileDialog::new().pick_folder()
         {
             *path = chosen;
+            record_ui_action(
+                session,
+                log_failure,
+                Activity::GuiFolderChosen,
+                control.with_part(DisplayPart::Action),
+            );
         }
     });
+    PresentedText::new(&text, Classification::Private).capture(session, log_failure, control);
+    })
 }
 
 fn add_responsive_path_edit(
@@ -1025,15 +1697,23 @@ fn add_responsive_path_edit(
     text: &mut String,
     trailing_controls_width: f32,
 ) -> egui::Response {
+    trace_desktop_call!("desktop::add_responsive_path_edit", fields [
+        "ui" => trace_egui_boundary(),
+        "label_id" => trace_egui_boundary(),
+        "text" => TraceValue::data("captured by caller presentation"),
+        "trailing_controls_width" => trace_desktop_debug(&trailing_controls_width),
+    ], output |_| trace_egui_boundary(), || {
     let width = (ui.available_width() - trailing_controls_width).max(MIN_PATH_FIELD_WIDTH);
     ui.add_sized(
         egui::vec2(width, ui.spacing().interact_size.y),
         egui::TextEdit::singleline(text),
     )
     .labelled_by(label_id)
+    })
 }
 
 fn desktop_visuals() -> egui::Visuals {
+    trace_desktop_call!("desktop::desktop_visuals", fields [], || {
     let mut visuals = egui::Visuals::light();
     visuals.panel_fill = STRAW_BACKGROUND;
     visuals.window_fill = STRAW_BACKGROUND;
@@ -1057,110 +1737,681 @@ fn desktop_visuals() -> egui::Visuals {
         widget.fg_stroke.color = BLUE_TEXT;
     }
     visuals
+    })
 }
 
 fn configure_desktop_theme(context: &egui::Context) {
+    trace_desktop_call!("desktop::configure_desktop_theme", fields ["context" => trace_egui_boundary()], || {
     context.set_theme(egui::Theme::Light);
     context.set_visuals(desktop_visuals());
+    })
 }
 
+#[cfg(test)]
 fn show_path(ui: &mut egui::Ui, label_text: &str, path: &Path) {
+    render_path(ui, label_text, &path.display().to_string());
+}
+
+fn render_path(ui: &mut egui::Ui, label_text: &str, text: &str) {
+    trace_desktop_call!("desktop::render_path", fields [
+        "ui" => trace_egui_boundary(),
+        "label_text" => TraceValue::data("captured by caller presentation"),
+        "path_text" => TraceValue::data("captured by caller presentation"),
+    ], || {
     ui.label(label_text);
     ui.add(
-        egui::Label::new(egui::RichText::new(path.display().to_string()).monospace())
-            .wrap_mode(egui::TextWrapMode::Wrap),
+        egui::Label::new(egui::RichText::new(text).monospace()).wrap_mode(egui::TextWrapMode::Wrap),
     );
+    })
+}
+
+fn show_captured_path(
+    ui: &mut egui::Ui,
+    label_text: &str,
+    path: &Path,
+    session: Option<&Session>,
+    log_failure: &mut bool,
+    control: DisplayControl,
+) {
+    trace_desktop_call!("desktop::show_captured_path", fields [
+        "ui" => trace_egui_boundary(),
+        "session_active" => TraceValue::data(session.is_some()),
+        "control" => trace_desktop_debug(&control),
+        "label_and_path" => TraceValue::data("captured by PresentedText"),
+    ], || {
+    let path_text = path.display().to_string();
+    let presented = PresentedText::new(&path_text, Classification::Private);
+    let label = PresentedText::new(label_text, Classification::Public);
+    let label = label.capture(session, log_failure, control.with_part(DisplayPart::Label));
+    render_path(ui, label, presented.capture(session, log_failure, control));
+    })
 }
 
 /// Sceglie un rosso leggibile sia sul fondo chiaro sia su quello scuro.
 fn warning_text_color(dark_mode: bool) -> egui::Color32 {
+    trace_desktop_call!("desktop::warning_text_color", fields ["dark_mode" => TraceValue::data(dark_mode)], || {
     if dark_mode {
         egui::Color32::LIGHT_RED
     } else {
         egui::Color32::DARK_RED
+    }
+    })
+}
+
+/// Gestisce i controlli di registrazione e le viste operative della GUI.
+impl DesktopApp {
+    fn can_start_logging(&self) -> bool {
+        trace_desktop_call!("desktop::DesktopApp::can_start_logging", fields [
+            "receiver_active" => TraceValue::data(self.receiver.is_some()),
+            "worker_active" => TraceValue::data(self.worker_handle.is_some()),
+            "active_level" => trace_desktop_debug(&self.active_log_level),
+            "selected_level" => trace_desktop_debug(&self.selected_log_level),
+            "log_directory_configured" => TraceValue::data(self.log_directory.is_some()),
+            "sensitive_logging_confirmed" => TraceValue::data(self.confirm_sensitive_logging),
+        ], || {
+        self.receiver.is_none()
+            && self.worker_handle.is_none()
+            && self.active_log_level != Some(self.selected_log_level)
+            && self.log_directory.is_some()
+            && (self.selected_log_level < Level::Diagnostic || self.confirm_sensitive_logging)
+        })
+    }
+
+    fn show_logging_controls(&mut self, ui: &mut egui::Ui) {
+        trace_desktop_call!("desktop::DesktopApp::show_logging_controls", fields [
+            "ui" => trace_egui_boundary(),
+            "selected_level" => trace_desktop_debug(&self.selected_log_level),
+            "active_level" => trace_desktop_debug(&self.active_log_level),
+            "presentation_values" => TraceValue::data("captured by PresentedText"),
+        ], || {
+        ui.group(|ui| {
+            ui.label(presented!(
+                self,
+                DisplayControl::new("logging_heading"),
+                Classification::Public,
+                "Registrazione log per questa sessione"
+            ));
+            let levels = [
+                (Level::Events, "Eventi"),
+                (Level::Diagnostic, "Diagnostica"),
+                (Level::Trace, "Traccia completa"),
+            ];
+            let worker_idle = self.receiver.is_none() && self.worker_handle.is_none();
+            ui.add_enabled_ui(worker_idle, |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    for (level, label) in levels {
+                        let control = DisplayControl::new(match level {
+                            Level::Events => "logging_level_events",
+                            Level::Diagnostic => "logging_level_diagnostic",
+                            Level::Trace => "logging_level_trace",
+                        });
+                        if ui
+                            .radio_value(
+                                &mut self.selected_log_level,
+                                level,
+                                presented!(self, control, Classification::Public, label),
+                            )
+                            .changed()
+                        {
+                            record_ui_action(
+                                self.log_session.as_ref(),
+                                &mut self.log_failure,
+                                Activity::GuiLogLevelSelected,
+                                DisplayControl::new("logging_level"),
+                            );
+                            self.confirm_sensitive_logging = false;
+                        }
+                    }
+                });
+            });
+            let directory_text = self
+                .log_directory
+                .as_ref()
+                .map(|path| path.display().to_string())
+                .unwrap_or_else(|| "cartella utente non disponibile".to_owned());
+            ui.label(presented!(
+                self,
+                DisplayControl::new("logging_directory"),
+                Classification::Private,
+                format!("Cartella log: {directory_text}")
+            ));
+            if let Some(path) = &self.log_path {
+                ui.label(presented!(
+                    self,
+                    DisplayControl::new("logging_active_path"),
+                    Classification::Private,
+                    format!("File della sessione: {}", path.display())
+                ));
+            }
+            let sensitive = self.selected_log_level >= Level::Diagnostic;
+            match self.selected_log_level {
+                Level::Events => {
+                    ui.label(presented!(
+                        self,
+                        DisplayControl::new("logging_events_description"),
+                        Classification::Public,
+                        "Registra eventi operativi senza testo privato della GUI."
+                    ));
+                }
+                Level::Diagnostic => {
+                    ui.label(presented!(
+                        self,
+                        DisplayControl::new("logging_diagnostic_warning"),
+                        Classification::Public,
+                        "Può registrare dati sanitari, percorsi e altro testo privato mostrato nella GUI."
+                    ));
+                }
+                Level::Trace => {
+                    ui.label(presented!(
+                        self,
+                        DisplayControl::new("logging_trace_warning"),
+                        Classification::Public,
+                        "Può includere dati privati. La copertura delle funzioni è progressiva e il log può avere omissioni."
+                    ));
+                }
+            }
+            ui.label(presented!(
+                self,
+                DisplayControl::new("logging_permissions_limit"),
+                Classification::Public,
+                "Su sistemi non Unix l'accesso ai log dipende dalle ACL ereditate, non verificate dalla GUI."
+            ));
+            if sensitive {
+                ui.add_enabled_ui(worker_idle, |ui| {
+                    if ui
+                        .checkbox(
+                            &mut self.confirm_sensitive_logging,
+                            presented!(
+                                self,
+                                DisplayControl::new("logging_sensitive_confirmation"),
+                                Classification::Public,
+                                "Confermo di voler registrare contenuti privati per questa sessione."
+                            ),
+                        )
+                        .changed()
+                    {
+                        record_ui_action(
+                            self.log_session.as_ref(),
+                            &mut self.log_failure,
+                            Activity::GuiConsentChanged,
+                            DisplayControl::new("logging_sensitive_confirmation"),
+                        );
+                    }
+                });
+            }
+            ui.horizontal_wrapped(|ui| {
+                if ui
+                    .add_enabled(
+                        self.can_start_logging(),
+                        egui::Button::new(presented!(
+                            self,
+                            DisplayControl::new("logging_start"),
+                            Classification::Public,
+                            "Attiva / applica livello"
+                        )),
+                    )
+                    .clicked()
+                {
+                    self.pending_log_action = Some(PendingLogAction::Start(self.selected_log_level));
+                    ui.ctx().request_repaint();
+                }
+                if self.log_session.is_some()
+                    && self.receiver.is_none()
+                    && self.worker_handle.is_none()
+                    && ui
+                        .button(presented!(
+                            self,
+                            DisplayControl::new("logging_stop"),
+                            Classification::Public,
+                            "Disattiva"
+                        ))
+                        .clicked()
+                {
+                    record_ui_action(
+                        self.log_session.as_ref(),
+                        &mut self.log_failure,
+                        Activity::GuiLoggingStop,
+                        DisplayControl::new("logging_stop"),
+                    );
+                    self.pending_log_action = Some(PendingLogAction::Stop);
+                    ui.ctx().request_repaint();
+                }
+            });
+            if let Some(error) = &self.log_action_error {
+                ui.colored_label(
+                    warning_text_color(ui.visuals().dark_mode),
+                    presented!(
+                        self,
+                        DisplayControl::new("logging_action_error"),
+                        Classification::Unclassified,
+                        error
+                    ),
+                );
+            }
+        });
+        })
+    }
+
+    fn apply_pending_log_action(&mut self) {
+        let trace_session = self.log_session.clone();
+        let mut apply = || {
+            let action = trace_desktop_call!(
+                "desktop::DesktopApp::apply_pending_log_action",
+                fields [
+                    "pending_action" => trace_desktop_debug(&self.pending_log_action),
+                    "log_directory" => self.log_directory.as_deref().map_or(TraceValue::data(()), trace_desktop_path),
+                    "active_level" => trace_desktop_debug(&self.active_log_level),
+                ],
+                output trace_deferred_log_action,
+                || {
+                    let action = self.pending_log_action.take()?;
+                    self.log_action_error = None;
+                    match action {
+                        PendingLogAction::Start(level) => {
+                            let Some(directory) = self.log_directory.as_deref() else {
+                                self.log_action_error = Some(
+                                    "Cartella predefinita dei log non disponibile su questo sistema.".into(),
+                                );
+                                return None;
+                            };
+                            match Session::create_in_directory_with_level(
+                                directory,
+                                Component::Desktop,
+                                level,
+                            ) {
+                                Ok((session, path)) => Some(DeferredLogSessionAction::Start {
+                                    session,
+                                    path,
+                                    level,
+                                }),
+                                Err(error) => {
+                                    self.log_action_error = Some(format!(
+                                        "Impossibile avviare il log nella cartella selezionata: {error}"
+                                    ));
+                                    None
+                                }
+                            }
+                        }
+                        PendingLogAction::Stop => Some(DeferredLogSessionAction::Stop),
+                    }
+                }
+            );
+
+            match action {
+                Some(DeferredLogSessionAction::Start {
+                    session,
+                    path,
+                    level,
+                }) => {
+                    self.log_failure = false;
+                    self.finish_log_session();
+                    self.log_session = Some(session);
+                    self.log_path = Some(path);
+                    self.active_log_level = Some(level);
+                    self.selected_log_level = level;
+                    self.confirm_sensitive_logging = false;
+                }
+                Some(DeferredLogSessionAction::Stop) => {
+                    self.finish_log_session();
+                    self.log_path = None;
+                    self.active_log_level = None;
+                    self.confirm_sensitive_logging = false;
+                }
+                None => {}
+            }
+        };
+        if let Some(session) = trace_session {
+            session.scoped(apply);
+        } else {
+            apply();
+        }
+    }
+
+    fn finish_log_session(&mut self) {
+        let session = trace_desktop_call!(
+            "desktop::DesktopApp::finish_log_session",
+            fields [
+                "session_active" => TraceValue::data(self.log_session.is_some()),
+                "active_level" => trace_desktop_debug(&self.active_log_level),
+            ],
+            output |session: &Option<Session>| TraceValue::data(session.is_some()),
+            || self.log_session.take()
+        );
+        if let Some(session) = session {
+            let incomplete_before_finish = session.has_failed();
+            let finish_result = session.finish(Component::Desktop);
+            if finish_result.is_err() {
+                self.log_failure = true;
+                self.log_action_error = Some(
+                    "Impossibile completare il file di log; la registrazione potrebbe essere incompleta."
+                        .into(),
+                );
+            } else if incomplete_before_finish {
+                self.log_failure = true;
+                self.log_action_error =
+                    Some("Registrazione interrotta o incompleta; verifica il file di log.".into());
+            }
+        }
     }
 }
 
 /// Collega gli eventi del core ai controlli e allo stato visuale.
 impl eframe::App for DesktopApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        configure_desktop_theme(ui.ctx());
-        ui.painter()
-            .rect_filled(ui.max_rect(), 0.0, STRAW_BACKGROUND);
-        egui::Frame::NONE
-            .fill(STRAW_BACKGROUND)
-            .inner_margin(egui::Margin {
-                left: 16,
-                ..egui::Margin::ZERO
+        let trace_session = self.log_session.clone();
+        let mut render = || {
+            trace_desktop_call!("desktop::eframe::App::ui", fields [
+                "ui" => trace_egui_boundary(),
+                "frame" => trace_egui_boundary(),
+                "app_state" => TraceValue::Omitted(TraceOmission::UnsupportedType),
+                "presentation_values" => TraceValue::data("captured by PresentedText"),
+            ], || {
+            let capture_session = self.log_session.clone();
+            if let Some(session) = &capture_session {
+                if session.has_failed() {
+                    self.log_failure = true;
+                }
+                if session.begin_display_frame().is_err() {
+                    self.log_failure = true;
+                }
+            }
+            configure_desktop_theme(ui.ctx());
+            ui.painter()
+                .rect_filled(ui.max_rect(), 0.0, STRAW_BACKGROUND);
+            egui::Frame::NONE
+                .fill(STRAW_BACKGROUND)
+                .inner_margin(egui::Margin {
+                    left: 16,
+                    ..egui::Margin::ZERO
+                })
+                .show(ui, |ui| {
+                    egui::ScrollArea::vertical().show(ui, |ui| self.show_contents(ui));
+                });
+            if let Some(session) = &capture_session
+                && session.end_display_frame().is_err()
+            {
+                self.log_failure = true;
+            }
+            if capture_session.as_ref().is_some_and(Session::has_failed) {
+                self.log_failure = true;
+            }
             })
-            .show(ui, |ui| {
-                egui::ScrollArea::vertical().show(ui, |ui| self.show_contents(ui));
-            });
+        };
+        if let Some(session) = trace_session {
+            session.scoped(render);
+        } else {
+            render();
+        }
+        self.apply_pending_log_action();
+    }
+
+    fn on_exit(&mut self) {
+        let trace_session = self.log_session.clone();
+        let mut exit = || {
+            let finalize_session = trace_desktop_call!(
+                "desktop::eframe::App::on_exit",
+                fields [
+                    "cancellation_active" => TraceValue::data(self.cancellation.is_some()),
+                    "worker_active" => TraceValue::data(self.worker_handle.is_some()),
+                    "session_active" => TraceValue::data(self.log_session.is_some()),
+                ],
+                || {
+                    if let Some(cancellation) = &self.cancellation {
+                        cancellation.cancel();
+                    }
+                    if self
+                        .worker_handle
+                        .as_ref()
+                        .is_some_and(|worker| !worker.is_finished())
+                    {
+                        if let Some(session) = &self.log_session
+                            && session.shutdown_pending(Component::Desktop).is_err()
+                        {
+                            self.log_failure = true;
+                        }
+                        let worker = self
+                            .worker_handle
+                            .take()
+                            .expect("worker verificato presente");
+                        if let Some(session) = self.log_session.take() {
+                            thread::spawn(move || {
+                                let _ = worker.join();
+                                let _ = session.finish(Component::Desktop);
+                            });
+                        }
+                        false
+                    } else {
+                        self.join_worker();
+                        true
+                    }
+                }
+            );
+            if finalize_session {
+                self.finish_log_session();
+            }
+        };
+        if let Some(session) = trace_session {
+            session.scoped(exit);
+        } else {
+            exit();
+        }
     }
 }
 
 /// Rende l'intera vista desktop scorrevole sui viewport ridotti.
 impl DesktopApp {
     fn show_contents(&mut self, ui: &mut egui::Ui) {
+        trace_desktop_call!("desktop::DesktopApp::show_contents", fields [
+            "ui" => trace_egui_boundary(),
+            "app_state" => TraceValue::Omitted(TraceOmission::UnsupportedType),
+            "profile_loaded" => TraceValue::data(self.profile.is_some()),
+            "selected_people" => TraceValue::data(self.selections.iter().filter(|person| person.selected).count()),
+            "presentation_values" => TraceValue::data("captured by PresentedText"),
+        ], || {
         self.receive_worker_events();
-        let busy = self.receiver.is_some();
+        let busy = self.receiver.is_some() || self.worker_handle.is_some();
+        if self.worker_handle.is_some() {
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_millis(30));
+        }
         if !busy
             && ui
                 .ctx()
                 .input_mut(|input| input.consume_key(Modifiers::CTRL, Key::O))
         {
+            record_ui_action(
+                self.log_session.as_ref(),
+                &mut self.log_failure,
+                Activity::GuiProfileDialogOpened,
+                DisplayControl::new("open_profile_keyboard"),
+            );
             self.open_profile_dialog();
         }
 
-        ui.heading("SaniKey");
-        ui.label("Importa un profilo e scegli persone e cartelle per questa sessione.");
+        let title = PresentedText::new(WINDOW_TITLE, Classification::Public);
+        title.capture(
+            self.log_session.as_ref(),
+            &mut self.log_failure,
+            DisplayControl::new("window_title"),
+        );
+        let heading = PresentedText::new(WINDOW_TITLE, Classification::Public);
+        ui.heading(heading.capture(
+            self.log_session.as_ref(),
+            &mut self.log_failure,
+            DisplayControl::new("heading"),
+        ));
+        ui.label(presented!(
+            self,
+            DisplayControl::new("intro"),
+            Classification::Public,
+            "Importa un profilo e scegli persone e cartelle per questa sessione."
+        ));
         let can_edit = !busy && self.review.is_none();
         let mut open_profile = false;
         ui.add_enabled_ui(can_edit, |ui| {
-            let label = ui.label("Profilo account");
+            let label = ui.label(presented!(
+                self,
+                DisplayControl::new("profile_label"),
+                Classification::Public,
+                "Profilo account"
+            ));
             ui.horizontal_wrapped(|ui| {
-                add_responsive_path_edit(ui, label.id, &mut self.profile_path, 180.0);
-                open_profile = ui.button("Apri profilo… (Ctrl+O)").clicked();
+                let path_edit =
+                    add_responsive_path_edit(ui, label.id, &mut self.profile_path, 180.0);
+                if path_edit.changed() {
+                    record_ui_action(
+                        self.log_session.as_ref(),
+                        &mut self.log_failure,
+                        Activity::GuiProfilePathEdited,
+                        DisplayControl::new("profile_path"),
+                    );
+                }
+                open_profile = ui
+                    .button(presented!(
+                        self,
+                        DisplayControl::new("open_profile"),
+                        Classification::Public,
+                        "Apri profilo… (Ctrl+O)"
+                    ))
+                    .clicked();
             });
         });
+        let profile_text = PresentedText::new(&self.profile_path, Classification::Private);
+        profile_text.capture(
+            self.log_session.as_ref(),
+            &mut self.log_failure,
+            DisplayControl::new("profile_path"),
+        );
         if open_profile {
+            record_ui_action(
+                self.log_session.as_ref(),
+                &mut self.log_failure,
+                Activity::GuiProfileDialogOpened,
+                DisplayControl::new("open_profile"),
+            );
             self.open_profile_dialog();
         }
-        ui.label("Le scelte di questa schermata non modificano il file del profilo.");
-        ui.label("I percorsi relativi digitati sono risolti rispetto alla base del profilo.");
+        ui.label(presented!(
+            self,
+            DisplayControl::new("profile_unchanged"),
+            Classification::Public,
+            "Le scelte di questa schermata non modificano il file del profilo."
+        ));
+        ui.label(presented!(
+            self,
+            DisplayControl::new("profile_relative_paths"),
+            Classification::Public,
+            "I percorsi relativi digitati sono risolti rispetto alla base del profilo."
+        ));
+        self.show_logging_controls(ui);
 
         if let Some(profile) = &self.profile {
             ui.separator();
-            show_path(ui, "Base percorsi:", profile.base_directory());
+            show_captured_path(
+                ui,
+                "Base percorsi:",
+                profile.base_directory(),
+                self.log_session.as_ref(),
+                &mut self.log_failure,
+                DisplayControl::new("profile_base"),
+            );
             if !self.selections.iter().any(|person| person.selected) {
                 ui.colored_label(
                     warning_text_color(ui.visuals().dark_mode),
-                    "Nessuna persona selezionata: selezionane almeno una.",
+                    presented!(
+                        self,
+                        DisplayControl::new("no_person_selected"),
+                        Classification::Public,
+                        "Nessuna persona selezionata: selezionane almeno una."
+                    ),
                 );
             }
             ui.add_enabled_ui(can_edit, |ui| {
                 egui::ScrollArea::vertical().show(ui, |ui| {
-                    for (person, selection) in
-                        profile.accounts().people.iter().zip(&mut self.selections)
+                    for (person_index, (person, selection)) in profile
+                        .accounts()
+                        .people
+                        .iter()
+                        .zip(&mut self.selections)
+                        .enumerate()
                     {
-                        egui::CollapsingHeader::new(format!(
-                            "{} ({})",
-                            person.display_name, person.id
-                        ))
-                        .default_open(true)
-                        .show(ui, |ui| {
-                            ui.checkbox(&mut selection.selected, "Includi questa persona");
-                            choose_folder(ui, "Documenti", &mut selection.source_documents);
-                            choose_folder(ui, "Metadati", &mut selection.metadata_directory);
-                            choose_folder(ui, "Destinazione build", &mut selection.local_build);
-                        });
+                        let label = format!("{} ({})", person.display_name, person.id);
+                        let presented = PresentedText::new(&label, Classification::Private);
+                        let label = presented.capture(
+                            self.log_session.as_ref(),
+                            &mut self.log_failure,
+                            DisplayControl::indexed("person_heading", person_index, None),
+                        );
+                        let header = egui::CollapsingHeader::new(label.to_owned())
+                            .default_open(true)
+                            .show(ui, |ui| {
+                                let label = presented!(
+                                    self,
+                                    DisplayControl::indexed("include_person", person_index, None),
+                                    Classification::Public,
+                                    "Includi questa persona"
+                                );
+                                if ui.checkbox(&mut selection.selected, label).changed() {
+                                    record_ui_action(
+                                        self.log_session.as_ref(),
+                                        &mut self.log_failure,
+                                        Activity::GuiPersonSelection,
+                                        DisplayControl::indexed(
+                                            "include_person",
+                                            person_index,
+                                            None,
+                                        ),
+                                    );
+                                }
+                                choose_folder(
+                                    ui,
+                                    "Documenti",
+                                    &mut selection.source_documents,
+                                    self.log_session.as_ref(),
+                                    &mut self.log_failure,
+                                    DisplayControl::indexed("source_documents", person_index, None),
+                                );
+                                choose_folder(
+                                    ui,
+                                    "Metadati",
+                                    &mut selection.metadata_directory,
+                                    self.log_session.as_ref(),
+                                    &mut self.log_failure,
+                                    DisplayControl::indexed(
+                                        "metadata_directory",
+                                        person_index,
+                                        None,
+                                    ),
+                                );
+                                choose_folder(
+                                    ui,
+                                    "Destinazione build",
+                                    &mut selection.local_build,
+                                    self.log_session.as_ref(),
+                                    &mut self.log_failure,
+                                    DisplayControl::indexed("local_build", person_index, None),
+                                );
+                            });
+                        if header.header_response.clicked() {
+                            record_ui_action(
+                                self.log_session.as_ref(),
+                                &mut self.log_failure,
+                                Activity::GuiPanelToggled,
+                                DisplayControl::indexed("person_panel", person_index, None),
+                            );
+                        }
                     }
                 });
             });
         } else {
             ui.colored_label(
                 warning_text_color(ui.visuals().dark_mode),
-                "Profilo non caricato.",
+                presented!(
+                    self,
+                    DisplayControl::new("profile_not_loaded"),
+                    Classification::Public,
+                    "Profilo non caricato."
+                ),
             );
         }
 
@@ -1170,43 +2421,101 @@ impl DesktopApp {
             if ui
                 .add_enabled(
                     !busy && self.profile.is_some() && selected && self.review.is_none(),
-                    egui::Button::new("Controlla preflight e anomalie"),
+                    egui::Button::new(presented!(
+                        self,
+                        DisplayControl::new("start_preflight"),
+                        Classification::Public,
+                        "Controlla preflight e anomalie"
+                    )),
                 )
                 .clicked()
             {
                 self.start_preflight();
             }
             if self.review.is_some() && !busy {
-                if ui.button("Modifica selezione").clicked() {
+                if ui
+                    .button(presented!(
+                        self,
+                        DisplayControl::new("edit_selection"),
+                        Classification::Public,
+                        "Modifica selezione"
+                    ))
+                    .clicked()
+                {
+                    record_ui_action(
+                        self.log_session.as_ref(),
+                        &mut self.log_failure,
+                        Activity::GuiReviewEdit,
+                        DisplayControl::new("edit_selection"),
+                    );
                     self.review = None;
                     self.aifa_people = None;
                 }
-                if ui.button("Rifai preflight").clicked() {
+                if ui
+                    .button(presented!(
+                        self,
+                        DisplayControl::new("repeat_preflight"),
+                        Classification::Public,
+                        "Rifai preflight"
+                    ))
+                    .clicked()
+                {
                     self.review = None;
                     self.aifa_people = None;
                     self.start_preflight();
                 }
                 if ui
-                    .add_enabled(selected, egui::Button::new("Importa/aggiorna osservazioni"))
+                    .add_enabled(
+                        selected,
+                        egui::Button::new(presented!(
+                            self,
+                            DisplayControl::new("import_observations"),
+                            Classification::Public,
+                            "Importa/aggiorna osservazioni"
+                        )),
+                    )
                     .clicked()
                 {
                     self.start_observation_import();
                 }
                 if ui
-                    .add_enabled(selected, egui::Button::new("Rivedi riferimenti AIFA"))
+                    .add_enabled(
+                        selected,
+                        egui::Button::new(presented!(
+                            self,
+                            DisplayControl::new("review_aifa"),
+                            Classification::Public,
+                            "Rivedi riferimenti AIFA"
+                        )),
+                    )
                     .clicked()
                 {
                     self.start_aifa_review();
                 }
                 if ui
-                    .add_enabled(selected, egui::Button::new("Avvia build incrementale"))
+                    .add_enabled(
+                        selected,
+                        egui::Button::new(presented!(
+                            self,
+                            DisplayControl::new("start_build"),
+                            Classification::Public,
+                            "Avvia build incrementale"
+                        )),
+                    )
                     .clicked()
                 {
                     self.start_build();
                 }
             }
             if let Some(cancellation) = &self.cancellation
-                && ui.button("Annulla dopo la persona corrente").clicked()
+                && ui
+                    .button(presented!(
+                        self,
+                        DisplayControl::new("cancel_build"),
+                        Classification::Public,
+                        "Annulla dopo la persona corrente"
+                    ))
+                    .clicked()
             {
                 cancellation.cancel();
                 self.status = "Annullamento richiesto; attendo il punto sicuro.".to_owned();
@@ -1216,46 +2525,122 @@ impl DesktopApp {
         #[cfg(target_os = "linux")]
         if !self.completed_builds.is_empty() && self.receiver.is_none() {
             ui.separator();
-            ui.heading("Export USB Linux");
+            ui.heading(presented!(
+                self,
+                DisplayControl::new("usb_heading"),
+                Classification::Public,
+                "Export USB Linux"
+            ));
             if let Some(image) = &self.usb_image {
-                ui.label(format!(
-                    "Immagine verificata: {} persone · {} file · {} byte",
-                    image.patients, image.files, image.bytes
+                ui.label(presented!(
+                    self,
+                    DisplayControl::new("usb_image_summary"),
+                    Classification::Private,
+                    format!(
+                        "Immagine verificata: {} persone · {} file · {} byte",
+                        image.patients, image.files, image.bytes
+                    )
                 ));
-                show_path(ui, "Percorso immagine:", &image.root);
-            } else if ui.button("Prepara e valida immagine USB").clicked() {
+                show_captured_path(
+                    ui,
+                    "Percorso immagine:",
+                    &image.root,
+                    self.log_session.as_ref(),
+                    &mut self.log_failure,
+                    DisplayControl::new("usb_image"),
+                );
+            } else if ui
+                .button(presented!(
+                    self,
+                    DisplayControl::new("prepare_usb"),
+                    Classification::Public,
+                    "Prepara e valida immagine USB"
+                ))
+                .clicked()
+            {
                 self.prepare_usb_image();
             }
             if self.usb_image.is_some() {
-                if ui.button("Scegli volume Linux…").clicked() {
+                if ui
+                    .button(presented!(
+                        self,
+                        DisplayControl::new("choose_usb"),
+                        Classification::Public,
+                        "Scegli volume Linux…"
+                    ))
+                    .clicked()
+                {
                     self.choose_usb_target();
                 }
                 if let Some(target) = &self.usb_target {
-                    show_path(ui, "Volume selezionato:", target);
-                    show_path(ui, "Cartella di export:", &target.join("SaniKey"));
+                    show_captured_path(
+                        ui,
+                        "Volume selezionato:",
+                        target,
+                        self.log_session.as_ref(),
+                        &mut self.log_failure,
+                        DisplayControl::new("usb_target"),
+                    );
+                    show_captured_path(
+                        ui,
+                        "Cartella di export:",
+                        &target.join("SaniKey"),
+                        self.log_session.as_ref(),
+                        &mut self.log_failure,
+                        DisplayControl::new("usb_export"),
+                    );
                 }
                 if let Some(volume) = &self.usb_volume {
-                    show_path(
+                    show_captured_path(
                         ui,
                         "Mount del volume:",
                         volume
                             .mount_target
                             .as_deref()
                             .unwrap_or(Path::new("sconosciuto")),
+                        self.log_session.as_ref(),
+                        &mut self.log_failure,
+                        DisplayControl::new("usb_mount"),
                     );
-                    ui.label(format!(
-                        "Filesystem: {} · UUID: {} · liberi: {} byte",
-                        volume.filesystem.as_deref().unwrap_or("sconosciuto"),
-                        volume.uuid.as_deref().unwrap_or("sconosciuto"),
-                        volume.available_bytes
+                    ui.label(presented!(
+                        self,
+                        DisplayControl::new("usb_volume_summary"),
+                        Classification::Private,
+                        format!(
+                            "Filesystem: {} · UUID: {} · liberi: {} byte",
+                            volume.filesystem.as_deref().unwrap_or("sconosciuto"),
+                            volume.uuid.as_deref().unwrap_or("sconosciuto"),
+                            volume.available_bytes
+                        )
                     ));
                     ui.colored_label(warning_text_color(ui.visuals().dark_mode),
-                        "La copia aggiorna la cartella SaniKey nel volume e rimuove da quella cartella i file che non appartengono all'immagine. Gli altri file del volume restano intatti.");
-                    ui.checkbox(&mut self.confirm_usb_target, "Confermo che il volume mostrato è quello corretto e autorizzo l'aggiornamento della cartella SaniKey.");
+                        presented!(self, DisplayControl::new("usb_warning"), Classification::Public, "La copia aggiorna la cartella SaniKey nel volume e rimuove da quella cartella i file che non appartengono all'immagine. Gli altri file del volume restano intatti."));
+                    let confirmation = presented!(
+                        self,
+                        DisplayControl::new("usb_confirmation"),
+                        Classification::Public,
+                        "Confermo che il volume mostrato è quello corretto e autorizzo l'aggiornamento della cartella SaniKey."
+                    );
+                    if ui
+                        .checkbox(&mut self.confirm_usb_target, confirmation)
+                        .changed()
+                    {
+                        record_ui_action(
+                            self.log_session.as_ref(),
+                            &mut self.log_failure,
+                            Activity::GuiUsbConfirmation,
+                            DisplayControl::new("usb_confirmation"),
+                        );
+                    }
                     if ui
                         .add_enabled(
                             self.confirm_usb_target && self.receiver.is_none(),
-                            egui::Button::new("Copia, verifica e mostra il risultato"),
+                            egui::Button::new(presented!(
+                                self,
+                                DisplayControl::new("copy_usb"),
+                                Classification::Public,
+                                "Copia, verifica e mostra il risultato"
+                            )),
                         )
                         .clicked()
                     {
@@ -1263,131 +2648,314 @@ impl DesktopApp {
                     }
                 }
                 if let Some(copy) = &self.usb_copy {
-                    ui.label(format!("Report copia: {} copiati · {} riutilizzati · {} rimossi · {} byte scritti · target validato.", copy.copied_files, copy.reused_files, copy.removed_files, copy.bytes_copied));
+                    ui.label(presented!(self, DisplayControl::new("usb_copy_report"), Classification::Private, format!("Report copia: {} copiati · {} riutilizzati · {} rimossi · {} byte scritti · target validato.", copy.copied_files, copy.reused_files, copy.removed_files, copy.bytes_copied)));
                 }
             }
         }
 
         if let Some(review) = &self.review {
-            ui.heading("Riepilogo preflight");
-            ui.label(format!(
-                "Persone: {} · Documenti: {} · Gruppi duplicati: {}",
-                review.selected_people.len(),
-                review.document_count,
-                review.duplicate_groups.len()
+            ui.heading(presented!(
+                self,
+                DisplayControl::new("preflight_heading"),
+                Classification::Public,
+                "Riepilogo preflight"
             ));
-            egui::CollapsingHeader::new("Rivedi i documenti duplicati")
-                .default_open(!review.duplicate_groups.is_empty())
-                .show(ui, |ui| {
-                    if review.duplicate_groups.is_empty() {
-                        ui.label("Nessun duplicato rilevato.");
+            ui.label(presented!(
+                self,
+                DisplayControl::new("preflight_summary"),
+                Classification::Private,
+                format!(
+                    "Persone: {} · Documenti: {} · Gruppi duplicati: {}",
+                    review.selected_people.len(),
+                    review.document_count,
+                    review.duplicate_groups.len()
+                )
+            ));
+            let duplicate_header = egui::CollapsingHeader::new(presented!(
+                self,
+                DisplayControl::new("duplicate_heading"),
+                Classification::Public,
+                "Rivedi i documenti duplicati"
+            ))
+            .default_open(!review.duplicate_groups.is_empty())
+            .show(ui, |ui| {
+                if review.duplicate_groups.is_empty() {
+                    ui.label(presented!(
+                        self,
+                        DisplayControl::new("no_duplicates"),
+                        Classification::Public,
+                        "Nessun duplicato rilevato."
+                    ));
+                }
+                for (group_index, (person, digest, paths)) in
+                    review.duplicate_groups.iter().enumerate()
+                {
+                    ui.label(presented!(
+                        self,
+                        DisplayControl::indexed("duplicate_group", group_index, None),
+                        Classification::Private,
+                        format!("{person} · SHA-256 {digest}")
+                    ));
+                    for (path_index, path) in paths.iter().enumerate() {
+                        show_captured_path(
+                            ui,
+                            "Documento:",
+                            path,
+                            self.log_session.as_ref(),
+                            &mut self.log_failure,
+                            DisplayControl::indexed(
+                                "duplicate_document",
+                                group_index,
+                                Some(path_index),
+                            ),
+                        );
                     }
-                    for (person, digest, paths) in &review.duplicate_groups {
-                        ui.label(format!("{person} · SHA-256 {digest}"));
-                        for path in paths {
-                            show_path(ui, "Documento:", path);
-                        }
-                    }
-                });
-            ui.label("Importa o aggiorna le osservazioni prima della build; i metadati curati restano invariati.");
+                }
+            });
+            if duplicate_header.header_response.clicked() {
+                record_ui_action(
+                    self.log_session.as_ref(),
+                    &mut self.log_failure,
+                    Activity::GuiPanelToggled,
+                    DisplayControl::new("duplicate_panel"),
+                );
+            }
+            ui.label(presented!(self, DisplayControl::new("observations_hint"), Classification::Public, "Importa o aggiorna le osservazioni prima della build; i metadati curati restano invariati."));
         }
         if let Some(people) = &mut self.aifa_people {
             ui.separator();
-            ui.heading("Riferimenti farmaceutici AIFA");
-            ui.label("Le ricerche online vengono eseguite fuori dalla finestra. Il riferimento si salva solo dopo conferma e verifica di FI e RCP.");
+            ui.heading(presented!(
+                self,
+                DisplayControl::new("aifa_heading"),
+                Classification::Public,
+                "Riferimenti farmaceutici AIFA"
+            ));
+            ui.label(presented!(self, DisplayControl::new("aifa_intro"), Classification::Public, "Le ricerche online vengono eseguite fuori dalla finestra. Il riferimento si salva solo dopo conferma e verifica di FI e RCP."));
             let mut action = None;
             for (person_index, person) in people.iter_mut().enumerate() {
-                egui::CollapsingHeader::new(format!(
+                let heading = format!(
                     "{} ({}) · {} farmaci",
                     person.display_name,
                     person.id,
                     person.medications.len()
-                ))
-                .default_open(true)
-                .show(ui, |ui| {
-                    for (medication_index, item) in person.medications.iter_mut().enumerate() {
-                        ui.group(|ui| {
-                            ui.heading(&item.medication.name);
-                            ui.label(format!("ID: {}", item.medication.id));
-                            for therapy in person
-                                .metadata
-                                .therapies
-                                .iter()
-                                .filter(|therapy| therapy.medication_id == item.medication.id)
-                            {
-                                ui.label(format!(
-                                    "Terapia curata: {} · {} · {}",
-                                    therapy.role.as_deref().unwrap_or("ruolo non indicato"),
-                                    therapy
-                                        .dosage
-                                        .as_deref()
-                                        .unwrap_or("posologia non indicata"),
-                                    therapy.schedule.join(", ")
-                                ));
-                                if let Some(instructions) = &therapy.instructions {
-                                    ui.label(format!("Istruzioni: {instructions}"));
-                                }
-                            }
-                            if let Some(reference) = person
-                                .metadata
-                                .medication_leaflets
-                                .iter()
-                                .find(|reference| reference.medication_id == item.medication.id)
-                            {
-                                ui.label(format!(
-                                    "Riferimento registrato: AIFA {}/{}",
-                                    reference.codice_sis, reference.aic6
-                                ));
-                            }
-                            if person
-                                .metadata
-                                .medication_leaflet_exclusions
-                                .iter()
-                                .any(|exclusion| exclusion.medication_id == item.medication.id)
-                            {
-                                ui.label("Stato registrato: non applicabile ad AIFA.");
-                            }
-                            ui.horizontal_wrapped(|ui| {
-                                let label = ui.label("Ricerca manuale");
-                                ui.text_edit_singleline(&mut item.query)
-                                    .labelled_by(label.id);
-                                if ui
-                                    .add_enabled(
-                                        !busy,
-                                        egui::Button::new("Cerca nome e principio attivo"),
-                                    )
-                                    .clicked()
-                                {
-                                    action = Some(AifaUiAction::Search(
+                );
+                let heading = PresentedText::new(&heading, Classification::Private);
+                let heading = heading.capture(
+                    self.log_session.as_ref(),
+                    &mut self.log_failure,
+                    DisplayControl::indexed("aifa_person_heading", person_index, None),
+                );
+                let header = egui::CollapsingHeader::new(heading.to_owned())
+                    .default_open(true)
+                    .show(ui, |ui| {
+                        for (medication_index, item) in person.medications.iter_mut().enumerate() {
+                            ui.group(|ui| {
+                                let name = PresentedText::new(
+                                    &item.medication.name,
+                                    Classification::Private,
+                                );
+                                ui.heading(name.capture(
+                                    self.log_session.as_ref(),
+                                    &mut self.log_failure,
+                                    DisplayControl::indexed(
+                                        "aifa_medication_name",
                                         person_index,
-                                        medication_index,
-                                        false,
+                                        Some(medication_index),
+                                    ),
+                                ));
+                                let medication_id = format!("ID: {}", item.medication.id);
+                                let medication_id =
+                                    PresentedText::new(&medication_id, Classification::Private);
+                                ui.label(medication_id.capture(
+                                    self.log_session.as_ref(),
+                                    &mut self.log_failure,
+                                    DisplayControl::indexed(
+                                        "aifa_medication_id",
+                                        person_index,
+                                        Some(medication_index),
+                                    ),
+                                ));
+                                for (therapy_index, therapy) in person
+                                    .metadata
+                                    .therapies
+                                    .iter()
+                                    .filter(|therapy| therapy.medication_id == item.medication.id)
+                                    .enumerate()
+                                {
+                                    let text = format!(
+                                        "Terapia curata: {} · {} · {}",
+                                        therapy.role.as_deref().unwrap_or("ruolo non indicato"),
+                                        therapy
+                                            .dosage
+                                            .as_deref()
+                                            .unwrap_or("posologia non indicata"),
+                                        therapy.schedule.join(", ")
+                                    );
+                                    let text = PresentedText::new(&text, Classification::Private);
+                                    ui.label(text.capture(
+                                        self.log_session.as_ref(),
+                                        &mut self.log_failure,
+                                        DisplayControl::nested(
+                                            "aifa_therapy",
+                                            person_index,
+                                            medication_index,
+                                            therapy_index,
+                                        ),
+                                    ));
+                                    if let Some(instructions) = &therapy.instructions {
+                                        let text = format!("Istruzioni: {instructions}");
+                                        let text =
+                                            PresentedText::new(&text, Classification::Unclassified);
+                                        ui.label(text.capture(
+                                            self.log_session.as_ref(),
+                                            &mut self.log_failure,
+                                            DisplayControl::nested(
+                                                "aifa_instructions",
+                                                person_index,
+                                                medication_index,
+                                                therapy_index,
+                                            ),
+                                        ));
+                                    }
+                                }
+                                if let Some(reference) = person
+                                    .metadata
+                                    .medication_leaflets
+                                    .iter()
+                                    .find(|reference| reference.medication_id == item.medication.id)
+                                {
+                                    let text = format!(
+                                        "Riferimento registrato: AIFA {}/{}",
+                                        reference.codice_sis, reference.aic6
+                                    );
+                                    let text = PresentedText::new(&text, Classification::Private);
+                                    ui.label(text.capture(
+                                        self.log_session.as_ref(),
+                                        &mut self.log_failure,
+                                        DisplayControl::indexed(
+                                            "aifa_saved_reference",
+                                            person_index,
+                                            Some(medication_index),
+                                        ),
                                     ));
                                 }
-                                if ui
-                                    .add_enabled(
-                                        !busy && !item.query.trim().is_empty(),
-                                        egui::Button::new("Cerca testo"),
-                                    )
-                                    .clicked()
+                                if person
+                                    .metadata
+                                    .medication_leaflet_exclusions
+                                    .iter()
+                                    .any(|exclusion| exclusion.medication_id == item.medication.id)
                                 {
-                                    action = Some(AifaUiAction::Search(
-                                        person_index,
-                                        medication_index,
-                                        true,
+                                    ui.label(presented!(
+                                        self,
+                                        DisplayControl::indexed(
+                                            "aifa_not_applicable",
+                                            person_index,
+                                            Some(medication_index)
+                                        ),
+                                        Classification::Public,
+                                        "Stato registrato: non applicabile ad AIFA."
                                     ));
                                 }
-                            });
-                            if let Some(search) = &item.search {
-                                let candidates = candidates_for_review(search);
-                                if candidates.is_empty() {
-                                    ui.label("Nessun candidato da confermare.");
-                                }
-                                for (candidate_index, candidate) in candidates.iter().enumerate() {
-                                    ui.selectable_value(
-                                        &mut item.selected_candidate,
-                                        Some(candidate_index),
-                                        format!(
+                                ui.horizontal_wrapped(|ui| {
+                                    let label = ui.label(presented!(
+                                        self,
+                                        DisplayControl::indexed(
+                                            "aifa_query_label",
+                                            person_index,
+                                            Some(medication_index)
+                                        ),
+                                        Classification::Public,
+                                        "Ricerca manuale"
+                                    ));
+                                    if ui
+                                        .text_edit_singleline(&mut item.query)
+                                        .labelled_by(label.id)
+                                        .changed()
+                                    {
+                                        record_ui_action(
+                                            self.log_session.as_ref(),
+                                            &mut self.log_failure,
+                                            Activity::GuiAifaQueryEdited,
+                                            DisplayControl::indexed(
+                                                "aifa_manual_query",
+                                                person_index,
+                                                Some(medication_index),
+                                            ),
+                                        );
+                                    }
+                                    PresentedText::new(&item.query, Classification::Unclassified)
+                                        .capture(
+                                            self.log_session.as_ref(),
+                                            &mut self.log_failure,
+                                            DisplayControl::indexed(
+                                                "aifa_manual_query",
+                                                person_index,
+                                                Some(medication_index),
+                                            ),
+                                        );
+                                    if ui
+                                        .add_enabled(
+                                            !busy,
+                                            egui::Button::new(presented!(
+                                                self,
+                                                DisplayControl::indexed(
+                                                    "aifa_search_auto",
+                                                    person_index,
+                                                    Some(medication_index)
+                                                ),
+                                                Classification::Public,
+                                                "Cerca nome e principio attivo"
+                                            )),
+                                        )
+                                        .clicked()
+                                    {
+                                        action = Some(AifaUiAction::Search(
+                                            person_index,
+                                            medication_index,
+                                            false,
+                                        ));
+                                    }
+                                    if ui
+                                        .add_enabled(
+                                            !busy && !item.query.trim().is_empty(),
+                                            egui::Button::new(presented!(
+                                                self,
+                                                DisplayControl::indexed(
+                                                    "aifa_search_manual",
+                                                    person_index,
+                                                    Some(medication_index)
+                                                ),
+                                                Classification::Public,
+                                                "Cerca testo"
+                                            )),
+                                        )
+                                        .clicked()
+                                    {
+                                        action = Some(AifaUiAction::Search(
+                                            person_index,
+                                            medication_index,
+                                            true,
+                                        ));
+                                    }
+                                });
+                                if let Some(search) = &item.search {
+                                    let candidates = candidates_for_review(search);
+                                    if candidates.is_empty() {
+                                        ui.label(presented!(
+                                            self,
+                                            DisplayControl::indexed(
+                                                "aifa_no_candidates",
+                                                person_index,
+                                                Some(medication_index)
+                                            ),
+                                            Classification::Public,
+                                            "Nessun candidato da confermare."
+                                        ));
+                                    }
+                                    for (candidate_index, candidate) in
+                                        candidates.iter().enumerate()
+                                    {
+                                        let label = format!(
                                             "{} · {} · {}",
                                             candidate.title,
                                             candidate
@@ -1398,44 +2966,119 @@ impl DesktopApp {
                                                 .form
                                                 .as_deref()
                                                 .unwrap_or("forma non indicata")
-                                        ),
-                                    );
-                                }
-                                if let Some(candidate) = item
-                                    .selected_candidate
-                                    .and_then(|index| candidates.get(index))
-                                {
-                                    show_aifa_candidate(ui, candidate);
-                                    if ui
-                                        .add_enabled(
-                                            !busy,
-                                            egui::Button::new(
-                                                "Conferma candidato e verifica FI/RCP",
+                                        );
+                                        let label =
+                                            PresentedText::new(&label, Classification::Private);
+                                        let label = label.capture(
+                                            self.log_session.as_ref(),
+                                            &mut self.log_failure,
+                                            DisplayControl::nested(
+                                                "aifa_candidate",
+                                                person_index,
+                                                medication_index,
+                                                candidate_index,
                                             ),
-                                        )
-                                        .clicked()
+                                        );
+                                        if ui
+                                            .selectable_value(
+                                                &mut item.selected_candidate,
+                                                Some(candidate_index),
+                                                label.to_owned(),
+                                            )
+                                            .changed()
+                                        {
+                                            record_ui_action(
+                                                self.log_session.as_ref(),
+                                                &mut self.log_failure,
+                                                Activity::GuiAifaCandidate,
+                                                DisplayControl::nested(
+                                                    "aifa_candidate",
+                                                    person_index,
+                                                    medication_index,
+                                                    candidate_index,
+                                                ),
+                                            );
+                                        }
+                                    }
+                                    if let Some(candidate) = item
+                                        .selected_candidate
+                                        .and_then(|index| candidates.get(index))
                                     {
-                                        action = Some(AifaUiAction::Confirm(
+                                        show_aifa_candidate(
+                                            ui,
+                                            candidate,
+                                            self.log_session.as_ref(),
+                                            &mut self.log_failure,
                                             person_index,
                                             medication_index,
-                                            Box::new(candidate.clone()),
-                                        ));
+                                        );
+                                        if ui
+                                            .add_enabled(
+                                                !busy,
+                                                egui::Button::new(presented!(
+                                                    self,
+                                                    DisplayControl::indexed(
+                                                        "aifa_confirm_candidate",
+                                                        person_index,
+                                                        Some(medication_index)
+                                                    ),
+                                                    Classification::Public,
+                                                    "Conferma candidato e verifica FI/RCP"
+                                                )),
+                                            )
+                                            .clicked()
+                                        {
+                                            action = Some(AifaUiAction::Confirm(
+                                                person_index,
+                                                medication_index,
+                                                Box::new(candidate.clone()),
+                                            ));
+                                        }
                                     }
                                 }
-                            }
-                            if ui
-                                .add_enabled(!busy, egui::Button::new("Conferma stato non AIFA"))
-                                .clicked()
-                            {
-                                action = Some(AifaUiAction::MarkNotApplicable(
-                                    person_index,
-                                    medication_index,
+                                if ui
+                                    .add_enabled(
+                                        !busy,
+                                        egui::Button::new(presented!(
+                                            self,
+                                            DisplayControl::indexed(
+                                                "aifa_confirm_exclusion",
+                                                person_index,
+                                                Some(medication_index)
+                                            ),
+                                            Classification::Public,
+                                            "Conferma stato non AIFA"
+                                        )),
+                                    )
+                                    .clicked()
+                                {
+                                    action = Some(AifaUiAction::MarkNotApplicable(
+                                        person_index,
+                                        medication_index,
+                                    ));
+                                }
+                                let status =
+                                    PresentedText::new(&item.status, Classification::Unclassified);
+                                ui.label(status.capture(
+                                    self.log_session.as_ref(),
+                                    &mut self.log_failure,
+                                    DisplayControl::indexed(
+                                        "aifa_medication_status",
+                                        person_index,
+                                        Some(medication_index),
+                                    ),
                                 ));
-                            }
-                            ui.label(&item.status);
-                        });
-                    }
-                });
+                            });
+                        }
+                    });
+                if header.header_response.clicked() {
+                    record_ui_action(
+                        self.log_session.as_ref(),
+                        &mut self.log_failure,
+                        Activity::GuiPanelToggled,
+                        DisplayControl::indexed("aifa_person_panel", person_index, None),
+                    );
+                }
             }
             match action {
                 Some(AifaUiAction::Search(person, medication, manual)) => {
@@ -1451,33 +3094,68 @@ impl DesktopApp {
             }
         }
         if let Some(summary) = &self.observation_import {
-            ui.collapsing("Risultato importazione osservazioni", |ui| {
-                ui.label(format!(
-                    "{} persone · {} serie · {} osservazioni · {} avvisi",
-                    summary.people,
-                    summary.series,
-                    summary.points,
-                    summary.warnings.len()
-                ));
-                for warning in &summary.warnings {
-                    ui.add(
-                        egui::Label::new(
-                            egui::RichText::new(warning)
-                                .color(warning_text_color(ui.visuals().dark_mode)),
+            let result_panel = ui.collapsing(
+                presented!(
+                    self,
+                    DisplayControl::new("observation_result_heading"),
+                    Classification::Public,
+                    "Risultato importazione osservazioni"
+                ),
+                |ui| {
+                    ui.label(presented!(
+                        self,
+                        DisplayControl::new("observation_result_summary"),
+                        Classification::Private,
+                        format!(
+                            "{} persone · {} serie · {} osservazioni · {} avvisi",
+                            summary.people,
+                            summary.series,
+                            summary.points,
+                            summary.warnings.len()
                         )
-                        .wrap_mode(egui::TextWrapMode::Wrap),
-                    );
-                }
-            });
+                    ));
+                    for (warning_index, warning) in summary.warnings.iter().enumerate() {
+                        let warning = presented!(
+                            self,
+                            DisplayControl::indexed("observation_warning", warning_index, None),
+                            Classification::Unclassified,
+                            warning
+                        );
+                        ui.add(
+                            egui::Label::new(
+                                egui::RichText::new(warning)
+                                    .color(warning_text_color(ui.visuals().dark_mode)),
+                            )
+                            .wrap_mode(egui::TextWrapMode::Wrap),
+                        );
+                    }
+                },
+            );
+            if result_panel.header_response.clicked() {
+                record_ui_action(
+                    self.log_session.as_ref(),
+                    &mut self.log_failure,
+                    Activity::GuiPanelToggled,
+                    DisplayControl::new("observation_result_panel"),
+                );
+            }
         }
         if !self.completed_people.is_empty() {
-            ui.label(format!(
-                "Build completate: {}",
-                self.completed_people.join(", ")
+            ui.label(presented!(
+                self,
+                DisplayControl::new("completed_people"),
+                Classification::Private,
+                format!("Build completate: {}", self.completed_people.join(", "))
             ));
         }
         if self.receiver.is_some() || self.cancellation.is_some() {
             if let Some(progress) = self.progress {
+                let percentage = format!("{}%", (progress.clamp(0.0, 1.0) * 100.0) as usize);
+                PresentedText::new(&percentage, Classification::Public).capture(
+                    self.log_session.as_ref(),
+                    &mut self.log_failure,
+                    DisplayControl::new("build_progress"),
+                );
                 ui.add(egui::ProgressBar::new(progress).show_percentage());
             } else {
                 indeterminate_progress_bar(ui);
@@ -1486,11 +3164,30 @@ impl DesktopApp {
                 .request_repaint_after(std::time::Duration::from_millis(30));
         }
         ui.separator();
-        ui.add(egui::Label::new(&self.status).wrap_mode(egui::TextWrapMode::Wrap));
+        let status = PresentedText::new(&self.status, Classification::Unclassified);
+        let displayed = status.capture(
+            self.log_session.as_ref(),
+            &mut self.log_failure,
+            DisplayControl::new("status"),
+        );
+        ui.add(egui::Label::new(displayed).wrap_mode(egui::TextWrapMode::Wrap));
+        if self.log_failure {
+            ui.colored_label(
+                warning_text_color(ui.visuals().dark_mode),
+                presented!(
+                    self,
+                    DisplayControl::new("log_failure_warning"),
+                    Classification::Public,
+                    "Registrazione interrotta o incompleta; verifica il file di log."
+                ),
+            );
+        }
+        })
     }
 }
 
 fn indeterminate_progress_bar(ui: &mut egui::Ui) {
+    trace_desktop_call!("desktop::indeterminate_progress_bar", fields ["ui" => trace_egui_boundary()], || {
     let width = ui.available_size_before_wrap().x.max(96.0);
     let height = ui.spacing().interact_size.y * 0.5;
     let (track, _) = ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::hover());
@@ -1507,9 +3204,14 @@ fn indeterminate_progress_bar(ui: &mut egui::Ui) {
     ui.painter()
         .with_clip_rect(track)
         .rect_filled(segment, radius, visuals.selection.bg_fill);
+    })
 }
 
 fn indeterminate_progress_segment(track: egui::Rect, time: f64) -> egui::Rect {
+    trace_desktop_call!("desktop::indeterminate_progress_segment", fields [
+        "track" => trace_desktop_debug(&track),
+        "time_seconds" => trace_desktop_debug(&time),
+    ], || {
     let segment_width = track.width() * 0.28;
     let phase = (time / 1.2).rem_euclid(2.0);
     let position = (if phase <= 1.0 { phase } else { 2.0 - phase }) as f32;
@@ -1518,11 +3220,12 @@ fn indeterminate_progress_segment(track: egui::Rect, time: f64) -> egui::Rect {
         egui::pos2(left, track.top()),
         egui::vec2(segment_width, track.height()),
     )
+    })
 }
 
 fn main() -> eframe::Result {
     eframe::run_native(
-        "SaniKey",
+        WINDOW_TITLE,
         eframe::NativeOptions::default(),
         Box::new(|creation_context| {
             configure_desktop_theme(&creation_context.egui_ctx);
@@ -1533,13 +3236,16 @@ fn main() -> eframe::Result {
 
 #[cfg(test)]
 mod tests {
+    //! Test di stato, accessibilità e flussi sintetici della finestra desktop.
+
     use super::{
         AifaCandidate, AifaCandidateSearch, AifaDecision, AifaMedicationReview, AifaPersonReview,
-        BLUE_TEXT, DesktopApp, DesktopEvent, FIELD_BACKGROUND, LeafletDownloadFailure,
-        ReviewSummary, STRAW_BACKGROUND, add_responsive_path_edit, build_selected_people,
-        build_selected_people_with, configure_desktop_theme, desktop_visuals,
-        import_selected_observations, indeterminate_progress_segment, load_aifa_people,
-        review_profile, save_aifa_decision_with, show_path, warning_text_color,
+        BLUE_TEXT, DesktopApp, DesktopEvent, DisplayControl, FIELD_BACKGROUND,
+        LeafletDownloadFailure, ReviewSummary, STRAW_BACKGROUND, add_responsive_path_edit,
+        build_selected_people, build_selected_people_with, configure_desktop_theme,
+        desktop_visuals, import_selected_observations, indeterminate_progress_segment,
+        load_aifa_people, record_ui_action, review_profile, save_aifa_decision_with, show_path,
+        spawn_logged_worker, trace_desktop_path, warning_text_color,
     };
     use eframe::egui;
     use sanikey_core::build::{BuildCounts, BuildOptions, PatientBuildResult, build_patient};
@@ -1548,10 +3254,11 @@ mod tests {
         CuratedMetadata, Medication, MedicationLeafletExclusion, load_curated_metadata,
     };
     use sanikey_core::operation::{CancellationToken, OperationEvent};
-    use std::{fs, path::PathBuf, time::SystemTime};
+    use std::{fs, path::PathBuf, thread, time::SystemTime};
 
     struct TestDirectory(PathBuf);
 
+    /// Gestisce la directory temporanea usata dai test desktop.
     impl TestDirectory {
         fn new() -> Self {
             let nonce = SystemTime::now()
@@ -1564,6 +3271,7 @@ mod tests {
         }
     }
 
+    /// Elimina gli artefatti temporanei del test desktop.
     impl Drop for TestDirectory {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.0);
@@ -1612,6 +3320,871 @@ mod tests {
             },
             |ui| eframe::App::ui(app, ui, frame),
         )
+    }
+
+    #[test]
+    fn diagnostic_session_captures_changed_status_and_profile_field() {
+        use sanikey_core::logging::{Component, Level, Session};
+
+        let directory = TestDirectory::new();
+        let (session, log_path) = Session::create_in_directory_with_level(
+            &directory.0,
+            Component::Desktop,
+            Level::Diagnostic,
+        )
+        .expect("sessione sintetica");
+        let mut app = DesktopApp {
+            log_session: Some(session),
+            status: "primo messaggio sintetico".to_owned(),
+            profile_path: "/profilo/sintetico".to_owned(),
+            ..DesktopApp::default()
+        };
+        let context = egui::Context::default();
+        let mut frame = eframe::Frame::_new_kittest();
+        for _ in 0..2 {
+            run_app_frame(&mut app, &context, &mut frame, Vec::new())
+                .drop_without_applying_deltas();
+        }
+        app.status = "secondo messaggio sintetico".to_owned();
+        run_app_frame(&mut app, &context, &mut frame, Vec::new()).drop_without_applying_deltas();
+        let output = fs::read_to_string(log_path).expect("log sintetico");
+        assert_eq!(output.matches("primo messaggio sintetico").count(), 1);
+        assert_eq!(output.matches("secondo messaggio sintetico").count(), 1);
+        assert!(output.contains("/profilo/sintetico"));
+        assert!(!app.log_failure);
+    }
+
+    #[test]
+    fn logging_is_off_by_default_and_private_levels_require_confirmation() {
+        use sanikey_core::logging::Level;
+
+        let mut app = DesktopApp::default();
+        assert!(app.log_session.is_none());
+        assert!(app.active_log_level.is_none());
+        assert_eq!(app.selected_log_level, Level::Events);
+        assert!(app.can_start_logging());
+
+        app.selected_log_level = Level::Diagnostic;
+        assert!(!app.can_start_logging());
+        app.confirm_sensitive_logging = true;
+        assert!(app.can_start_logging());
+
+        app.selected_log_level = Level::Trace;
+        app.confirm_sensitive_logging = false;
+        assert!(!app.can_start_logging());
+    }
+
+    #[test]
+    fn logging_controls_show_levels_path_and_sensitive_confirmation() {
+        use sanikey_core::logging::Level;
+
+        let directory = TestDirectory::new();
+        let mut app = DesktopApp {
+            log_directory: Some(directory.0.clone()),
+            ..DesktopApp::default()
+        };
+        let context = egui::Context::default();
+        context.enable_accesskit();
+        let mut frame = eframe::Frame::_new_kittest();
+
+        let first = run_app_frame(&mut app, &context, &mut frame, Vec::new());
+        let first_tree = first
+            .platform_output
+            .accesskit_update
+            .as_ref()
+            .expect("albero AccessKit iniziale");
+        let first_text = first_tree
+            .nodes
+            .iter()
+            .flat_map(|(_, node)| [node.label(), node.value()])
+            .flatten()
+            .collect::<Vec<_>>();
+        assert!(first_text.contains(&"Eventi"));
+        assert!(first_text.contains(&"Diagnostica"));
+        assert!(first_text.contains(&"Traccia completa"));
+        assert!(
+            first_text
+                .iter()
+                .any(|text| text.contains(directory.0.to_string_lossy().as_ref()))
+        );
+        first.drop_without_applying_deltas();
+        assert!(app.log_session.is_none());
+
+        app.selected_log_level = Level::Diagnostic;
+        let second = run_app_frame(&mut app, &context, &mut frame, Vec::new());
+        let second_tree = second
+            .platform_output
+            .accesskit_update
+            .as_ref()
+            .expect("albero AccessKit diagnostica");
+        assert!(second_tree.nodes.iter().any(|(_, node)| {
+            node.label().is_some_and(|label| {
+                label.contains("Confermo di voler registrare contenuti privati")
+            })
+        }));
+        second.drop_without_applying_deltas();
+        assert!(app.log_session.is_none());
+    }
+
+    #[test]
+    fn logging_session_switch_and_stop_finish_after_display_frame() {
+        use sanikey_core::logging::Level;
+
+        let directory = TestDirectory::new();
+        let mut app = DesktopApp {
+            log_directory: Some(directory.0.clone()),
+            pending_log_action: Some(super::PendingLogAction::Start(Level::Events)),
+            ..DesktopApp::default()
+        };
+        let context = egui::Context::default();
+        let mut frame = eframe::Frame::_new_kittest();
+
+        run_app_frame(&mut app, &context, &mut frame, Vec::new()).drop_without_applying_deltas();
+        let events_path = app.log_path.clone().expect("percorso log eventi");
+        assert_eq!(app.active_log_level, Some(Level::Events));
+
+        app.selected_log_level = Level::Diagnostic;
+        app.confirm_sensitive_logging = true;
+        app.pending_log_action = Some(super::PendingLogAction::Start(Level::Diagnostic));
+        run_app_frame(&mut app, &context, &mut frame, Vec::new()).drop_without_applying_deltas();
+        let diagnostic_path = app.log_path.clone().expect("percorso log diagnostico");
+        assert_ne!(events_path, diagnostic_path);
+        assert_eq!(app.active_log_level, Some(Level::Diagnostic));
+        let ended_events = fs::read_to_string(events_path).expect("log eventi terminato");
+        assert!(ended_events.contains("\"event\":\"finished\""));
+
+        run_app_frame(&mut app, &context, &mut frame, Vec::new()).drop_without_applying_deltas();
+        app.pending_log_action = Some(super::PendingLogAction::Stop);
+        run_app_frame(&mut app, &context, &mut frame, Vec::new()).drop_without_applying_deltas();
+        assert!(app.log_session.is_none());
+        assert!(app.active_log_level.is_none());
+        let ended_diagnostic =
+            fs::read_to_string(diagnostic_path).expect("log diagnostico terminato");
+        assert!(ended_diagnostic.contains("logging_heading"));
+        assert!(ended_diagnostic.contains("\"event\":\"finished\""));
+    }
+
+    #[test]
+    fn logging_session_finishes_when_desktop_exits() {
+        use sanikey_core::logging::{Component, Level, Session};
+
+        let directory = TestDirectory::new();
+        let (session, path) = Session::create_in_directory_with_level(
+            &directory.0,
+            Component::Desktop,
+            Level::Events,
+        )
+        .expect("sessione sintetica");
+        let mut app = DesktopApp {
+            log_session: Some(session),
+            log_path: Some(path.clone()),
+            active_log_level: Some(Level::Events),
+            ..DesktopApp::default()
+        };
+
+        eframe::App::on_exit(&mut app);
+
+        assert!(app.log_session.is_none());
+        let log = fs::read_to_string(path).expect("log terminato in uscita");
+        assert!(log.contains("\"event\":\"finished\""));
+    }
+
+    #[test]
+    fn desktop_exit_defers_finished_until_worker_terminates() {
+        use sanikey_core::logging::{Component, DisplayControl, Level, Session};
+
+        let directory = TestDirectory::new();
+        let (session, path) = Session::create_in_directory_with_level(
+            &directory.0,
+            Component::Desktop,
+            Level::Diagnostic,
+        )
+        .expect("sessione sintetica");
+        let worker_session = session.clone();
+        let (release_sender, release_receiver) = std::sync::mpsc::channel();
+        let worker_handle = thread::spawn(move || {
+            let _ = release_receiver.recv_timeout(std::time::Duration::from_millis(150));
+            worker_session
+                .record_displayed_text(
+                    DisplayControl::new("worker_finishing_text"),
+                    Some("valore sintetico dopo attesa"),
+                )
+                .expect("scrittura worker prima della chiusura");
+        });
+        let mut app = DesktopApp {
+            log_session: Some(session),
+            worker_handle: Some(worker_handle),
+            ..DesktopApp::default()
+        };
+
+        eframe::App::on_exit(&mut app);
+
+        let before_release = fs::read_to_string(&path).expect("log sintetico aperto");
+        assert!(!before_release.contains("\"event\":\"finished\""));
+        assert!(before_release.contains("\"event\":\"shutdown_pending\""));
+        release_sender.send(()).expect("rilascio worker sintetico");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+        let log = loop {
+            let contents = fs::read_to_string(&path).expect("log sintetico");
+            if contents.contains("\"event\":\"finished\"") {
+                break contents;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "chiusura differita assente"
+            );
+            thread::sleep(std::time::Duration::from_millis(10));
+        };
+        let worker_record = log
+            .find("worker_finishing_text")
+            .expect("record worker presente");
+        let finished_event = log
+            .find("\"event\":\"finished\"")
+            .expect("evento di fine sessione");
+        assert!(worker_record < finished_event);
+    }
+
+    #[test]
+    fn unfinished_worker_does_not_block_a_desktop_frame() {
+        let (release_sender, release_receiver) = std::sync::mpsc::channel();
+        let (started_sender, started_receiver) = std::sync::mpsc::channel();
+        let worker = thread::spawn(move || {
+            started_sender.send(()).expect("worker avviato");
+            let _ = release_receiver.recv();
+        });
+        started_receiver.recv().expect("worker in attesa");
+        let app = DesktopApp {
+            worker_handle: Some(worker),
+            ..DesktopApp::default()
+        };
+        let (completed_sender, completed_receiver) = std::sync::mpsc::channel();
+        let frame = thread::spawn(move || {
+            let mut app = app;
+            app.receive_worker_events();
+            completed_sender
+                .send(app.worker_handle.is_some())
+                .expect("frame completato");
+        });
+
+        let completed = completed_receiver.recv_timeout(std::time::Duration::from_millis(500));
+        release_sender.send(()).expect("rilascio worker sintetico");
+        frame.join().expect("frame headless terminato");
+        assert_eq!(completed, Ok(true));
+    }
+
+    #[test]
+    fn trace_session_is_scoped_into_desktop_workers() {
+        use sanikey_core::logging::{Component, Level, Session, TraceValue, trace_current};
+
+        let directory = TestDirectory::new();
+        let (session, path) =
+            Session::create_in_directory_with_level(&directory.0, Component::Desktop, Level::Trace)
+                .expect("sessione sintetica");
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let worker = spawn_logged_worker(None, Some(session.trace_link()), move |_| {
+            let span = trace_current(Component::Desktop, "synthetic_desktop_worker", Vec::new)
+                .expect("trace corrente nel worker");
+            span.finish(TraceValue::Secret)
+                .expect("chiusura trace sintetica");
+            sender.send(()).expect("segnale worker completato");
+            None
+        });
+        receiver
+            .recv()
+            .expect("worker terminato prima della lettura");
+        worker.join().expect("worker terminato senza panic");
+        session.finish(Component::Desktop).expect("fine sessione");
+
+        let log = fs::read_to_string(path).expect("log sintetico");
+        assert!(log.contains("synthetic_desktop_worker"));
+    }
+
+    #[test]
+    fn trace_session_records_view_and_shutdown_without_repeating_or_leaking_status() {
+        use sanikey_core::logging::{Component, Level, Session};
+
+        let directory = TestDirectory::new();
+        let (session, path) =
+            Session::create_in_directory_with_level(&directory.0, Component::Desktop, Level::Trace)
+                .expect("sessione Trace sintetica");
+        let mut app = DesktopApp {
+            log_session: Some(session.clone()),
+            status: "Stato sintetico\napi_key = \"synthetic-view-secret\"".to_owned(),
+            ..DesktopApp::default()
+        };
+        let context = egui::Context::default();
+        let mut frame = eframe::Frame::_new_kittest();
+        run_app_frame(&mut app, &context, &mut frame, Vec::new()).drop_without_applying_deltas();
+        eframe::App::on_exit(&mut app);
+        drop(app);
+
+        let contents = fs::read_to_string(path).expect("log Trace sintetico");
+        assert!(contents.contains("desktop::eframe::App::ui"));
+        assert!(contents.contains("desktop::DesktopApp::show_contents"));
+        assert!(contents.contains("desktop::eframe::App::on_exit"));
+        assert!(contents.contains("desktop::DesktopApp::finish_log_session"));
+        assert!(contents.contains("\"type\":\"function_enter\""));
+        assert!(contents.contains("\"type\":\"function_exit\""));
+        assert!(contents.contains("\"event\":\"finished\""));
+        let status_capture_count = contents
+            .lines()
+            .filter(|line| {
+                line.contains("\"type\":\"displayed_text\"")
+                    && line.contains("\"control\":\"status\"")
+                    && line.contains("Stato sintetico")
+            })
+            .count();
+        assert_eq!(status_capture_count, 1);
+        assert!(contents.contains("secret_omitted"));
+        assert!(!contents.contains("synthetic-view-secret"));
+        assert!(!contents.contains("\"outcome\":\"unfinished\""));
+    }
+
+    #[test]
+    fn events_level_records_typed_worker_lifecycle_without_private_values() {
+        use sanikey_core::logging::{
+            Activity, Component, FailureCategory, Level, Outcome, Session,
+        };
+
+        let directory = TestDirectory::new();
+        let (session, path) = Session::create_in_directory_with_level(
+            &directory.0,
+            Component::Desktop,
+            Level::Events,
+        )
+        .expect("sessione sintetica");
+        let mut app = DesktopApp {
+            log_session: Some(session),
+            ..DesktopApp::default()
+        };
+        let private_value = "dato privato sintetico";
+        app.launch_operation_worker(Activity::Preflight, move |_| {
+            assert!(Session::current().is_some());
+            assert_eq!(private_value, "dato privato sintetico");
+            Outcome::FailedWith(FailureCategory::Privacy)
+        });
+        app.worker_handle
+            .take()
+            .expect("worker avviato")
+            .join()
+            .expect("worker terminato");
+        eframe::App::on_exit(&mut app);
+
+        let log = fs::read_to_string(path).expect("log sintetico");
+        assert!(log.contains("\"activity\":\"preflight\""));
+        assert!(log.contains("\"event\":\"started\""));
+        assert!(log.contains("\"event\":\"failed\""));
+        assert!(log.contains("\"failure_category\":\"privacy\""));
+        assert!(log.contains("\"type\":\"operation_phase\""));
+        assert!(log.contains("\"duration_ms\":"));
+        assert!(!log.contains("dato privato sintetico"));
+    }
+
+    #[test]
+    fn events_level_distinguishes_private_free_gui_action_categories() {
+        use sanikey_core::logging::{Activity, Component, Level, Session};
+
+        let directory = TestDirectory::new();
+        let (session, path) = Session::create_in_directory_with_level(
+            &directory.0,
+            Component::Desktop,
+            Level::Events,
+        )
+        .expect("sessione sintetica");
+        let activities = [
+            (Activity::GuiProfilePathEdited, "gui_profile_path_edited"),
+            (Activity::GuiFolderEdited, "gui_folder_edited"),
+            (Activity::GuiFolderChosen, "gui_folder_chosen"),
+            (Activity::GuiPersonSelection, "gui_person_selection"),
+            (Activity::GuiReviewEdit, "gui_review_edit"),
+            (Activity::GuiUsbConfirmation, "gui_usb_confirmation"),
+            (Activity::GuiAifaCandidate, "gui_aifa_candidate"),
+            (
+                Activity::GuiProfileDialogOpened,
+                "gui_profile_dialog_opened",
+            ),
+            (Activity::GuiAifaQueryEdited, "gui_aifa_query_edited"),
+            (Activity::GuiPanelToggled, "gui_panel_toggled"),
+            (Activity::GuiLogLevelSelected, "gui_log_level_selected"),
+            (Activity::GuiConsentChanged, "gui_consent_changed"),
+            (Activity::GuiLoggingStop, "gui_logging_stop"),
+        ];
+        let mut failed = false;
+        for (activity, _) in activities {
+            record_ui_action(
+                Some(&session),
+                &mut failed,
+                activity,
+                DisplayControl::new("synthetic_action"),
+            );
+        }
+        assert!(!failed);
+        session.finish(Component::Desktop).expect("fine sessione");
+
+        let log = fs::read_to_string(path).expect("log sintetico");
+        for (_, activity) in activities {
+            assert!(log.contains(&format!("\"activity\":\"{activity}\"")));
+        }
+        assert!(!log.contains("dato privato sintetico"));
+    }
+
+    #[test]
+    fn gui_action_events_distinguish_static_controls_and_repeated_indices() {
+        use sanikey_core::logging::{Activity, Component, Level, Session};
+
+        let directory = TestDirectory::new();
+        let (session, path) = Session::create_in_directory_with_level(
+            &directory.0,
+            Component::Desktop,
+            Level::Events,
+        )
+        .expect("sessione sintetica");
+        let mut failed = false;
+        record_ui_action(
+            Some(&session),
+            &mut failed,
+            Activity::GuiPanelToggled,
+            DisplayControl::indexed("person_panel", 0, None),
+        );
+        record_ui_action(
+            Some(&session),
+            &mut failed,
+            Activity::GuiPanelToggled,
+            DisplayControl::indexed("person_panel", 1, None),
+        );
+        record_ui_action(
+            Some(&session),
+            &mut failed,
+            Activity::GuiAifaQueryEdited,
+            DisplayControl::indexed("aifa_manual_query", 0, Some(2)),
+        );
+        assert!(!failed);
+        session.finish(Component::Desktop).expect("fine sessione");
+
+        let log = fs::read_to_string(path).expect("log sintetico");
+        assert!(log.contains(
+            r#""target":{"child_index":null,"index":0,"leaf_index":null,"name":"person_panel","part":"value"}"#
+        ));
+        assert!(log.contains(
+            r#""target":{"child_index":null,"index":1,"leaf_index":null,"name":"person_panel","part":"value"}"#
+        ));
+        assert!(log.contains(
+            r#""target":{"child_index":2,"index":0,"leaf_index":null,"name":"aifa_manual_query","part":"value"}"#
+        ));
+        assert!(!log.contains("query privata sintetica"));
+    }
+
+    #[test]
+    fn gui_actions_before_logging_activation_are_not_backfilled() {
+        use sanikey_core::logging::{Activity, Component, Level, Session};
+
+        let mut failed = false;
+        record_ui_action(
+            None,
+            &mut failed,
+            Activity::GuiProfileDialogOpened,
+            DisplayControl::new("open_profile"),
+        );
+        record_ui_action(
+            None,
+            &mut failed,
+            Activity::GuiAifaQueryEdited,
+            DisplayControl::new("aifa_manual_query"),
+        );
+        record_ui_action(
+            None,
+            &mut failed,
+            Activity::GuiPanelToggled,
+            DisplayControl::new("duplicate_panel"),
+        );
+        assert!(!failed);
+
+        let directory = TestDirectory::new();
+        let (session, path) = Session::create_in_directory_with_level(
+            &directory.0,
+            Component::Desktop,
+            Level::Events,
+        )
+        .expect("sessione sintetica");
+        session.finish(Component::Desktop).expect("fine sessione");
+        let log = fs::read_to_string(path).expect("log sintetico");
+        assert!(!log.contains("gui_profile_dialog_opened"));
+        assert!(!log.contains("gui_aifa_query_edited"));
+        assert!(!log.contains("gui_panel_toggled"));
+    }
+
+    #[test]
+    fn logging_creation_error_is_kept_for_the_operator() {
+        use sanikey_core::logging::Level;
+
+        let directory = TestDirectory::new();
+        let not_a_directory = directory.0.join("file");
+        fs::write(&not_a_directory, "fixture sintetica").expect("file fixture");
+        let mut app = DesktopApp {
+            log_directory: Some(not_a_directory),
+            pending_log_action: Some(super::PendingLogAction::Start(Level::Events)),
+            ..DesktopApp::default()
+        };
+        let context = egui::Context::default();
+        context.enable_accesskit();
+        let mut frame = eframe::Frame::_new_kittest();
+        run_app_frame(&mut app, &context, &mut frame, Vec::new()).drop_without_applying_deltas();
+
+        assert!(app.log_session.is_none());
+        assert!(
+            app.log_action_error
+                .as_deref()
+                .is_some_and(|error| { error.contains("Impossibile avviare il log") })
+        );
+        let output = run_app_frame(&mut app, &context, &mut frame, Vec::new());
+        let tree = output
+            .platform_output
+            .accesskit_update
+            .as_ref()
+            .expect("albero AccessKit dell'errore");
+        let error_is_accessible = tree.nodes.iter().any(|(_, node)| {
+            [node.label(), node.value()]
+                .into_iter()
+                .flatten()
+                .any(|text| text.contains("Impossibile avviare il log"))
+        });
+        output.drop_without_applying_deltas();
+        assert!(error_is_accessible);
+    }
+
+    #[test]
+    fn diagnostic_session_captures_person_heading_with_numeric_context() {
+        use sanikey_core::logging::{Component, Level, Session};
+
+        let directory = TestDirectory::new();
+        let profile = profile_with_document(&directory);
+        let (session, log_path) = Session::create_in_directory_with_level(
+            &directory.0,
+            Component::Desktop,
+            Level::Diagnostic,
+        )
+        .expect("sessione sintetica");
+        let mut app = DesktopApp {
+            log_session: Some(session),
+            ..DesktopApp::default()
+        };
+        app.import_profile(profile.source_path());
+        let context = egui::Context::default();
+        context.enable_accesskit();
+        let mut frame = eframe::Frame::_new_kittest();
+        let frame_output = run_app_frame(&mut app, &context, &mut frame, Vec::new());
+        let tree = frame_output
+            .platform_output
+            .accesskit_update
+            .as_ref()
+            .unwrap();
+        let output = fs::read_to_string(log_path).expect("log sintetico");
+        let missing = tree
+            .nodes
+            .iter()
+            .flat_map(|(_, node)| [node.label(), node.value()])
+            .flatten()
+            .filter(|text| !text.is_empty() && !output.contains(text))
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        frame_output.drop_without_applying_deltas();
+        assert!(
+            missing.is_empty(),
+            "Testo accessibile assente dal log: {missing:?}"
+        );
+        assert!(output.contains("Persona A (patient-a)"));
+        assert!(output.contains("\"control\":\"person_heading\""));
+        assert!(output.contains("\"index\":0"));
+        assert!(output.contains("\"control\":\"source_documents\""));
+        assert!(output.contains("\"control\":\"metadata_directory\""));
+        assert!(output.contains("\"control\":\"local_build\""));
+    }
+
+    #[test]
+    fn trace_session_redacts_recognized_secret_assignments_inside_paths() {
+        use sanikey_core::logging::{
+            Component, Level, Session, TraceField, TraceValue, trace_current,
+        };
+
+        let directory = TestDirectory::new();
+        let (session, log_path) =
+            Session::create_in_directory_with_level(&directory.0, Component::Desktop, Level::Trace)
+                .expect("sessione Trace sintetica");
+        let span = session
+            .scoped(|| {
+                trace_current(Component::Desktop, "desktop::synthetic_paths", || {
+                    vec![
+                        TraceField::new(
+                            "secret_path",
+                            trace_desktop_path(std::path::Path::new(
+                                "/synthetic/private/api_key=SECRET-PATH-SYNTHETIC",
+                            )),
+                        ),
+                        TraceField::new(
+                            "ordinary_path",
+                            trace_desktop_path(std::path::Path::new("/synthetic/ordinary")),
+                        ),
+                    ]
+                })
+            })
+            .expect("span Trace sintetica");
+        span.finish(TraceValue::data("synthetic complete"))
+            .expect("chiusura span sintetica");
+        session
+            .finish(Component::Desktop)
+            .expect("chiusura sessione");
+
+        let log = fs::read_to_string(log_path).expect("log Trace sintetico");
+        assert!(log.contains("\"kind\":\"secret_omitted\""));
+        assert!(!log.contains("/synthetic/private/api_key"));
+        assert!(log.contains("/synthetic/ordinary"));
+        assert!(!log.contains("SECRET-PATH-SYNTHETIC"));
+    }
+
+    #[test]
+    fn diagnostic_capture_covers_accessible_initial_screen_text() {
+        use sanikey_core::logging::{Component, Level, Session};
+
+        let directory = TestDirectory::new();
+        let (session, log_path) = Session::create_in_directory_with_level(
+            &directory.0,
+            Component::Desktop,
+            Level::Diagnostic,
+        )
+        .unwrap();
+        let mut app = DesktopApp {
+            log_session: Some(session),
+            profile_path: "/profilo/sintetico".to_owned(),
+            ..DesktopApp::default()
+        };
+        let context = egui::Context::default();
+        context.enable_accesskit();
+        let mut frame = eframe::Frame::_new_kittest();
+        let output = run_app_frame(&mut app, &context, &mut frame, Vec::new());
+        let tree = output.platform_output.accesskit_update.as_ref().unwrap();
+        let log = fs::read_to_string(log_path).unwrap();
+        let missing = tree
+            .nodes
+            .iter()
+            .flat_map(|(_, node)| [node.label(), node.value()])
+            .flatten()
+            .filter(|text| !text.is_empty() && !log.contains(text))
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        output.drop_without_applying_deltas();
+        assert!(
+            missing.is_empty(),
+            "Testo accessibile assente dal log: {missing:?}"
+        );
+    }
+
+    #[test]
+    fn diagnostic_capture_records_native_window_title_with_distinct_control() {
+        use sanikey_core::logging::{Component, Level, Session};
+
+        let directory = TestDirectory::new();
+        let (session, log_path) = Session::create_in_directory_with_level(
+            &directory.0,
+            Component::Desktop,
+            Level::Diagnostic,
+        )
+        .expect("sessione sintetica");
+        let mut app = DesktopApp {
+            log_session: Some(session),
+            ..DesktopApp::default()
+        };
+        let context = egui::Context::default();
+        let mut frame = eframe::Frame::_new_kittest();
+        let output = run_app_frame(&mut app, &context, &mut frame, Vec::new());
+        output.drop_without_applying_deltas();
+
+        let log = fs::read_to_string(log_path).expect("log sintetico");
+        let title = log
+            .lines()
+            .find(|line| line.contains("\"control\":\"window_title\""))
+            .expect("record titolo finestra");
+        let heading = log
+            .lines()
+            .find(|line| line.contains("\"control\":\"heading\""))
+            .expect("record heading egui");
+        assert!(title.contains("\"text\":\"SaniKey\""));
+        assert!(heading.contains("\"text\":\"SaniKey\""));
+    }
+
+    #[test]
+    fn diagnostic_capture_records_accessible_logging_failure_warning() {
+        use sanikey_core::logging::{Component, Level, Session};
+
+        let directory = TestDirectory::new();
+        let (session, log_path) = Session::create_in_directory_with_level(
+            &directory.0,
+            Component::Desktop,
+            Level::Diagnostic,
+        )
+        .expect("sessione sintetica");
+        let mut app = DesktopApp {
+            log_session: Some(session),
+            log_failure: true,
+            ..DesktopApp::default()
+        };
+        let context = egui::Context::default();
+        context.enable_accesskit();
+        let mut frame = eframe::Frame::_new_kittest();
+        let output = run_app_frame(&mut app, &context, &mut frame, Vec::new());
+        let tree = output
+            .platform_output
+            .accesskit_update
+            .as_ref()
+            .expect("albero AccessKit del messaggio di errore");
+        let warning = "Registrazione interrotta o incompleta; verifica il file di log.";
+        assert!(tree.nodes.iter().any(|(_, node)| {
+            node.label().is_some_and(|label| label == warning)
+                || node.value().is_some_and(|value| value == warning)
+        }));
+        output.drop_without_applying_deltas();
+
+        let log = fs::read_to_string(log_path).expect("log sintetico");
+        assert!(log.contains(warning));
+        assert!(log.contains("\"control\":\"log_failure_warning\""));
+    }
+
+    #[test]
+    fn desktop_surfaces_a_session_failure_at_events_level() {
+        use sanikey_core::logging::{Activity, Component, Level, Session};
+
+        let directory = TestDirectory::new();
+        let (session, _) = Session::create_in_directory_with_level(
+            &directory.0,
+            Component::Desktop,
+            Level::Events,
+        )
+        .expect("sessione sintetica");
+        session
+            .finish(Component::Desktop)
+            .expect("chiusura anticipata fixture");
+        assert!(
+            session
+                .start_operation(Component::Desktop, Activity::Profile)
+                .is_err()
+        );
+        assert!(session.has_failed());
+
+        let mut app = DesktopApp {
+            log_session: Some(session),
+            ..DesktopApp::default()
+        };
+        let context = egui::Context::default();
+        context.enable_accesskit();
+        let mut frame = eframe::Frame::_new_kittest();
+        let output = run_app_frame(&mut app, &context, &mut frame, Vec::new());
+        assert!(app.log_failure);
+        let error_is_accessible = output
+            .platform_output
+            .accesskit_update
+            .as_ref()
+            .expect("albero AccessKit errore eventi")
+            .nodes
+            .iter()
+            .any(|(_, node)| {
+                [node.label(), node.value()]
+                    .into_iter()
+                    .flatten()
+                    .any(|text| text.contains("Registrazione interrotta o incompleta"))
+            });
+        output.drop_without_applying_deltas();
+        assert!(error_is_accessible);
+    }
+
+    #[test]
+    fn finishing_a_session_surfaces_an_unfinished_worker_operation() {
+        use sanikey_core::logging::{Activity, Component, Level, Session};
+
+        let directory = TestDirectory::new();
+        let (session, log_path) = Session::create_in_directory_with_level(
+            &directory.0,
+            Component::Desktop,
+            Level::Events,
+        )
+        .expect("sessione sintetica");
+        let operation = session
+            .start_operation(Component::Desktop, Activity::Build)
+            .expect("operazione worker sintetica");
+        drop(operation);
+        assert!(session.has_failed());
+
+        let mut app = DesktopApp {
+            log_session: Some(session),
+            ..DesktopApp::default()
+        };
+        app.finish_log_session();
+
+        assert!(app.log_session.is_none());
+        assert!(app.log_failure);
+        assert_eq!(
+            app.log_action_error.as_deref(),
+            Some("Registrazione interrotta o incompleta; verifica il file di log.")
+        );
+        let log = fs::read_to_string(log_path).expect("log sintetico chiuso");
+        assert!(log.contains("\"event\":\"unfinished\""));
+        assert!(log.contains("\"event\":\"finished\""));
+    }
+
+    #[test]
+    fn diagnostic_capture_covers_accessible_preflight_review_text() {
+        use sanikey_core::logging::{Component, Level, Session};
+
+        let directory = TestDirectory::new();
+        let (session, log_path) = Session::create_in_directory_with_level(
+            &directory.0,
+            Component::Desktop,
+            Level::Diagnostic,
+        )
+        .unwrap();
+        let mut app = DesktopApp {
+            log_session: Some(session),
+            review: Some(ReviewSummary {
+                document_count: 2,
+                duplicate_groups: vec![(
+                    "Persona sintetica".into(),
+                    "abc123".into(),
+                    vec![PathBuf::from("/documento/sintetico")],
+                )],
+                selected_people: vec!["persona-sintetica".into()],
+            }),
+            ..DesktopApp::default()
+        };
+        let context = egui::Context::default();
+        context.enable_accesskit();
+        let mut frame = eframe::Frame::_new_kittest();
+        let output = context.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1000.0, 2000.0),
+                )),
+                ..Default::default()
+            },
+            |ui| eframe::App::ui(&mut app, ui, &mut frame),
+        );
+        let log = fs::read_to_string(log_path).unwrap();
+        let missing = output
+            .platform_output
+            .accesskit_update
+            .as_ref()
+            .unwrap()
+            .nodes
+            .iter()
+            .flat_map(|(_, node)| [node.label(), node.value()])
+            .flatten()
+            .filter(|text| !text.is_empty() && !log.contains(text))
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        output.drop_without_applying_deltas();
+        assert!(
+            missing.is_empty(),
+            "Testo accessibile assente dal log: {missing:?}"
+        );
+        assert!(log.contains("/documento/sintetico"));
     }
 
     fn focused_widget_after_key(key: egui::Key, modifiers: egui::Modifiers) -> Option<egui::Id> {
@@ -2409,7 +4982,17 @@ enabled = false
 
     #[test]
     fn aifa_review_exposes_search_and_confirmation_controls_accessibly() {
+        use sanikey_core::logging::{Component, Level, Session};
+
+        let directory = TestDirectory::new();
+        let (session, log_path) = Session::create_in_directory_with_level(
+            &directory.0,
+            Component::Desktop,
+            Level::Diagnostic,
+        )
+        .expect("sessione sintetica");
         let mut app = DesktopApp {
+            log_session: Some(session),
             aifa_people: Some(vec![AifaPersonReview {
                 id: "patient-a".into(),
                 display_name: "Persona A sintetica".into(),
@@ -2454,12 +5037,18 @@ enabled = false
             egui::RawInput {
                 screen_rect: Some(egui::Rect::from_min_size(
                     egui::Pos2::ZERO,
-                    egui::vec2(1000.0, 2200.0),
+                    egui::vec2(1000.0, 3000.0),
                 )),
                 ..Default::default()
             },
             |ui| eframe::App::ui(&mut app, ui, &mut frame),
         );
+        let log = fs::read_to_string(log_path).expect("log sintetico");
+        assert!(log.contains("\"control\":\"aifa_medication_name\""));
+        assert!(log.contains("Farmaco sintetico"));
+        assert!(log.contains("Ricerca sintetica pronta."));
+        assert!(log.contains("Principi attivi: principio"));
+        assert!(log.contains("\"control\":\"aifa_identifier\""));
         let tree = output
             .platform_output
             .accesskit_update
@@ -2471,16 +5060,31 @@ enabled = false
             .filter_map(|(_, node)| node.label())
             .map(str::to_owned)
             .collect::<Vec<_>>();
-        let manual_search_is_labelled = tree
+        let manual_search_is_labelled = tree.nodes.iter().any(|(_, node)| {
+            node.role() == egui::accesskit::Role::TextInput
+                && node.labelled_by().iter().any(|label_id| {
+                    tree.nodes
+                        .iter()
+                        .find(|(node_id, _)| node_id == label_id)
+                        .and_then(|(_, label)| label.value())
+                        == Some("Ricerca manuale")
+                })
+        });
+
+        let missing = tree
             .nodes
             .iter()
-            .find(|(_, node)| node.role() == egui::accesskit::Role::TextInput)
-            .and_then(|(_, node)| node.labelled_by().first())
-            .and_then(|label_id| tree.nodes.iter().find(|(node_id, _)| node_id == label_id))
-            .and_then(|(_, node)| node.value())
-            == Some("Ricerca manuale");
+            .flat_map(|(_, node)| [node.label(), node.value()])
+            .flatten()
+            .filter(|text| !text.is_empty() && !log.contains(text))
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
 
         output.drop_without_applying_deltas();
+        assert!(
+            missing.is_empty(),
+            "Testo accessibile assente dal log: {missing:?}"
+        );
         assert!(manual_search_is_labelled);
         assert!(
             labels

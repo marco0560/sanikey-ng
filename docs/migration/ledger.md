@@ -129,6 +129,30 @@ autorizzazione specifica.
 
 ## Prossima sessione
 
+Lavoro in corso sul [piano log multilivello](../process/piano-log-multilivello.md):
+GUI, CLI, core e adattatori usano sessioni correlate e livelli attivati
+esplicitamente. La diagnostica acquisisce il testo della presentazione; il testo
+non classificabile è registrabile come privato, mentre i segreti identificati
+sono esclusi. Una password inserita in un campo generico non è distinguibile
+con certezza da altri dati. Le fixture sintetiche verificano anche redazione,
+propagazione tra thread, chiusura e segnalazione di registrazione incompleta.
+
+Il log dichiara la copertura incompleta e segnala omissioni ai confini non
+osservabili. `cargo xtask log-inventory` produce un inventario sintattico con
+hash sorgente; macro, codice generato e condizioni di piattaforma richiedono
+verifiche separate. L'albero di accessibilità egui non dimostra tutto il testo
+visibile e le finestre native non sono integralmente osservabili. Le prove
+sintetiche Linux degli adattatori non qualificano esecuzioni native Windows o
+macOS. La [misura sintetica](verification/2026-11-14-log-benchmark.md) riporta
+dimensioni e tempi del logger, senza stimare le prestazioni delle build reali.
+Il 2026-11-14 `cargo xtask check`, con directory temporanea del workspace, ha superato Clippy, test, doctest,
+build e controlli di pubblicabilità su Linux: 313 test core passati e 2
+ignorati, 54 desktop e 20 CLI passati, oltre ai test degli adattatori. Codira
+ha indicizzato 245 file supportati senza errori e l'audit Rustdoc, ripetuto
+dopo la documentazione dei simboli rilevati, non ha prodotto ulteriori rilievi;
+12 asset senza analyzer restano fuori dalla copertura. Restano il commit e le
+qualifiche native separate.
+
 Decisione G2 del 2026-11-10: applicare `--repo-root` al preflight privacy
 dei comandi CLI `build-patient` e `build-all`, come descritto nella
 [ricevuta CLI](verification/2026-11-10-cli-build.md). Entrambi i comandi sono

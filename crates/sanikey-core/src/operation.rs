@@ -4,6 +4,13 @@ use std::fmt;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use serde_json::json;
+
+use crate::logging::{
+    Activity, Component, FailureCategory, Operation, Outcome, ProgressPhase, Session, TraceField,
+    TraceOmission, TraceValue, trace_current, trace_sensitive_text,
+};
+
 /// Stable machine-readable categories for application failures.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ErrorCode {
@@ -39,10 +46,20 @@ impl OperationError {
     /// Creates an error without coupling its machine category to its wording.
     #[must_use]
     pub fn new(code: ErrorCode, message: impl Into<String>) -> Self {
-        Self {
-            code,
-            message: message.into(),
+        let message = message.into();
+        let trace = trace_current(Component::Core, "operation::OperationError::new", || {
+            vec![
+                TraceField::new("code", TraceValue::Data(json!(code.as_str()))),
+                TraceField::new("message", trace_sensitive_text(&message)),
+            ]
+        });
+        let error = Self { code, message };
+        if let Some(trace) = trace {
+            let _ = trace.finish(TraceValue::Data(
+                json!({"code": error.code.as_str(), "message": trace_sensitive_text(&error.message).to_json()}),
+            ));
         }
+        error
     }
 
     /// Returns the machine-readable category.
@@ -54,6 +71,21 @@ impl OperationError {
     /// Returns the Italian message intended for people.
     #[must_use]
     pub fn message(&self) -> &str {
+        let trace = trace_current(
+            Component::Core,
+            "operation::OperationError::message",
+            || {
+                vec![TraceField::new(
+                    "self",
+                    TraceValue::Data(
+                        json!({"code": self.code.as_str(), "message": trace_sensitive_text(&self.message).to_json()}),
+                    ),
+                )]
+            },
+        );
+        if let Some(trace) = trace {
+            let _ = trace.finish(trace_sensitive_text(&self.message));
+        }
         &self.message
     }
 }
@@ -61,7 +93,25 @@ impl OperationError {
 /// Formatta l'errore con il messaggio destinato alle persone.
 impl fmt::Display for OperationError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(self.message())
+        let trace = trace_current(Component::Core, "operation::OperationError::fmt", || {
+            vec![
+                TraceField::new(
+                    "self",
+                    TraceValue::Data(
+                        json!({"code": self.code.as_str(), "message": trace_sensitive_text(&self.message).to_json()}),
+                    ),
+                ),
+                TraceField::new(
+                    "formatter",
+                    TraceValue::Omitted(TraceOmission::UnsupportedType),
+                ),
+            ]
+        });
+        let result = formatter.write_str(self.message());
+        if let Some(trace) = trace {
+            let _ = trace.finish(TraceValue::Data(json!({"ok": result.is_ok()})));
+        }
+        result
     }
 }
 
@@ -117,13 +167,40 @@ pub struct CancellationToken(Arc<AtomicBool>);
 impl CancellationToken {
     /// Requests cancellation; the operation observes it at its next safe point.
     pub fn cancel(&self) {
+        let trace = trace_current(
+            Component::Core,
+            "operation::CancellationToken::cancel",
+            || {
+                vec![TraceField::new(
+                    "previously_cancelled",
+                    TraceValue::Data(json!(self.0.load(Ordering::Relaxed))),
+                )]
+            },
+        );
         self.0.store(true, Ordering::Relaxed);
+        if let Some(trace) = trace {
+            let _ = trace.finish(TraceValue::Data(json!(null)));
+        }
     }
 
     /// Returns whether cancellation has been requested.
     #[must_use]
     pub fn is_cancelled(&self) -> bool {
-        self.0.load(Ordering::Relaxed)
+        let trace = trace_current(
+            Component::Core,
+            "operation::CancellationToken::is_cancelled",
+            || {
+                vec![TraceField::new(
+                    "self_cancelled_at_entry",
+                    TraceValue::Data(json!(self.0.load(Ordering::Relaxed))),
+                )]
+            },
+        );
+        let cancelled = self.0.load(Ordering::Relaxed);
+        if let Some(trace) = trace {
+            let _ = trace.finish(TraceValue::Data(json!(cancelled)));
+        }
+        cancelled
     }
 }
 
@@ -141,29 +218,124 @@ pub struct OperationContext<'a> {
     cancellation: &'a CancellationToken,
     phase: OperationPhase,
     events: Vec<OperationEvent>,
+    logging_operation: Option<&'a Operation>,
 }
 
 /// Gestisce fase, progresso e controlli di annullamento dell'operazione.
 impl OperationContext<'_> {
     /// Changes the phase used by subsequent progress events.
     pub fn set_phase(&mut self, phase: OperationPhase) {
+        let trace = trace_current(
+            Component::Core,
+            "operation::OperationContext::set_phase",
+            || {
+                vec![
+                    TraceField::new(
+                        "previous_phase",
+                        TraceValue::Data(json!(format!("{:?}", self.phase))),
+                    ),
+                    TraceField::new(
+                        "previous_event_count",
+                        TraceValue::Data(json!(self.events.len())),
+                    ),
+                    TraceField::new(
+                        "cancellation_requested",
+                        TraceValue::Data(json!(self.cancellation.0.load(Ordering::Relaxed))),
+                    ),
+                    TraceField::new("phase", TraceValue::Data(json!(format!("{phase:?}")))),
+                ]
+            },
+        );
         self.phase = phase;
+        if let Some(operation) = self.logging_operation {
+            let _ = operation.phase(logging_phase(phase));
+        }
+        if let Some(trace) = trace {
+            let _ = trace.finish(TraceValue::Data(json!(null)));
+        }
     }
 
     /// Reports completed work without exposing presentation-specific text.
     pub fn report_progress(&mut self, completed: u64, total: Option<u64>) {
+        let trace = trace_current(
+            Component::Core,
+            "operation::OperationContext::report_progress",
+            || {
+                vec![
+                    TraceField::new(
+                        "phase",
+                        TraceValue::Data(json!(format!("{:?}", self.phase))),
+                    ),
+                    TraceField::new(
+                        "previous_event_count",
+                        TraceValue::Data(json!(self.events.len())),
+                    ),
+                    TraceField::new(
+                        "cancellation_requested",
+                        TraceValue::Data(json!(self.cancellation.0.load(Ordering::Relaxed))),
+                    ),
+                    TraceField::new("completed", TraceValue::Data(json!(completed))),
+                    TraceField::new("total", TraceValue::Data(json!(total))),
+                ]
+            },
+        );
         self.events.push(OperationEvent::Progress {
             phase: self.phase,
             completed,
             total,
         });
+        if let Some(operation) = self.logging_operation {
+            let _ = operation.progress(logging_phase(self.phase), completed, total);
+        }
+        if let Some(trace) = trace {
+            let _ = trace.finish(TraceValue::Data(json!(null)));
+        }
     }
 
     /// Checks cancellation at an operation-defined safe point.
     #[must_use]
     pub fn is_cancelled(&self) -> bool {
-        self.cancellation.is_cancelled()
+        let trace = trace_current(
+            Component::Core,
+            "operation::OperationContext::is_cancelled",
+            || {
+                vec![
+                    TraceField::new(
+                        "phase",
+                        TraceValue::Data(json!(format!("{:?}", self.phase))),
+                    ),
+                    TraceField::new("event_count", TraceValue::Data(json!(self.events.len()))),
+                    TraceField::new(
+                        "cancellation_requested",
+                        TraceValue::Data(json!(self.cancellation.0.load(Ordering::Relaxed))),
+                    ),
+                ]
+            },
+        );
+        let cancelled = self.cancellation.is_cancelled();
+        if let Some(trace) = trace {
+            let _ = trace.finish(TraceValue::Data(json!(cancelled)));
+        }
+        cancelled
     }
+}
+
+fn logging_phase(phase: OperationPhase) -> ProgressPhase {
+    let trace = trace_current(Component::Core, "operation::logging_phase", || {
+        vec![TraceField::new(
+            "phase",
+            TraceValue::Data(json!(format!("{phase:?}"))),
+        )]
+    });
+    let result = match phase {
+        OperationPhase::Preparing => ProgressPhase::Preparing,
+        OperationPhase::Processing => ProgressPhase::Processing,
+        OperationPhase::Finalizing => ProgressPhase::Finalizing,
+    };
+    if let Some(trace) = trace {
+        let _ = trace.finish(TraceValue::Data(json!(format!("{result:?}"))));
+    }
+    result
 }
 
 /// Runs an operation and records one terminal event after its progress events.
@@ -172,12 +344,37 @@ pub fn run_operation<T>(
     cancellation: &CancellationToken,
     action: impl FnOnce(&mut OperationContext<'_>) -> Result<T, OperationError>,
 ) -> OperationRun<T> {
+    let trace = trace_current(Component::Core, "operation::run_operation", || {
+        vec![
+            TraceField::new("operation", TraceValue::Data(json!(operation))),
+            TraceField::new(
+                "cancellation_requested",
+                TraceValue::Data(json!(cancellation.is_cancelled())),
+            ),
+            TraceField::new(
+                "action",
+                TraceValue::Omitted(TraceOmission::UnsupportedType),
+            ),
+        ]
+    });
+    let activity = match operation {
+        "cli.info" => Activity::CliInfo,
+        "build.generate" => Activity::Build,
+        operation if operation.starts_with("usb.") => Activity::Usb,
+        _ => Activity::OtherOperation,
+    };
+    let logging_operation = Session::current()
+        .and_then(|session| session.start_operation(Component::Core, activity).ok());
     let mut context = OperationContext {
         cancellation,
         phase: OperationPhase::Preparing,
         events: vec![OperationEvent::Started { operation }],
+        logging_operation: logging_operation.as_ref(),
     };
-    let action_result = action(&mut context);
+    let action_result = match &logging_operation {
+        Some(operation) => operation.scoped(|| action(&mut context)),
+        None => action(&mut context),
+    };
     let (outcome, terminal_event) = match action_result {
         Err(error) => (
             OperationOutcome::Failed(error.clone()),
@@ -190,10 +387,35 @@ pub fn run_operation<T>(
         ),
     };
     context.events.push(terminal_event);
-    OperationRun {
+    let result = OperationRun {
         outcome,
         events: context.events,
+    };
+    if let Some(operation) = logging_operation {
+        let outcome = match &result.outcome {
+            OperationOutcome::Succeeded(_) => Outcome::Succeeded,
+            OperationOutcome::Cancelled => Outcome::Cancelled,
+            OperationOutcome::Failed(error) => Outcome::FailedWith(match error.code() {
+                ErrorCode::Configuration => FailureCategory::Configuration,
+                ErrorCode::Privacy => FailureCategory::Privacy,
+                ErrorCode::Usb => FailureCategory::Usb,
+            }),
+        };
+        let _ = operation.finish(outcome);
     }
+    if let Some(trace) = trace {
+        let result_value = match &result.outcome {
+            OperationOutcome::Succeeded(_) => {
+                json!({"outcome": "succeeded", "value": {"kind": "omitted", "reason": "unsupported_type"}})
+            }
+            OperationOutcome::Failed(error) => {
+                json!({"outcome": "failed", "code": error.code().as_str(), "message": trace_sensitive_text(error.message()).to_json()})
+            }
+            OperationOutcome::Cancelled => json!({"outcome": "cancelled"}),
+        };
+        let _ = trace.finish(TraceValue::Data(result_value));
+    }
+    result
 }
 
 #[cfg(test)]
@@ -202,6 +424,155 @@ mod tests {
         CancellationToken, ErrorCode, OperationError, OperationEvent, OperationOutcome,
         OperationPhase, run_operation,
     };
+
+    #[test]
+    fn scoped_trace_records_operation_arguments_and_explicit_omissions() {
+        use crate::logging::{Component, Level, Session};
+        use std::fs;
+
+        let directory = std::env::temp_dir().join(format!(
+            "sanikey-operation-trace-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let (session, path) =
+            Session::create_in_directory_with_level(&directory, Component::Core, Level::Trace)
+                .unwrap();
+        let run = session.scoped(|| {
+            run_operation("synthetic.operation", &CancellationToken::default(), |_| {
+                Ok(42)
+            })
+        });
+        assert_eq!(run.outcome, OperationOutcome::Succeeded(42));
+        drop(session);
+        let contents = fs::read_to_string(&path).unwrap();
+        assert!(contents.contains("operation::run_operation"));
+        assert!(contents.contains("synthetic.operation"));
+        assert!(contents.contains("unsupported_type"));
+        assert!(contents.contains("\"outcome\":\"succeeded\""));
+        fs::remove_file(path).unwrap();
+        fs::remove_dir(directory).unwrap();
+    }
+
+    #[test]
+    fn trace_redacts_known_secrets_in_operation_errors_without_changing_them() {
+        use crate::logging::{Component, Level, Session};
+        use std::fs;
+
+        let directory = std::env::temp_dir().join(format!(
+            "sanikey-operation-secret-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let (session, path) =
+            Session::create_in_directory_with_level(&directory, Component::Core, Level::Trace)
+                .unwrap();
+        let original = "password = \"synthetic-secret-value\"";
+        let run = session.scoped(|| {
+            run_operation("synthetic.error", &CancellationToken::default(), |_| {
+                Err::<(), _>(OperationError::new(ErrorCode::Configuration, original))
+            })
+        });
+        let OperationOutcome::Failed(error) = run.outcome else {
+            panic!("expected synthetic failure");
+        };
+        assert_eq!(error.message(), original);
+        drop(session);
+        let contents = fs::read_to_string(&path).unwrap();
+        assert!(!contents.contains("synthetic-secret-value"));
+        assert!(contents.contains("secret_omitted"));
+        fs::remove_file(path).unwrap();
+        fs::remove_dir(directory).unwrap();
+    }
+
+    #[test]
+    fn trace_progress_uses_event_counts_and_preserves_each_progress_record() {
+        use crate::logging::{Component, Level, Session};
+        use std::fs;
+
+        let directory = std::env::temp_dir().join(format!(
+            "sanikey-operation-progress-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let (session, path) =
+            Session::create_in_directory_with_level(&directory, Component::Core, Level::Trace)
+                .unwrap();
+        session.scoped(|| {
+            run_operation(
+                "synthetic.operation",
+                &CancellationToken::default(),
+                |ctx| {
+                    for count in 1..=3 {
+                        ctx.report_progress(count, Some(3));
+                        let _ = ctx.is_cancelled();
+                    }
+                    Ok(())
+                },
+            )
+        });
+        drop(session);
+        let log = fs::read_to_string(&path).unwrap();
+        let records: Vec<serde_json::Value> = log
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        let progress: Vec<_> = records
+            .iter()
+            .filter(|record| record["type"] == "operation_progress")
+            .collect();
+        assert_eq!(progress.len(), 3);
+        assert_eq!(
+            progress
+                .iter()
+                .map(|record| record["completed"].as_u64().unwrap())
+                .collect::<Vec<_>>(),
+            [1, 2, 3]
+        );
+        assert!(log.contains("previous_event_count"));
+        assert!(!log.contains("events_debug"));
+        fs::remove_file(path).unwrap();
+        fs::remove_dir(directory).unwrap();
+    }
+
+    #[test]
+    fn minimal_events_capture_phase_progress_and_error_category_without_message() {
+        use crate::logging::{Component, Level, Session};
+        use std::fs;
+
+        let directory = std::env::temp_dir().join(format!(
+            "sanikey-operation-events-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let (session, path) =
+            Session::create_in_directory_with_level(&directory, Component::Core, Level::Events)
+                .unwrap();
+        let run = session.scoped(|| {
+            run_operation::<()>(
+                "synthetic.operation",
+                &CancellationToken::default(),
+                |context| {
+                    context.set_phase(OperationPhase::Processing);
+                    context.report_progress(2, Some(3));
+                    Err(OperationError::new(
+                        ErrorCode::Privacy,
+                        "dato sanitario sintetico",
+                    ))
+                },
+            )
+        });
+        assert!(matches!(run.outcome, OperationOutcome::Failed(_)));
+        drop(session);
+        let log = fs::read_to_string(&path).unwrap();
+        assert!(log.contains("\"type\":\"operation_phase\""));
+        assert!(log.contains("\"type\":\"operation_progress\""));
+        assert!(log.contains("\"completed\":2"));
+        assert!(log.contains("\"failure_category\":\"privacy\""));
+        assert!(!log.contains("dato sanitario sintetico"));
+        fs::remove_file(path).unwrap();
+        fs::remove_dir(directory).unwrap();
+    }
 
     #[test]
     fn success_reports_ordered_progress_and_one_terminal_event() {

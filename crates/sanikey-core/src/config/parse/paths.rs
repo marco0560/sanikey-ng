@@ -1,5 +1,6 @@
 //! Filesystem path expansion and configuration-relative resolution.
 
+use super::super::trace::{trace_config_call, trace_path, trace_path_result, trace_toml_table};
 use super::super::validation::{error, expand_user_path, required_string, resolve_path};
 use crate::operation::OperationError;
 use std::fs;
@@ -11,11 +12,14 @@ pub(super) fn resolve_person_path(
     index: usize,
     base_dir: &Path,
 ) -> Result<PathBuf, OperationError> {
+    trace_config_call!("config::resolve_person_path", ["field" => &field, "index" => &index], paths ["base_dir" => base_dir], fields ["table" => trace_toml_table(table)], result_paths trace_path_result, || {
     let value = required_string(table, field, &format!("voce [[person]] {index}"))?;
     Ok(resolve_path(&value, base_dir))
+    })
 }
 
 pub(in crate::config) fn path_base(config_path: &Path) -> Result<PathBuf, OperationError> {
+    trace_config_call!("config::path_base", [], paths ["config_path" => config_path], result_paths trace_path_result, || {
     let resolved = absolute_non_strict(config_path)?;
     let parent = resolved.parent().unwrap_or_else(|| Path::new("."));
     if parent.file_name().is_some_and(|name| name == "config") {
@@ -23,15 +27,19 @@ pub(in crate::config) fn path_base(config_path: &Path) -> Result<PathBuf, Operat
     } else {
         Ok(parent.to_path_buf())
     }
+    })
 }
 
 pub(super) fn expand_path(path: &Path) -> PathBuf {
-    path.to_str()
-        .map(expand_user_path)
-        .unwrap_or_else(|| path.to_path_buf())
+    trace_config_call!("config::expand_path", [], paths ["path" => path], result_paths trace_path, || {
+        path.to_str()
+            .map(expand_user_path)
+            .unwrap_or_else(|| path.to_path_buf())
+    })
 }
 
 pub(in crate::config) fn absolute_non_strict(path: &Path) -> Result<PathBuf, OperationError> {
+    trace_config_call!("config::absolute_non_strict", [], paths ["path" => path], result_paths trace_path_result, || {
     let absolute = if path.is_absolute() {
         path.to_path_buf()
     } else {
@@ -45,5 +53,6 @@ pub(in crate::config) fn absolute_non_strict(path: &Path) -> Result<PathBuf, Ope
     Ok(match filename {
         Some(name) => canonical_parent.join(name),
         None => canonical_parent,
+    })
     })
 }

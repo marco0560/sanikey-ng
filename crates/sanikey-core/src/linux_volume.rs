@@ -1,9 +1,13 @@
 //! Lettura e controllo dei metadati di un volume Linux prima della copia USB.
 
 use crate::config::AccountsConfig;
+use crate::logging::{
+    Component, TraceField, TraceOmission, TraceValue, trace_current, trace_json_value,
+    trace_sensitive_text,
+};
 use crate::operation::{ErrorCode, OperationError};
 use rustix::fs::statvfs;
-use serde_json::Value;
+use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -26,34 +30,58 @@ pub struct LinuxVolumeInfo {
 /// sul volume. Un risultato senza metadati mount è ammesso; il validatore lo
 /// rifiuta se la configurazione richiede UUID o exFAT.
 pub fn inspect_linux_volume(target: &Path) -> Result<LinuxVolumeInfo, OperationError> {
-    if !target.is_dir() {
-        return Err(usb_error(
-            "il target Linux deve essere una directory esistente",
-        ));
+    let trace = trace_current(
+        Component::Core,
+        "linux_volume::inspect_linux_volume",
+        || vec![TraceField::new("target", TraceValue::path(target))],
+    );
+    let result = (|| {
+        if !target.is_dir() {
+            return Err(usb_error(
+                "il target Linux deve essere una directory esistente",
+            ));
+        }
+
+        let statistics = statvfs(target).map_err(|error| {
+            usb_error(format!("lettura spazio del volume Linux fallita: {error}"))
+        })?;
+        let block_size = if statistics.f_frsize == 0 {
+            statistics.f_bsize
+        } else {
+            statistics.f_frsize
+        };
+        let available_bytes = statistics
+            .f_bfree
+            .checked_mul(block_size)
+            .ok_or_else(|| usb_error("spazio disponibile Linux fuori intervallo"))?;
+
+        let mount = find_mount_info(target);
+        Ok(LinuxVolumeInfo {
+            mount_target: mount
+                .as_ref()
+                .and_then(|info| info.get("target"))
+                .map(PathBuf::from),
+            filesystem: mount.as_ref().and_then(|info| info.get("fstype")).cloned(),
+            uuid: mount.and_then(|info| info.get("uuid").cloned()),
+            available_bytes,
+        })
+    })();
+    if let Some(trace) = trace {
+        let result_value = match &result {
+            Ok(info) => json!({
+                "outcome": "succeeded",
+                "mount_target": info.mount_target.as_ref().map(|path| TraceValue::path(path).to_json()),
+                "filesystem": info.filesystem,
+                "uuid": info.uuid,
+                "available_bytes": info.available_bytes,
+            }),
+            Err(error) => {
+                json!({"outcome": "failed", "code": error.code().as_str(), "message": trace_sensitive_text(error.message()).to_json()})
+            }
+        };
+        let _ = trace.finish(TraceValue::Data(result_value));
     }
-
-    let statistics = statvfs(target)
-        .map_err(|error| usb_error(format!("lettura spazio del volume Linux fallita: {error}")))?;
-    let block_size = if statistics.f_frsize == 0 {
-        statistics.f_bsize
-    } else {
-        statistics.f_frsize
-    };
-    let available_bytes = statistics
-        .f_bfree
-        .checked_mul(block_size)
-        .ok_or_else(|| usb_error("spazio disponibile Linux fuori intervallo"))?;
-
-    let mount = find_mount_info(target);
-    Ok(LinuxVolumeInfo {
-        mount_target: mount
-            .as_ref()
-            .and_then(|info| info.get("target"))
-            .map(PathBuf::from),
-        filesystem: mount.as_ref().and_then(|info| info.get("fstype")).cloned(),
-        uuid: mount.and_then(|info| info.get("uuid").cloned()),
-        available_bytes,
-    })
+    result
 }
 
 /// Controlla UUID, filesystem e margine libero secondo la configurazione.
@@ -65,8 +93,37 @@ pub fn validate_linux_volume(
     target: &Path,
     image_bytes: u64,
 ) -> Result<LinuxVolumeInfo, OperationError> {
-    let info = inspect_linux_volume(target)?;
-    validate_volume_info(config, target, image_bytes, info)
+    let trace = trace_current(
+        Component::Core,
+        "linux_volume::validate_linux_volume",
+        || {
+            vec![
+                TraceField::new("config", trace_sensitive_text(&format!("{config:#?}"))),
+                TraceField::new("target", TraceValue::path(target)),
+                TraceField::new("image_bytes", TraceValue::Data(json!(image_bytes))),
+            ]
+        },
+    );
+    let result = (|| {
+        let info = inspect_linux_volume(target)?;
+        validate_volume_info(config, target, image_bytes, info)
+    })();
+    if let Some(trace) = trace {
+        let result_value = match &result {
+            Ok(info) => json!({
+                "outcome": "succeeded",
+                "mount_target": info.mount_target.as_ref().map(|path| TraceValue::path(path).to_json()),
+                "filesystem": info.filesystem,
+                "uuid": info.uuid,
+                "available_bytes": info.available_bytes,
+            }),
+            Err(error) => {
+                json!({"outcome": "failed", "code": error.code().as_str(), "message": trace_sensitive_text(error.message()).to_json()})
+            }
+        };
+        let _ = trace.finish(TraceValue::Data(result_value));
+    }
+    result
 }
 
 fn validate_volume_info(
@@ -75,103 +132,206 @@ fn validate_volume_info(
     image_bytes: u64,
     info: LinuxVolumeInfo,
 ) -> Result<LinuxVolumeInfo, OperationError> {
-    let reserve_bytes = u64::try_from(config.usb.min_free_space_mb)
-        .ok()
-        .and_then(|megabytes| megabytes.checked_mul(1024 * 1024))
-        .ok_or_else(|| usb_error("margine minimo dello spazio USB non valido"))?;
-    let required_bytes = image_bytes
-        .checked_add(reserve_bytes)
-        .ok_or_else(|| usb_error("spazio richiesto per l'export USB fuori intervallo"))?;
-    if info.available_bytes < required_bytes {
-        return Err(usb_error(
-            "target USB Linux con spazio libero insufficiente",
-        ));
-    }
-
-    let Some(filesystem) = info.filesystem.as_deref() else {
-        if config.usb.usb_uuid.is_some() || config.usb.require_exfat {
+    let trace = trace_current(
+        Component::Core,
+        "linux_volume::validate_volume_info",
+        || {
+            vec![
+                TraceField::new("config", trace_sensitive_text(&format!("{config:#?}"))),
+                TraceField::new("target", TraceValue::path(target)),
+                TraceField::new("image_bytes", TraceValue::Data(json!(image_bytes))),
+                TraceField::new("volume_info", trace_sensitive_text(&format!("{info:#?}"))),
+            ]
+        },
+    );
+    let result = (|| {
+        let reserve_bytes = u64::try_from(config.usb.min_free_space_mb)
+            .ok()
+            .and_then(|megabytes| megabytes.checked_mul(1024 * 1024))
+            .ok_or_else(|| usb_error("margine minimo dello spazio USB non valido"))?;
+        let required_bytes = image_bytes
+            .checked_add(reserve_bytes)
+            .ok_or_else(|| usb_error("spazio richiesto per l'export USB fuori intervallo"))?;
+        if info.available_bytes < required_bytes {
             return Err(usb_error(
-                "impossibile determinare i metadati filesystem Linux richiesti",
+                "target USB Linux con spazio libero insufficiente",
             ));
         }
-        return Ok(info);
-    };
 
-    let expected_uuid = expected_uuid(config, is_likely_physical_target(target));
-    if expected_uuid.is_some_and(|expected| info.uuid.as_deref() != Some(expected)) {
-        return Err(usb_error("UUID filesystem USB Linux non corrispondente"));
+        let Some(filesystem) = info.filesystem.as_deref() else {
+            if config.usb.usb_uuid.is_some() || config.usb.require_exfat {
+                return Err(usb_error(
+                    "impossibile determinare i metadati filesystem Linux richiesti",
+                ));
+            }
+            return Ok(info);
+        };
+
+        let expected_uuid = expected_uuid(config, is_likely_physical_target(target));
+        if expected_uuid.is_some_and(|expected| info.uuid.as_deref() != Some(expected)) {
+            return Err(usb_error("UUID filesystem USB Linux non corrispondente"));
+        }
+        if config.usb.require_exfat && filesystem != "exfat" {
+            return Err(usb_error(
+                "il filesystem del volume USB Linux deve essere exFAT",
+            ));
+        }
+        Ok(info)
+    })();
+    if let Some(trace) = trace {
+        let result_value = match &result {
+            Ok(info) => json!({
+                "outcome": "succeeded",
+                "mount_target": info.mount_target.as_ref().map(|path| TraceValue::path(path).to_json()),
+                "filesystem": info.filesystem,
+                "uuid": info.uuid,
+                "available_bytes": info.available_bytes,
+            }),
+            Err(error) => {
+                json!({"outcome": "failed", "code": error.code().as_str(), "message": trace_sensitive_text(error.message()).to_json()})
+            }
+        };
+        let _ = trace.finish(TraceValue::Data(result_value));
     }
-    if config.usb.require_exfat && filesystem != "exfat" {
-        return Err(usb_error(
-            "il filesystem del volume USB Linux deve essere exFAT",
-        ));
-    }
-    Ok(info)
+    result
 }
 
 fn expected_uuid(config: &AccountsConfig, enforce_person_uuid: bool) -> Option<&str> {
-    if let Some(uuid) = config.usb.usb_uuid.as_deref() {
-        return Some(uuid);
+    let trace = trace_current(Component::Core, "linux_volume::expected_uuid", || {
+        vec![
+            TraceField::new("config", trace_sensitive_text(&format!("{config:#?}"))),
+            TraceField::new(
+                "enforce_person_uuid",
+                TraceValue::Data(json!(enforce_person_uuid)),
+            ),
+        ]
+    });
+    let result = if let Some(uuid) = config.usb.usb_uuid.as_deref() {
+        Some(uuid)
+    } else if !enforce_person_uuid {
+        None
+    } else {
+        let mut uuids = config
+            .enabled_people()
+            .map(|person| person.usb_uuid.as_str())
+            .filter(|uuid| !uuid.is_empty());
+        let first = uuids.next();
+        first.filter(|first| uuids.all(|uuid| uuid == *first))
+    };
+    if let Some(trace) = trace {
+        let _ = trace.finish(TraceValue::Data(json!(result)));
     }
-    if !enforce_person_uuid {
-        return None;
-    }
-    let mut uuids = config
-        .enabled_people()
-        .map(|person| person.usb_uuid.as_str())
-        .filter(|uuid| !uuid.is_empty());
-    let first = uuids.next()?;
-    uuids.all(|uuid| uuid == first).then_some(first)
+    result
 }
 
 fn is_likely_physical_target(target: &Path) -> bool {
+    let trace = trace_current(
+        Component::Core,
+        "linux_volume::is_likely_physical_target",
+        || vec![TraceField::new("target", TraceValue::path(target))],
+    );
     let resolved = target
         .canonicalize()
         .unwrap_or_else(|_| target.to_path_buf());
-    resolved.starts_with("/media") || resolved.starts_with("/run/media")
+    let likely_physical = resolved.starts_with("/media") || resolved.starts_with("/run/media");
+    if let Some(trace) = trace {
+        let _ = trace.finish(TraceValue::Data(json!({"resolved": TraceValue::path(&resolved).to_json(), "likely_physical": likely_physical})));
+    }
+    likely_physical
 }
 
 fn find_mount_info(target: &Path) -> Option<std::collections::BTreeMap<String, String>> {
+    let trace = trace_current(Component::Core, "linux_volume::find_mount_info", || {
+        vec![
+            TraceField::new("target", TraceValue::path(target)),
+            TraceField::new(
+                "process_internals",
+                TraceValue::Omitted(TraceOmission::ExternalComponent),
+            ),
+        ]
+    });
     let output = Command::new("findmnt")
         .args(["--json", "--output", "TARGET,FSTYPE,UUID", "--target"])
         .arg(target)
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
+        .output();
+    let result = output.ok().and_then(|output| {
+        output
+            .status
+            .success()
+            .then(|| parse_findmnt_output(&output.stdout))
+            .flatten()
+    });
+    if let Some(trace) = trace {
+        let _ = trace.finish(trace_json_value(&json!(result)));
     }
-    parse_findmnt_output(&output.stdout)
+    result
 }
 
 fn parse_findmnt_output(bytes: &[u8]) -> Option<std::collections::BTreeMap<String, String>> {
-    let payload: Value = serde_json::from_slice(bytes).ok()?;
-    let selected = payload
-        .get("filesystems")?
-        .as_array()?
-        .first()?
-        .as_object()?;
-    let mut info = std::collections::BTreeMap::new();
-    for key in ["target", "fstype", "uuid"] {
-        let value = selected
-            .get(key)
-            .and_then(Value::as_str)
-            .unwrap_or_default();
-        if !value.is_empty() {
-            info.insert(key.to_owned(), value.to_owned());
+    let trace = trace_current(
+        Component::Core,
+        "linux_volume::parse_findmnt_output",
+        || {
+            vec![TraceField::new(
+                "findmnt_json",
+                trace_findmnt_payload(bytes),
+            )]
+        },
+    );
+    let result = (|| {
+        let payload: Value = serde_json::from_slice(bytes).ok()?;
+        let selected = payload
+            .get("filesystems")?
+            .as_array()?
+            .first()?
+            .as_object()?;
+        let mut info = std::collections::BTreeMap::new();
+        for key in ["target", "fstype", "uuid"] {
+            let value = selected
+                .get(key)
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            if !value.is_empty() {
+                info.insert(key.to_owned(), value.to_owned());
+            }
         }
+        Some(info)
+    })();
+    if let Some(trace) = trace {
+        let _ = trace.finish(trace_json_value(&json!(result)));
     }
-    Some(info)
+    result
+}
+
+fn trace_findmnt_payload(bytes: &[u8]) -> TraceValue {
+    match serde_json::from_slice::<Value>(bytes) {
+        Ok(payload) => trace_json_value(&payload),
+        Err(_) => std::str::from_utf8(bytes).map_or_else(
+            |_| TraceValue::Omitted(TraceOmission::UnsupportedType),
+            trace_sensitive_text,
+        ),
+    }
 }
 
 fn usb_error(message: impl Into<String>) -> OperationError {
-    OperationError::new(ErrorCode::Usb, message)
+    let message = message.into();
+    let trace = trace_current(Component::Core, "linux_volume::usb_error", || {
+        vec![TraceField::new("message", trace_sensitive_text(&message))]
+    });
+    let error = OperationError::new(ErrorCode::Usb, message);
+    if let Some(trace) = trace {
+        let _ = trace.finish(TraceValue::Data(
+            json!({"code": error.code().as_str(), "message": trace_sensitive_text(error.message()).to_json()}),
+        ));
+    }
+    error
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        LinuxVolumeInfo, expected_uuid, inspect_linux_volume, is_likely_physical_target,
-        parse_findmnt_output, validate_volume_info,
+        LinuxVolumeInfo, expected_uuid, find_mount_info, inspect_linux_volume,
+        is_likely_physical_target, parse_findmnt_output, validate_volume_info,
     };
     use crate::config::{AccountsConfig, PersonConfig, UsbConfig};
     use std::path::PathBuf;
@@ -336,5 +496,72 @@ mod tests {
 
         let required = config(Some("GLOBAL-UUID"), &[]);
         assert!(validate_volume_info(&required, &target, 0, info).is_err());
+    }
+
+    #[test]
+    // Fixture sintetiche e directory locale: non è una prova con USB fisica.
+    fn synthetic_logging_separates_trace_details_from_events() {
+        use crate::logging::{Component, Level, Session};
+        use std::fs;
+
+        for (suffix, level) in [("events", Level::Events), ("trace", Level::Trace)] {
+            let directory = std::env::temp_dir().join(format!(
+                "sanikey-linux-volume-{suffix}-{}-{:?}",
+                std::process::id(),
+                std::thread::current().id()
+            ));
+            let (session, path) =
+                Session::create_in_directory_with_level(&directory, Component::Core, level)
+                    .expect("sessione sintetica");
+            let configured = config(Some("FIXTURE-UUID"), &[("FIXTURE-UUID", true)]);
+            let target = PathBuf::from("/media/synthetic");
+            let payload = br#"{"filesystems":[{"target":"/media/synthetic","fstype":"exfat","uuid":"FIXTURE-UUID","api_key":"synthetic-findmnt-secret","label":"private-mount-label"}]}"#;
+            session.scoped(|| {
+                assert_eq!(expected_uuid(&configured, true), Some("FIXTURE-UUID"));
+                assert!(is_likely_physical_target(&target));
+                assert!(parse_findmnt_output(payload).is_some());
+                let _ = find_mount_info(std::env::temp_dir().as_path());
+                validate_volume_info(
+                    &configured,
+                    &target,
+                    1024,
+                    volume(Some("exfat"), Some("FIXTURE-UUID"), 2 * 1024 * 1024),
+                )
+                .expect("fixture volume valida");
+                assert!(
+                    validate_volume_info(
+                        &configured,
+                        &target,
+                        1024,
+                        volume(Some("exfat"), Some("OTHER-UUID"), 2 * 1024 * 1024),
+                    )
+                    .is_err()
+                );
+            });
+            drop(session);
+
+            let contents = fs::read_to_string(&path).expect("log sintetico");
+            if level == Level::Trace {
+                assert!(contents.contains("linux_volume::expected_uuid"));
+                assert!(contents.contains("linux_volume::is_likely_physical_target"));
+                assert!(contents.contains("linux_volume::parse_findmnt_output"));
+                assert!(contents.contains("linux_volume::find_mount_info"));
+                assert!(contents.contains("linux_volume::validate_volume_info"));
+                assert!(contents.contains("linux_volume::usb_error"));
+                assert!(contents.contains("external_component"));
+                assert!(contents.contains("config_version"));
+                assert!(contents.contains("Persona sintetica"));
+                assert!(contents.contains("FIXTURE-UUID"));
+                assert!(contents.contains("private-mount-label"));
+                assert!(contents.contains("secret_omitted"));
+                assert!(!contents.contains("synthetic-findmnt-secret"));
+            } else {
+                assert!(!contents.contains("function_enter"));
+                assert!(!contents.contains("FIXTURE-UUID"));
+                assert!(!contents.contains("Persona sintetica"));
+            }
+            fs::remove_file(path).expect("rimozione log sintetico");
+            fs::remove_dir_all(directory).expect("rimozione directory sintetica");
+        }
     }
 }

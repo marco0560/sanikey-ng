@@ -1,3 +1,5 @@
+//! Fixture sintetiche per catalogazione e anteprime DICOM.
+
 use super::{DicomStudy, catalog_dicom_studies, generate_dicom_previews, prepare_dicom_media};
 use crate::config::{IngestionConfig, PersonConfig, SearchConfig, UiConfig};
 use crate::metadata::DocumentRecord;
@@ -9,6 +11,7 @@ static NEXT_TEMP: AtomicU64 = AtomicU64::new(0);
 
 struct TempDir(PathBuf);
 
+/// Gestisce la directory temporanea condivisa dalle fixture DICOM.
 impl TempDir {
     fn new() -> Self {
         let id = NEXT_TEMP.fetch_add(1, Ordering::Relaxed);
@@ -22,6 +25,7 @@ impl TempDir {
     }
 }
 
+/// Rimuove i file temporanei al termine del test.
 impl Drop for TempDir {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.0);
@@ -607,4 +611,124 @@ fn previews_report_unsupported_pixels_without_losing_the_instance() {
         fs::read(&studies[0].support_paths[0]).unwrap(),
         original_bytes
     );
+}
+
+#[test]
+fn synthetic_trace_records_dicom_boundaries_and_events_omit_private_details() {
+    use crate::logging::{Component, Level, Session};
+
+    let temp = TempDir::new();
+    let container = document(
+        temp.path().join("source/study.iso"),
+        "dicom_iso",
+        "container-trace",
+        None,
+    );
+    let stage = temp.path().join("build/staging/containers/container-trace");
+    fs::create_dir_all(&stage).expect("staging sintetico");
+    #[cfg(unix)]
+    let instance_path = {
+        use std::os::unix::ffi::OsStringExt;
+        stage.join(std::ffi::OsString::from_vec(b"IM-\xff.dcm".to_vec()))
+    };
+    #[cfg(not(unix))]
+    let instance_path = stage.join("IM-trace.dcm");
+    dicom_image(&instance_path);
+    let dicomdir_path = stage.join("DICOMDIR");
+    dicomdir(
+        &dicomdir_path,
+        &[(
+            "1.2.826.0.1.3680043.10.999.3",
+            "20260102",
+            "Studio sintetico",
+        )],
+    );
+    let instance = document(
+        instance_path,
+        "dicom_file",
+        "instance-trace",
+        Some("container-trace"),
+    );
+    let directory = document(
+        dicomdir_path,
+        "binary",
+        "dicomdir-trace",
+        Some("container-trace"),
+    );
+
+    for (suffix, level) in [("events", Level::Events), ("trace", Level::Trace)] {
+        let logs = temp.path().join(format!("logs-{suffix}"));
+        let (session, log_path) =
+            Session::create_in_directory_with_level(&logs, Component::Core, level)
+                .expect("sessione sintetica");
+        let mut config = person(temp.path());
+        config.local_build = temp.path().join(format!(
+            "build-{suffix}-api_key=synthetic-dicom-path-secret"
+        ));
+        let result = session.scoped(|| {
+            let _ = super::short_digest(b"api_key = synthetic-digest-secret; private bytes");
+            let _ = super::preview_html(&["password = synthetic-preview-secret".to_owned()]);
+            let studies = catalog_dicom_studies(
+                &config,
+                &[container.clone(), instance.clone(), directory.clone()],
+            );
+            let media = prepare_dicom_media(&config, &studies)?;
+            let previews = generate_dicom_previews(&config, &studies)?;
+            let manifest = config.local_build.join("synthetic-manifest.json");
+            super::write_json_manifest(
+                &manifest,
+                serde_json::json!({
+                    "nested": {"api_key": "synthetic-dicom-secret"},
+                    "private_detail": "synthetic DICOM metadata",
+                }),
+            )?;
+            Ok::<_, crate::operation::OperationError>((studies, media, previews))
+        });
+        let (studies, media, previews) = result.expect("pipeline DICOM sintetica");
+        assert!(!studies.is_empty());
+        assert_eq!(media.len(), 1);
+        assert!(previews.iter().any(|preview| preview.instance_count == 1));
+        drop(session);
+
+        let log = fs::read_to_string(log_path).expect("log sintetico");
+        if level == Level::Trace {
+            assert!(log.contains("dicom::catalog_dicom_studies"));
+            assert!(log.contains("dicom::studies_from_dicomdir"));
+            assert!(log.contains("directory_record_sequence"));
+            assert!(log.contains("dicom::read_dicom_metadata"));
+            assert!(log.contains("dicom_dataset_bytes"));
+            assert!(log.contains("dicom::validate_dicomdir"));
+            assert!(log.contains("dicom::copy_file"));
+            assert!(log.contains("dicom::write_json_manifest"));
+            assert!(log.contains("private bytes"));
+            assert!(log.contains("secret_omitted"));
+            assert!(log.contains("synthetic DICOM metadata"));
+            assert!(log.contains("secret_omitted"));
+            assert!(!log.contains("synthetic-dicom-path-secret"));
+            assert!(!log.contains("synthetic-dicom-secret"));
+            assert!(!log.contains("synthetic-digest-secret"));
+            assert!(!log.contains("synthetic-preview-secret"));
+            assert!(log.contains("transferred_contents"));
+            assert!(log.contains("dicom::pixel_decoder_boundary"));
+            assert!(log.contains("pixel_data"));
+            assert!(log.contains("decoded_image_bytes"));
+            assert!(log.contains("jpeg_bytes"));
+            assert!(log.contains("external_component"));
+            assert!(log.contains("1.2.826.0.1.3680043.10.999.3"));
+            #[cfg(unix)]
+            {
+                assert!(log.contains("unix_bytes"));
+                assert!(log.contains("255"));
+            }
+        } else {
+            assert!(!log.contains("function_enter"));
+            assert!(!log.contains("1.2.826.0.1.3680043.10.999.3"));
+            assert!(!log.contains("SYNTHETIC^PATIENT"));
+            assert!(!log.contains("synthetic DICOM metadata"));
+            assert!(!log.contains("private bytes"));
+            assert!(!log.contains("synthetic-digest-secret"));
+            assert!(!log.contains("synthetic-preview-secret"));
+            assert!(!log.contains("synthetic-dicom-secret"));
+        }
+    }
 }

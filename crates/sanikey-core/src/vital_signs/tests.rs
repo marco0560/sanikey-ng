@@ -1,8 +1,15 @@
+//! Fixture sintetiche per estrazione e merge dei segni vitali.
+
 use super::{extract_vital_signs, merge_vital_signs};
+use crate::logging::{Component, Level, Session};
 use crate::metadata::{CuratedMetadata, DocumentRecord, ObservationPoint, ObservationSeries};
 use crate::pdf::{ExtractedText, TextPageSpan};
 use std::collections::HashMap;
+use std::fs;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static NEXT_LOG_ID: AtomicU64 = AtomicU64::new(0);
 
 fn document(id: &str, date: Option<&str>) -> DocumentRecord {
     DocumentRecord {
@@ -207,4 +214,82 @@ fn merge_preserves_same_day_curated_points_and_deduplicates_series() {
     assert_eq!(merged.observation_series.len(), 2);
     assert_eq!(merged.observation_series[0].name, "Peso curato");
     assert_eq!(merged.observation_series[1].id, "pressione");
+}
+
+#[test]
+fn trace_captures_private_text_and_redacts_identified_secrets_across_extraction_and_merge() {
+    let secret = "synthetic-secret-vital-7462";
+    let private_line = "Nota sanitaria privata sintetica 2841";
+    let accepted_line = format!("Peso: 70 kg; password = \"{secret}\"");
+    let rejected_line = format!("Peso: 999 kg; token = \"{secret}\"");
+    let directory = std::env::temp_dir().join(format!(
+        "sanikey-vital-trace-{}-{}",
+        std::process::id(),
+        NEXT_LOG_ID.fetch_add(1, Ordering::Relaxed)
+    ));
+    let (session, log_path) =
+        Session::create_in_directory_with_level(&directory, Component::Core, Level::Trace)
+            .expect("sessione Trace sintetica");
+    let mut source_document = document("trace-doc", Some("2026-01-02"));
+    source_document.title = format!("Referto password={secret}");
+    let source_text = format!("{private_line}\n{accepted_line}\n{rejected_line}");
+
+    let (result, merged) = session.scoped(|| {
+        let result = extract_vital_signs(
+            &[source_document],
+            &[extraction("trace-doc", &source_text)],
+            None,
+        );
+        let merged = merge_vital_signs(&CuratedMetadata::default(), &result);
+        (result, merged)
+    });
+    assert_eq!(result.points.len(), 1);
+    assert_eq!(
+        result.points[0].original_line.as_deref(),
+        Some(accepted_line.as_str())
+    );
+    assert_eq!(result.rejections.len(), 1);
+    assert_eq!(result.rejections[0].value, rejected_line);
+    assert_eq!(merged.observation_points, result.points);
+    drop(session);
+
+    let log = fs::read_to_string(&log_path).expect("log Trace sintetico");
+    assert!(log.contains(private_line));
+    assert!(log.contains("secret_omitted"));
+    assert!(
+        !log.contains(secret),
+        "secret escaped through trace record(s): {}",
+        log.lines()
+            .filter(|line| line.contains(secret))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+    fs::remove_dir_all(directory).expect("rimozione log sintetico");
+}
+
+#[test]
+fn events_level_does_not_record_extracted_private_text() {
+    let private_text = "Nota sanitaria privata sintetica 9276";
+    let directory = std::env::temp_dir().join(format!(
+        "sanikey-vital-events-{}-{}",
+        std::process::id(),
+        NEXT_LOG_ID.fetch_add(1, Ordering::Relaxed)
+    ));
+    let (session, log_path) =
+        Session::create_in_directory_with_level(&directory, Component::Core, Level::Events)
+            .expect("sessione Events sintetica");
+
+    let result = session.scoped(|| {
+        extract_vital_signs(
+            &[document("events-doc", Some("2026-01-02"))],
+            &[extraction("events-doc", private_text)],
+            None,
+        )
+    });
+    assert!(result.points.is_empty());
+    drop(session);
+
+    let log = fs::read_to_string(&log_path).expect("log Events sintetico");
+    assert!(!log.contains(private_text));
+    fs::remove_dir_all(directory).expect("rimozione log sintetico");
 }

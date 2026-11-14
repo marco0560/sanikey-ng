@@ -18,6 +18,7 @@
 /config/
 /exports/
 /logs/
+*.sanikey-log.jsonl
 /.artifacts/
 .codira/
 .env

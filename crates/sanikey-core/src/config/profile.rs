@@ -2,6 +2,8 @@
 
 use super::AccountsConfig;
 use super::parse::{absolute_non_strict, load_accounts, path_base};
+use super::trace::{trace_config_call, trace_path_result, trace_profile_result_paths};
+use crate::logging::{Component, TraceField, TraceValue, trace_current};
 use crate::operation::{ErrorCode, OperationError};
 use std::fs::{self, OpenOptions};
 use std::io::Write;
@@ -32,6 +34,13 @@ impl AccountsProfile {
     /// essere determinata.
     pub fn import(path: impl AsRef<Path>) -> Result<Self, OperationError> {
         let requested_path = path.as_ref();
+        trace_config_call!(
+            "config::AccountsProfile::import",
+            [],
+            paths ["requested_path" => requested_path],
+            fields [],
+            result_trace trace_profile,
+            || {
         if !requested_path.is_absolute() {
             return Err(configuration_error(
                 "il percorso del profilo da importare deve essere assoluto".to_owned(),
@@ -64,6 +73,8 @@ impl AccountsProfile {
             source_path,
             source_contents,
         })
+            }
+        )
     }
 
     /// Restituisce la configurazione validata importata.
@@ -75,13 +86,41 @@ impl AccountsProfile {
     /// Restituisce la directory che ancora i percorsi relativi del profilo.
     #[must_use]
     pub fn base_directory(&self) -> &Path {
-        &self.base_directory
+        let trace = trace_current(
+            Component::Core,
+            "config::AccountsProfile::base_directory",
+            || {
+                vec![TraceField::new(
+                    "source_path",
+                    TraceValue::path(&self.source_path),
+                )]
+            },
+        );
+        let result = &self.base_directory;
+        if let Some(trace) = trace {
+            let _ = trace.finish(TraceValue::path(result));
+        }
+        result
     }
 
     /// Restituisce il percorso assoluto del file originale.
     #[must_use]
     pub fn source_path(&self) -> &Path {
-        &self.source_path
+        let trace = trace_current(
+            Component::Core,
+            "config::AccountsProfile::source_path",
+            || {
+                vec![TraceField::new(
+                    "base_directory",
+                    TraceValue::path(&self.base_directory),
+                )]
+            },
+        );
+        let result = &self.source_path;
+        if let Some(trace) = trace {
+            let _ = trace.finish(TraceValue::path(result));
+        }
+        result
     }
 
     /// Esporta una copia verificata senza sovrascrivere file esistenti.
@@ -99,6 +138,12 @@ impl AccountsProfile {
     /// la riapertura e il confronto.
     pub fn export_copy(&self, destination: impl AsRef<Path>) -> Result<PathBuf, OperationError> {
         let requested_destination = destination.as_ref();
+        trace_config_call!(
+            "config::AccountsProfile::export_copy",
+            [],
+            paths ["destination" => requested_destination, "source_path" => &self.source_path, "base_directory" => &self.base_directory],
+            result_paths trace_path_result,
+            || {
         if !requested_destination.is_absolute() {
             return Err(configuration_error(
                 "il percorso di esportazione del profilo deve essere assoluto".to_owned(),
@@ -147,6 +192,8 @@ impl AccountsProfile {
             let _ = fs::remove_file(&destination);
         }
         result.map(|()| destination)
+            }
+        )
     }
 }
 
@@ -155,6 +202,11 @@ fn verify_export(
     expected_contents: &str,
     destination: &Path,
 ) -> Result<(), OperationError> {
+    trace_config_call!(
+        "config::verify_export",
+        ["expected" => expected, "expected_contents" => &expected_contents],
+        paths ["destination" => destination],
+        || {
     let actual_contents = fs::read_to_string(destination).map_err(|cause| {
         configuration_error(format!(
             "impossibile verificare il profilo esportato {}: {cause}",
@@ -176,10 +228,30 @@ fn verify_export(
         )));
     }
     Ok(())
+        }
+    )
 }
 
 fn configuration_error(message: String) -> OperationError {
-    OperationError::new(ErrorCode::Configuration, message)
+    trace_config_call!("config::configuration_error", ["message" => &message], || {
+        OperationError::new(ErrorCode::Configuration, message)
+    })
+}
+
+fn trace_profile(result: &Result<AccountsProfile, OperationError>) -> crate::logging::TraceValue {
+    match result {
+        Ok(profile) => crate::logging::TraceValue::Data(serde_json::json!({
+            "format":"rust_debug_redacted",
+            "accounts":super::trace::trace_debug(profile.accounts()).to_json(),
+            "source_contents":crate::logging::trace_sensitive_text(&profile.source_contents).to_json(),
+            "native_paths":trace_profile_result_paths(result).to_json(),
+        })),
+        Err(error) => crate::logging::TraceValue::Data(serde_json::json!({
+            "state":"error",
+            "code":error.code().as_str(),
+            "message":crate::logging::trace_sensitive_text(error.message()).to_json(),
+        })),
+    }
 }
 
 #[cfg(test)]

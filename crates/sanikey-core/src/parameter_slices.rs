@@ -1,11 +1,140 @@
 //! Scoperta deterministica di candidati a parametri clinici nei testi estratti.
 
+use crate::logging::{
+    Component, TraceField, TraceValue, redact_secret_assignments, trace_current,
+    trace_sensitive_text,
+};
 use crate::metadata::DocumentRecord;
 use crate::pdf::{ExtractedText, TextPageSpan};
 use regex::Regex;
+use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::OnceLock;
+
+macro_rules! trace_parameter_call {
+    ($function:literal, [$($name:literal => $value:expr),* $(,)?], fields [$($field_name:literal => $field_value:expr),* $(,)?], $body:expr) => {{
+        let trace = trace_current(Component::Core, $function, || {
+            Vec::from([
+                $(TraceField::new($name, trace_debug($value)),)*
+                $(TraceField::new($field_name, $field_value),)*
+            ])
+        });
+        let result = run_parameter_body($body);
+        if let Some(trace) = trace {
+            let _ = trace.finish(TraceValue::Data(json!({
+                "format":"rust_debug",
+                "value":redact_secret_assignments(&format!("{result:#?}")),
+            })));
+        }
+        result
+    }};
+    ($function:literal, [$($name:literal => $value:expr),* $(,)?], $body:expr) => {
+        trace_parameter_call!($function, [$($name => $value),*], fields [], $body)
+    };
+}
+
+fn run_parameter_body<R>(body: impl FnOnce() -> R) -> R {
+    body()
+}
+
+fn trace_debug<T: std::fmt::Debug + ?Sized>(value: &T) -> TraceValue {
+    TraceValue::Data(json!({
+        "format":"rust_debug",
+        "value":redact_secret_assignments(&format!("{value:#?}")),
+    }))
+}
+
+fn trace_document(document: &DocumentRecord) -> TraceValue {
+    TraceValue::Data(json!({
+        "format":"rust_debug",
+        "value":redact_secret_assignments(&format!("{document:#?}")),
+        "native_path":TraceValue::path(&document.path).to_json(),
+    }))
+}
+
+fn trace_documents(documents: &[DocumentRecord]) -> TraceValue {
+    TraceValue::Data(Value::Array(
+        documents
+            .iter()
+            .enumerate()
+            .map(|(index, document)| {
+                json!({
+                    "index":index,
+                    "document":trace_document(document).to_json(),
+                })
+            })
+            .collect(),
+    ))
+}
+
+fn trace_extractions(extractions: &[ExtractedText]) -> TraceValue {
+    TraceValue::Data(Value::Array(
+        extractions
+            .iter()
+            .enumerate()
+            .map(|(index, extraction)| json!({
+                "index":index,
+                "document_id":redact_secret_assignments(&extraction.document_id),
+                "text":trace_sensitive_text(&extraction.text).to_json(),
+                "warnings":extraction.warnings.iter().map(|warning| redact_secret_assignments(warning)).collect::<Vec<_>>(),
+                "page_spans":extraction.page_spans.iter().map(|span| json!({
+                    "page_number":span.page_number,
+                    "character_start":span.character_start,
+                    "character_end":span.character_end,
+                })).collect::<Vec<_>>(),
+            }))
+            .collect(),
+    ))
+}
+
+fn trace_optional_hrefs(hrefs: Option<&HashMap<String, String>>) -> TraceValue {
+    TraceValue::Data(hrefs.map_or(Value::Null, |hrefs| {
+        let ordered = hrefs.iter().collect::<BTreeMap<_, _>>();
+        Value::Object(
+            ordered
+                .into_iter()
+                .map(|(key, value)| {
+                    (
+                        redact_secret_assignments(key),
+                        json!(redact_secret_assignments(value)),
+                    )
+                })
+                .collect(),
+        )
+    }))
+}
+
+fn trace_optional_label_set(labels: Option<&HashSet<String>>) -> TraceValue {
+    TraceValue::Data(labels.map_or(Value::Null, |labels| {
+        json!(
+            labels
+                .iter()
+                .map(|label| redact_secret_assignments(label))
+                .collect::<BTreeSet<_>>()
+        )
+    }))
+}
+
+fn trace_lines(lines: &[&str]) -> TraceValue {
+    TraceValue::Data(json!(
+        lines
+            .iter()
+            .map(|line| redact_secret_assignments(line))
+            .collect::<Vec<_>>()
+    ))
+}
+
+fn trace_optional_text(value: Option<&str>) -> TraceValue {
+    value.map_or(TraceValue::Data(Value::Null), trace_sensitive_text)
+}
+
+fn trace_bytes(bytes: &[u8]) -> TraceValue {
+    match std::str::from_utf8(bytes) {
+        Ok(text) => trace_sensitive_text(text),
+        Err(_) => TraceValue::Data(json!({"encoding":"bytes","value":bytes})),
+    }
+}
 
 /// Limiti per l'individuazione e la proposta di candidati.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -108,21 +237,25 @@ impl CandidateGroup {
     /// Conta i documenti sorgente distinti.
     #[must_use]
     pub fn distinct_documents(&self) -> usize {
+        trace_parameter_call!("parameter_slices::CandidateGroup::distinct_documents", [], fields ["group" => trace_debug(self)], || {
         self.candidates
             .iter()
             .map(|item| item.document_id.as_str())
             .collect::<HashSet<_>>()
             .len()
+        })
     }
 
     /// Conta le date autorevoli distinte.
     #[must_use]
     pub fn distinct_dates(&self) -> usize {
+        trace_parameter_call!("parameter_slices::CandidateGroup::distinct_dates", [], fields ["group" => trace_debug(self)], || {
         self.candidates
             .iter()
             .filter_map(|item| item.document_date.as_deref())
             .collect::<HashSet<_>>()
             .len()
+        })
     }
 }
 
@@ -151,6 +284,17 @@ pub fn discover_candidates(
     settings: &DiscoverySettings,
     accepted_labels: Option<&HashSet<String>>,
 ) -> Result<DiscoveryResult, String> {
+    trace_parameter_call!(
+        "parameter_slices::discover_candidates",
+        [],
+        fields [
+            "documents" => trace_documents(documents),
+            "extracted_text" => trace_extractions(extracted_text),
+            "document_hrefs" => trace_optional_hrefs(document_hrefs),
+            "settings" => trace_debug(settings),
+            "accepted_labels" => trace_optional_label_set(accepted_labels),
+        ],
+        || {
     validate_settings(settings)?;
     let records: HashMap<_, _> = documents
         .iter()
@@ -274,6 +418,8 @@ pub fn discover_candidates(
         proposed_groups,
         analyzed_lines,
     })
+        }
+    )
 }
 
 /// Cerca solo etichette configurate; i gruppi di proposta restano vuoti.
@@ -288,6 +434,17 @@ pub fn discover_configured_candidates(
     document_hrefs: Option<&HashMap<String, String>>,
     settings: &DiscoverySettings,
 ) -> Result<DiscoveryResult, String> {
+    trace_parameter_call!(
+        "parameter_slices::discover_configured_candidates",
+        [],
+        fields [
+            "documents" => trace_documents(documents),
+            "extracted_text" => trace_extractions(extracted_text),
+            "accepted_labels" => TraceValue::Data(json!(accepted_labels.iter().map(|label| redact_secret_assignments(label)).collect::<Vec<_>>())),
+            "document_hrefs" => trace_optional_hrefs(document_hrefs),
+            "settings" => trace_debug(settings),
+        ],
+        || {
     let accepted = accepted_labels
         .iter()
         .map(|item| normalize_label(item))
@@ -303,17 +460,21 @@ pub fn discover_configured_candidates(
         proposed_groups: Vec::new(),
         ..result
     })
+        }
+    )
 }
 
 /// Normalizza l'etichetta comprimendo gli spazi e ignorando maiuscole/minuscole.
 #[must_use]
 pub fn normalize_label(value: &str) -> String {
+    trace_parameter_call!("parameter_slices::normalize_label", [], fields ["value" => trace_sensitive_text(value)], || {
     trailing_separator()
         .replace(value, "")
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ")
         .to_lowercase()
+    })
 }
 
 fn candidate_from_line(
@@ -325,6 +486,16 @@ fn candidate_from_line(
     line_offset: usize,
     settings: &DiscoverySettings,
 ) -> Option<ParameterCandidate> {
+    trace_parameter_call!(
+        "parameter_slices::candidate_from_line",
+        ["digest" => &digest, "line_number" => &line_number, "line_offset" => &line_offset],
+        fields [
+            "document" => trace_document(document),
+            "href" => trace_optional_text(href.map(|value| value.as_str())),
+            "line" => trace_sensitive_text(line),
+            "settings" => trace_debug(settings),
+        ],
+        || {
     let captures = candidate_pattern().captures(line)?;
     let full = captures.get(0)?;
     let label = captures.name("label")?.as_str();
@@ -384,6 +555,8 @@ fn candidate_from_line(
         page_label: "non applicabile".into(),
         section_specimen: None,
     })
+        }
+    )
 }
 
 fn candidate_from_stacked_cells(
@@ -395,6 +568,18 @@ fn candidate_from_stacked_cells(
     offsets: &[usize],
     settings: &DiscoverySettings,
 ) -> Option<ParameterCandidate> {
+    trace_parameter_call!(
+        "parameter_slices::candidate_from_stacked_cells",
+        ["label_index" => &label_index],
+        fields [
+            "document" => trace_document(document),
+            "href" => trace_optional_text(href.map(|value| value.as_str())),
+            "digest" => trace_sensitive_text(digest),
+            "lines" => trace_lines(lines),
+            "offsets" => trace_debug(offsets),
+            "settings" => trace_debug(settings),
+        ],
+        || {
     let cells = following_table_cells(lines, label_index, 2);
     let [(_, value_line), (unit_index, unit_line)] = cells.as_slice() else {
         return None;
@@ -434,6 +619,8 @@ fn candidate_from_stacked_cells(
         raw_value,
         &raw_unit,
     ))
+        }
+    )
 }
 
 fn candidate_from_reference_table_cells(
@@ -445,6 +632,18 @@ fn candidate_from_reference_table_cells(
     offsets: &[usize],
     settings: &DiscoverySettings,
 ) -> Option<ParameterCandidate> {
+    trace_parameter_call!(
+        "parameter_slices::candidate_from_reference_table_cells",
+        ["label_index" => &label_index],
+        fields [
+            "document" => trace_document(document),
+            "href" => trace_optional_text(href.map(|value| value.as_str())),
+            "digest" => trace_sensitive_text(digest),
+            "lines" => trace_lines(lines),
+            "offsets" => trace_debug(offsets),
+            "settings" => trace_debug(settings),
+        ],
+        || {
     let cells = following_table_cells(lines, label_index, 3);
     let [
         (_unit_index, unit_line),
@@ -493,6 +692,8 @@ fn candidate_from_reference_table_cells(
         raw_value,
         &raw_unit,
     ))
+        }
+    )
 }
 
 fn candidate_from_annotated_result(
@@ -504,6 +705,18 @@ fn candidate_from_annotated_result(
     offsets: &[usize],
     settings: &DiscoverySettings,
 ) -> Option<ParameterCandidate> {
+    trace_parameter_call!(
+        "parameter_slices::candidate_from_annotated_result",
+        ["label_index" => &label_index],
+        fields [
+            "document" => trace_document(document),
+            "href" => trace_optional_text(href.map(|value| value.as_str())),
+            "digest" => trace_sensitive_text(digest),
+            "lines" => trace_lines(lines),
+            "offsets" => trace_debug(offsets),
+            "settings" => trace_debug(settings),
+        ],
+        || {
     let cells = following_table_cells(lines, label_index, 1);
     let [(value_index, value_line)] = cells.as_slice() else {
         return None;
@@ -535,6 +748,8 @@ fn candidate_from_annotated_result(
         &raw_value,
         &raw_unit,
     ))
+        }
+    )
 }
 
 fn candidate_from_annotated_value_description(
@@ -546,6 +761,18 @@ fn candidate_from_annotated_value_description(
     offsets: &[usize],
     settings: &DiscoverySettings,
 ) -> Option<ParameterCandidate> {
+    trace_parameter_call!(
+        "parameter_slices::candidate_from_annotated_value_description",
+        ["label_index" => &label_index],
+        fields [
+            "document" => trace_document(document),
+            "href" => trace_optional_text(href.map(|value| value.as_str())),
+            "digest" => trace_sensitive_text(digest),
+            "lines" => trace_lines(lines),
+            "offsets" => trace_debug(offsets),
+            "settings" => trace_debug(settings),
+        ],
+        || {
     let label = lines[label_index];
     let normalized_label = normalize_label(label);
     if !label_is_eligible(&normalized_label, settings)
@@ -614,6 +841,8 @@ fn candidate_from_annotated_value_description(
         }
     }
     None
+        }
+    )
 }
 
 fn finish_table_candidate(
@@ -624,6 +853,16 @@ fn finish_table_candidate(
     raw_value: &str,
     raw_unit: &str,
 ) -> ParameterCandidate {
+    trace_parameter_call!(
+        "parameter_slices::finish_table_candidate",
+        ["start" => &start, "end" => &end],
+        fields [
+            "candidate" => trace_debug(&candidate),
+            "original_line" => trace_sensitive_text(&original_line),
+            "raw_value" => trace_sensitive_text(raw_value),
+            "raw_unit" => trace_sensitive_text(raw_unit),
+        ],
+        || {
     candidate.stable_id = sha256(
         [
             candidate.document_id.as_str(),
@@ -643,6 +882,8 @@ fn finish_table_candidate(
     candidate.prefix_context.clear();
     candidate.suffix_context.clear();
     candidate
+        }
+    )
 }
 
 fn following_table_cells<'a>(
@@ -650,6 +891,11 @@ fn following_table_cells<'a>(
     label_index: usize,
     count: usize,
 ) -> Vec<(usize, &'a str)> {
+    trace_parameter_call!(
+        "parameter_slices::following_table_cells",
+        ["label_index" => &label_index, "count" => &count],
+        fields ["lines" => trace_lines(lines)],
+        || {
     let mut cells = Vec::new();
     for (index, line) in lines.iter().enumerate().skip(label_index + 1).take(12) {
         let trimmed = line.trim();
@@ -665,16 +911,21 @@ fn following_table_cells<'a>(
         }
     }
     cells
+        }
+    )
 }
 
 fn unit_without_reference_range(unit: &str) -> String {
+    trace_parameter_call!("parameter_slices::unit_without_reference_range", [], fields ["unit" => trace_sensitive_text(unit)], || {
     reference_range_suffix_pattern()
         .replace(unit, "")
         .trim()
         .to_owned()
+    })
 }
 
 fn parse_number(raw: &str) -> (Option<f64>, Option<String>, Option<String>) {
+    trace_parameter_call!("parameter_slices::parse_number", [], fields ["raw" => trace_sensitive_text(raw)], || {
     if raw.chars().all(|ch| ch.is_ascii_digit()) {
         return (raw.parse().ok(), Some("integer".into()), None);
     }
@@ -734,13 +985,17 @@ fn parse_number(raw: &str) -> (Option<f64>, Option<String>, Option<String>) {
         Some(format.into()),
         None,
     )
+    })
 }
 
 fn rejected_number() -> (Option<f64>, Option<String>, Option<String>) {
-    (None, None, Some("REJECTED_INVALID_NUMBER_FORMAT".into()))
+    trace_parameter_call!("parameter_slices::rejected_number", [], || {
+        (None, None, Some("REJECTED_INVALID_NUMBER_FORMAT".into()))
+    })
 }
 
 fn label_is_eligible(label: &str, settings: &DiscoverySettings) -> bool {
+    trace_parameter_call!("parameter_slices::label_is_eligible", [], fields ["label" => trace_sensitive_text(label), "settings" => trace_debug(settings)], || {
     let count = label.chars().count();
     count >= settings.min_label_length
         && count <= settings.max_label_length
@@ -750,16 +1005,20 @@ fn label_is_eligible(label: &str, settings: &DiscoverySettings) -> bool {
             .excluded_labels
             .iter()
             .any(|item| normalize_label(item) == label)
+    })
 }
 
 fn page_number(spans: &[TextPageSpan], offset: usize) -> Option<usize> {
+    trace_parameter_call!("parameter_slices::page_number", ["offset" => &offset], fields ["spans" => trace_debug(spans)], || {
     spans
         .iter()
         .find(|span| span.character_start <= offset && offset < span.character_end)
         .map(|span| span.page_number)
+    })
 }
 
 fn line_context(lines: &[&str], index: usize) -> String {
+    trace_parameter_call!("parameter_slices::line_context", ["index" => &index], fields ["lines" => trace_lines(lines)], || {
     let start = index.saturating_sub(1);
     let end = (index + 1).min(lines.len().saturating_sub(1));
     lines[start..=end]
@@ -768,9 +1027,11 @@ fn line_context(lines: &[&str], index: usize) -> String {
         .filter(|item| !item.is_empty())
         .collect::<Vec<_>>()
         .join(" ⟪ ")
+    })
 }
 
 fn section_specimen(lines: &[&str], index: usize) -> Option<String> {
+    trace_parameter_call!("parameter_slices::section_specimen", ["index" => &index], fields ["lines" => trace_lines(lines)], || {
     for line in lines[..=index].iter().rev() {
         let label = normalize_label(line);
         if label.starts_with("u-esame") || (label.starts_with("esame") && label.contains("urine")) {
@@ -781,12 +1042,14 @@ fn section_specimen(lines: &[&str], index: usize) -> Option<String> {
         }
     }
     None
+    })
 }
 
 fn proposed_groups(
     candidates: &[ParameterCandidate],
     settings: &DiscoverySettings,
 ) -> Vec<CandidateGroup> {
+    trace_parameter_call!("parameter_slices::proposed_groups", ["settings" => settings], fields ["candidates" => trace_debug(candidates)], || {
     let mut grouped = BTreeMap::<String, Vec<ParameterCandidate>>::new();
     for item in candidates {
         grouped
@@ -807,9 +1070,11 @@ fn proposed_groups(
                 .then_some(group)
         })
         .collect()
+    })
 }
 
 fn validate_settings(settings: &DiscoverySettings) -> Result<(), String> {
+    trace_parameter_call!("parameter_slices::validate_settings", [], fields ["settings" => trace_debug(settings)], || {
     if settings.min_label_length == 0 {
         return Err("min_label_length deve essere positivo".into());
     }
@@ -829,91 +1094,134 @@ fn validate_settings(settings: &DiscoverySettings) -> Result<(), String> {
         return Err("le soglie di proposta devono essere positive".into());
     }
     Ok(())
+    })
 }
 
 fn sha256(bytes: &[u8]) -> String {
-    format!("{:x}", Sha256::digest(bytes))
+    trace_parameter_call!("parameter_slices::sha256", [], fields ["input_bytes" => trace_bytes(bytes)], || {
+        format!("{:x}", Sha256::digest(bytes))
+    })
 }
 
 fn candidate_pattern() -> &'static Regex {
-    static PATTERN: OnceLock<Regex> = OnceLock::new();
-    PATTERN.get_or_init(|| Regex::new(r"^(?P<label>.+?)(?P<separator>\s*(?::|=)\s*|\s+)(?P<qualifier><=|>=|<|>)?\s*(?P<number>\d{1,3}(?:[.,]\d{3})+[.,]\d+|\d+[.,]\d+|\d+)(?:\s*(?P<unit>[A-Za-z%µμ][A-Za-z0-9%µμ/._^*\-]*(?:\s*/\s*[A-Za-z%µμ][A-Za-z0-9%µμ._^*\-]*)?))?").expect("grammar costante valida"))
+    trace_parameter_call!("parameter_slices::candidate_pattern", [], || {
+        static PATTERN: OnceLock<Regex> = OnceLock::new();
+        PATTERN.get_or_init(|| Regex::new(r"^(?P<label>.+?)(?P<separator>\s*(?::|=)\s*|\s+)(?P<qualifier><=|>=|<|>)?\s*(?P<number>\d{1,3}(?:[.,]\d{3})+[.,]\d+|\d+[.,]\d+|\d+)(?:\s*(?P<unit>[A-Za-z%µμ][A-Za-z0-9%µμ/._^*\-]*(?:\s*/\s*[A-Za-z%µμ][A-Za-z0-9%µμ._^*\-]*)?))?").expect("grammar costante valida"))
+    })
 }
 
 fn stacked_value_pattern() -> &'static Regex {
-    static PATTERN: OnceLock<Regex> = OnceLock::new();
-    PATTERN.get_or_init(|| {
+    trace_parameter_call!("parameter_slices::stacked_value_pattern", [], || {
+        static PATTERN: OnceLock<Regex> = OnceLock::new();
+        PATTERN.get_or_init(|| {
         Regex::new(r"^\s*(?:\*\s*)?(?P<qualifier><=|>=|<|>)?\s*(?P<number>\d{1,3}(?:[.,]\d{3})+[.,]\d+|\d+[.,]\d+|\d+)\s*$")
             .expect("grammar costante valida")
+    })
     })
 }
 
 fn stacked_unit_pattern() -> &'static Regex {
-    static PATTERN: OnceLock<Regex> = OnceLock::new();
-    PATTERN.get_or_init(|| {
-        Regex::new(r#"^\s*(?P<unit>[A-Za-z%µμ][A-Za-z0-9%µμ/._^+*\-" ]*)\s*$"#)
-            .expect("grammar costante valida")
+    trace_parameter_call!("parameter_slices::stacked_unit_pattern", [], || {
+        static PATTERN: OnceLock<Regex> = OnceLock::new();
+        PATTERN.get_or_init(|| {
+            Regex::new(r#"^\s*(?P<unit>[A-Za-z%µμ][A-Za-z0-9%µμ/._^+*\-" ]*)\s*$"#)
+                .expect("grammar costante valida")
+        })
     })
 }
 
 fn reference_cell_pattern() -> &'static Regex {
-    static PATTERN: OnceLock<Regex> = OnceLock::new();
-    PATTERN.get_or_init(|| {
+    trace_parameter_call!("parameter_slices::reference_cell_pattern", [], || {
+        static PATTERN: OnceLock<Regex> = OnceLock::new();
+        PATTERN.get_or_init(|| {
         Regex::new(r"^\s*(?:\(\s*)?(?:<=|>=|<|>)?\s*\d+(?:[.,]\d+)?(?:\s*(?:-|–|a)\s*(?:<=|>=|<|>)?\s*\d+(?:[.,]\d+)?)?\s*\)?\s*$")
             .expect("grammar costante valida")
+    })
     })
 }
 
 fn table_method_pattern() -> &'static Regex {
-    static PATTERN: OnceLock<Regex> = OnceLock::new();
-    PATTERN.get_or_init(|| {
-        Regex::new(r"(?i)^(?:met\.|metodo\s*:).*$").expect("grammar costante valida")
+    trace_parameter_call!("parameter_slices::table_method_pattern", [], || {
+        static PATTERN: OnceLock<Regex> = OnceLock::new();
+        PATTERN.get_or_init(|| {
+            Regex::new(r"(?i)^(?:met\.|metodo\s*:).*$").expect("grammar costante valida")
+        })
     })
 }
 
 fn inline_result_pattern() -> &'static Regex {
-    static PATTERN: OnceLock<Regex> = OnceLock::new();
-    PATTERN.get_or_init(|| {
-        Regex::new(r"(?i)^\s*valore\s+(?P<content>.+)$").expect("grammar costante valida")
+    trace_parameter_call!("parameter_slices::inline_result_pattern", [], || {
+        static PATTERN: OnceLock<Regex> = OnceLock::new();
+        PATTERN.get_or_init(|| {
+            Regex::new(r"(?i)^\s*valore\s+(?P<content>.+)$").expect("grammar costante valida")
+        })
     })
 }
 
 fn value_description_pattern() -> &'static Regex {
-    static PATTERN: OnceLock<Regex> = OnceLock::new();
-    PATTERN.get_or_init(|| {
-        Regex::new(r"(?i)^\s*valore\s+(?P<kind>in\s+massa|percentuale)\s*$")
-            .expect("grammatica descrizione valore costante valida")
+    trace_parameter_call!("parameter_slices::value_description_pattern", [], || {
+        static PATTERN: OnceLock<Regex> = OnceLock::new();
+        PATTERN.get_or_init(|| {
+            Regex::new(r"(?i)^\s*valore\s+(?P<kind>in\s+massa|percentuale)\s*$")
+                .expect("grammatica descrizione valore costante valida")
+        })
     })
 }
 
 fn glycated_hemoglobin_label_pattern() -> &'static Regex {
-    static PATTERN: OnceLock<Regex> = OnceLock::new();
-    PATTERN.get_or_init(|| {
-        Regex::new(r"(?i)\b(?:hb\s+glicosilat|hb\s+glicat|emoglobina\s+glicosilat)")
-            .expect("grammatica emoglobina glicata costante valida")
-    })
+    trace_parameter_call!(
+        "parameter_slices::glycated_hemoglobin_label_pattern",
+        [],
+        || {
+            static PATTERN: OnceLock<Regex> = OnceLock::new();
+            PATTERN.get_or_init(|| {
+                Regex::new(r"(?i)\b(?:hb\s+glicosilat|hb\s+glicat|emoglobina\s+glicosilat)")
+                    .expect("grammatica emoglobina glicata costante valida")
+            })
+        }
+    )
 }
 
 fn reference_range_suffix_pattern() -> &'static Regex {
-    static PATTERN: OnceLock<Regex> = OnceLock::new();
-    PATTERN.get_or_init(|| {
-        Regex::new(r"\s+(?:[<>=~]\s*)?\d+(?:[.,]\d+)?\s*(?:-|–|a)\s*\d+(?:[.,]\d+)?\s*$")
-            .expect("grammar costante valida")
-    })
+    trace_parameter_call!(
+        "parameter_slices::reference_range_suffix_pattern",
+        [],
+        || {
+            static PATTERN: OnceLock<Regex> = OnceLock::new();
+            PATTERN.get_or_init(|| {
+                Regex::new(r"\s+(?:[<>=~]\s*)?\d+(?:[.,]\d+)?\s*(?:-|–|a)\s*\d+(?:[.,]\d+)?\s*$")
+                    .expect("grammar costante valida")
+            })
+        }
+    )
 }
 
 fn trailing_separator() -> &'static Regex {
-    static PATTERN: OnceLock<Regex> = OnceLock::new();
-    PATTERN.get_or_init(|| Regex::new(r"\s*[:=]\s*$").expect("grammar costante valida"))
+    trace_parameter_call!("parameter_slices::trailing_separator", [], || {
+        static PATTERN: OnceLock<Regex> = OnceLock::new();
+        PATTERN.get_or_init(|| Regex::new(r"\s*[:=]\s*$").expect("grammar costante valida"))
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::{DiscoverySettings, discover_candidates, discover_configured_candidates};
+    use crate::logging::{Component, Level, Session};
     use crate::metadata::DocumentRecord;
     use crate::pdf::{ExtractedText, TextPageSpan};
     use std::collections::HashMap;
+    use std::fs;
     use std::path::PathBuf;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    fn trace_directory() -> PathBuf {
+        static NEXT_ID: AtomicUsize = AtomicUsize::new(0);
+        std::env::temp_dir().join(format!(
+            "sanikey-parameter-slices-trace-{}-{}",
+            std::process::id(),
+            NEXT_ID.fetch_add(1, Ordering::Relaxed)
+        ))
+    }
 
     fn document(id: &str, date: Option<&str>) -> DocumentRecord {
         DocumentRecord {
@@ -1292,5 +1600,76 @@ mod tests {
         assert_eq!(item.character_start, 0);
         assert_eq!(item.page_number, Some(3));
         assert_eq!(item.context, "È Hb 13,7 g/dL ⟪ contesto");
+    }
+
+    #[test]
+    fn trace_captures_private_discovery_data_only_at_trace_level_and_redacts_secrets() {
+        let documents = [document("doc-a", Some("2026-01-02"))];
+        let extracted = [extraction(
+            "doc-a",
+            "Password = synthetic-parameter-secret\nHb: 13.7 g/dL\n",
+        )];
+        let labels = ["Hb".to_owned()];
+        let hrefs = HashMap::from([("doc-a".to_owned(), "../documents/report.txt".to_owned())]);
+
+        for level in [Level::Events, Level::Trace] {
+            let directory = trace_directory();
+            let (session, path) =
+                Session::create_in_directory_with_level(&directory, Component::Core, level)
+                    .expect("sessione log sintetica");
+            session.scoped(|| {
+                let result =
+                    discover_candidates(&documents, &extracted, Some(&hrefs), &permissive(), None)
+                        .expect("discovery sintetica");
+                assert_eq!(result.candidates.len(), 1);
+                let configured = discover_configured_candidates(
+                    &documents,
+                    &extracted,
+                    &labels,
+                    Some(&hrefs),
+                    &permissive(),
+                )
+                .expect("discovery configurata sintetica");
+                assert_eq!(configured.candidates.len(), 1);
+                assert!(configured.proposed_groups.is_empty());
+            });
+            session.finish(Component::Core).expect("chiusura log");
+            drop(session);
+
+            let contents = fs::read_to_string(&path).expect("log sintetico leggibile");
+            if level == Level::Trace {
+                assert!(contents.contains("parameter_slices::discover_candidates"));
+                assert!(contents.contains("parameter_slices::discover_configured_candidates"));
+                assert!(contents.contains("Hb: 13.7 g/dL"));
+                assert!(contents.contains("secret_omitted"));
+                assert!(!contents.contains("synthetic-parameter-secret"));
+            } else {
+                assert!(!contents.contains("parameter_slices::"));
+                assert!(!contents.contains("Hb: 13.7 g/dL"));
+            }
+            fs::remove_file(path).expect("rimozione log");
+            fs::remove_dir(directory).expect("rimozione directory log");
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn document_input_trace_preserves_native_non_unicode_paths() {
+        use std::ffi::OsString;
+        use std::os::unix::ffi::OsStringExt;
+
+        let mut document = document("doc-a", None);
+        document.path = PathBuf::from(OsString::from_vec(b"/synthetic/report-\xff.txt".to_vec()));
+        let encoded = super::trace_documents(&[document]).to_json();
+        assert_eq!(
+            encoded["value"][0]["document"]["value"]["native_path"]["value"]["encoding"],
+            "unix_bytes"
+        );
+        assert!(
+            encoded["value"][0]["document"]["value"]["native_path"]["value"]["value"]
+                .as_array()
+                .unwrap()
+                .contains(&serde_json::json!(0xff))
+        );
     }
 }

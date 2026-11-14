@@ -11,6 +11,7 @@ use crate::dicom::{DicomStudy, generate_dicom_previews, prepare_dicom_media};
 use crate::exports::generate_exports;
 use crate::frontend::build_frontend;
 use crate::inventory::{find_duplicate_documents, scan_document_inventory};
+use crate::logging::{Component, TraceField, TraceValue, redact_secret_assignments, trace_current};
 use crate::metadata::{
     CuratedMetadata, DocumentRecord, load_curated_metadata, prepare_people_metadata,
 };
@@ -35,6 +36,147 @@ use std::path::{Path, PathBuf};
 
 const CACHE_SCHEMA_VERSION: u64 = 1;
 
+macro_rules! trace_build_call {
+    ($function:literal, [$($name:literal => $value:expr),* $(,)?], paths [$($path_name:literal => $path:expr),* $(,)?], fields [$($field_name:literal => $field_value:expr),* $(,)?], result_paths [$($result_path_name:literal => $result_path:expr),* $(,)?], $body:expr) => {{
+        let trace = trace_current(Component::Core, $function, || {
+            Vec::from([
+                $(TraceField::new($name, trace_debug($value)),)*
+                $(TraceField::new($path_name, TraceValue::path($path)),)*
+                $(TraceField::new($field_name, $field_value),)*
+            ])
+        });
+        let result = ($body)();
+        if let Some(trace) = trace {
+            let _ = trace.finish(TraceValue::Data(json!({
+                "format": "rust_debug",
+                "value": redact_secret_assignments(&format!("{result:#?}")),
+                "native_paths": Vec::<Value>::from([
+                    $(json!({"name": $result_path_name, "value": $result_path(&result).to_json()}),)*
+                ]),
+            })));
+        }
+        result
+    }};
+    ($function:literal, [$($name:literal => $value:expr),* $(,)?], paths [$($path_name:literal => $path:expr),* $(,)?], result_paths [$($result_path_name:literal => $result_path:expr),* $(,)?], $body:expr) => {{
+        trace_build_call!($function, [$($name => $value),*], paths [$($path_name => $path),*], fields [], result_paths [$($result_path_name => $result_path),*], $body)
+    }};
+    ($function:literal, [$($name:literal => $value:expr),* $(,)?], paths [$($path_name:literal => $path:expr),* $(,)?], fields [$($field_name:literal => $field_value:expr),* $(,)?], $body:expr) => {{
+        trace_build_call!($function, [$($name => $value),*], paths [$($path_name => $path),*], fields [$($field_name => $field_value),*], result_paths [], $body)
+    }};
+    ($function:literal, [$($name:literal => $value:expr),* $(,)?], paths [$($path_name:literal => $path:expr),* $(,)?], $body:expr) => {{
+        trace_build_call!($function, [$($name => $value),*], paths [$($path_name => $path),*], fields [], result_paths [], $body)
+    }};
+    ($function:literal, [$($name:literal => $value:expr),* $(,)?], $body:expr) => {
+        trace_build_call!($function, [$($name => $value),*], paths [], fields [], result_paths [], $body)
+    };
+}
+
+fn trace_debug<T: std::fmt::Debug + ?Sized>(value: &T) -> TraceValue {
+    TraceValue::Data(json!({
+        "format": "rust_debug",
+        "value": redact_secret_assignments(&format!("{value:#?}")),
+    }))
+}
+
+fn trace_person_paths(person: &PersonConfig) -> TraceValue {
+    TraceValue::Data(json!([
+        {"name":"source_documents","path":TraceValue::path(&person.source_documents).to_json()},
+        {"name":"metadata_directory","path":TraceValue::path(&person.metadata_directory).to_json()},
+        {"name":"local_build","path":TraceValue::path(&person.local_build).to_json()},
+        {"name":"ui.background_image","path":person.ui.background_image.as_deref().map(TraceValue::path).map(|path| path.to_json())},
+        {"name":"search.dictionary","path":person.search.dictionary.as_deref().map(TraceValue::path).map(|path| path.to_json())}
+    ]))
+}
+
+fn trace_accounts_paths(config: &AccountsConfig) -> TraceValue {
+    TraceValue::Data(json!({
+        "config_path": TraceValue::path(&config.path).to_json(),
+        "people": config.people.iter().enumerate().map(|(index, person)| json!({
+            "index": index,
+            "id": person.id,
+            "paths": trace_person_paths(person).to_json(),
+        })).collect::<Vec<_>>(),
+        "ui.background_image": config.ui.background_image.as_deref().map(TraceValue::path).map(|path| path.to_json()),
+        "search.dictionary": config.search.dictionary.as_deref().map(TraceValue::path).map(|path| path.to_json())
+    }))
+}
+
+fn trace_document_paths(documents: &[DocumentRecord]) -> TraceValue {
+    TraceValue::Data(Value::Array(
+        documents
+            .iter()
+            .enumerate()
+            .map(|(index, document)| {
+                json!({
+                    "index": index,
+                    "document_id": document.document_id,
+                    "path": TraceValue::path(&document.path).to_json(),
+                })
+            })
+            .collect(),
+    ))
+}
+
+fn trace_path_vector(paths: &[PathBuf]) -> TraceValue {
+    TraceValue::Data(json!({
+        "format": "rust_debug_with_native_paths",
+        "rust_debug": redact_secret_assignments(&format!("{paths:#?}")),
+        "paths": paths.iter().enumerate().map(|(index, path)| json!({
+            "index": index,
+            "path": TraceValue::path(path).to_json(),
+        })).collect::<Vec<_>>(),
+    }))
+}
+
+fn trace_path_result(result: &Result<PathBuf, OperationError>) -> TraceValue {
+    TraceValue::Data(json!({
+        "state": if result.is_ok() {"complete"} else {"error"},
+        "path": result.as_ref().ok().map(|path| TraceValue::path(path).to_json())
+    }))
+}
+
+fn trace_path<T: AsRef<Path>>(path: &T) -> TraceValue {
+    TraceValue::path(path.as_ref())
+}
+
+fn trace_document_result_paths<T: AsRef<[DocumentRecord]>>(documents: &T) -> TraceValue {
+    trace_document_paths(documents.as_ref())
+}
+
+fn trace_patient_result_paths(result: &Result<PatientBuildResult, OperationError>) -> TraceValue {
+    let paths = result.as_ref().ok().map(|result| {
+        json!([
+            {"name":"build_root","path":TraceValue::path(&result.build_root).to_json()},
+            {"name":"database","path":TraceValue::path(&result.database).to_json()},
+            {"name":"manifest","path":TraceValue::path(&result.manifest).to_json()},
+            {"name":"checksums","path":TraceValue::path(&result.checksums).to_json()},
+            {"name":"report","path":TraceValue::path(&result.report).to_json()}
+        ])
+    });
+    TraceValue::Data(
+        json!({"state": if result.is_ok() {"complete"} else {"error"}, "paths": paths}),
+    )
+}
+
+fn trace_patient_results_paths(
+    result: &Result<Vec<PatientBuildResult>, OperationError>,
+) -> TraceValue {
+    TraceValue::Data(json!({
+        "state": if result.is_ok() {"complete"} else {"error"},
+        "patients": result.as_ref().ok().map(|patients| patients.iter().enumerate().map(|(index, patient)| json!({
+            "index": index,
+            "patient_id": patient.patient_id,
+            "paths": [
+                {"name":"build_root","path":TraceValue::path(&patient.build_root).to_json()},
+                {"name":"database","path":TraceValue::path(&patient.database).to_json()},
+                {"name":"manifest","path":TraceValue::path(&patient.manifest).to_json()},
+                {"name":"checksums","path":TraceValue::path(&patient.checksums).to_json()},
+                {"name":"report","path":TraceValue::path(&patient.report).to_json()}
+            ]
+        })).collect::<Vec<_>>())
+    }))
+}
+
 /// Modalità di build disponibili.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum BuildMode {
@@ -49,11 +191,13 @@ pub enum BuildMode {
 
 impl BuildMode {
     fn as_str(self) -> &'static str {
-        match self {
-            Self::Full => "full",
-            Self::Incremental => "incremental",
-            Self::Validation => "validation",
-        }
+        trace_build_call!("build::BuildMode::as_str", ["self" => &self], || {
+            match self {
+                Self::Full => "full",
+                Self::Incremental => "incremental",
+                Self::Validation => "validation",
+            }
+        })
     }
 }
 
@@ -116,6 +260,7 @@ struct PreparedPatient {
     parameter_rules: Option<ParameterRules>,
 }
 
+#[derive(Debug)]
 struct ExtractionResult {
     items: Vec<ExtractedText>,
     extracted: usize,
@@ -135,9 +280,22 @@ pub fn build_patient(
     person: &PersonConfig,
     options: BuildOptions,
 ) -> Result<PatientBuildResult, OperationError> {
-    let parameter_rules = load_person_parameter_rules(person)?;
-    let metadata = load_curated_metadata(&person.metadata_directory)?;
-    build_prepared_patient(person.clone(), metadata, parameter_rules, options)
+    trace_build_call!(
+        "build::build_patient",
+        ["person" => person, "options" => &options],
+        paths [
+            "source_documents" => &person.source_documents,
+            "metadata_directory" => &person.metadata_directory,
+            "local_build" => &person.local_build,
+        ],
+        fields ["person_native_paths" => trace_person_paths(person)],
+        result_paths ["patient_native_paths" => trace_patient_result_paths],
+        || {
+            let parameter_rules = load_person_parameter_rules(person)?;
+            let metadata = load_curated_metadata(&person.metadata_directory)?;
+            build_prepared_patient(person.clone(), metadata, parameter_rules, options)
+        }
+    )
 }
 
 /// Costruisce in ordine tutte le persone abilitate e conserva gli output già
@@ -155,36 +313,45 @@ pub fn build_all(
     config: &AccountsConfig,
     options: BuildOptions,
 ) -> Result<Vec<PatientBuildResult>, OperationError> {
-    let root = repository_root(&config.path);
-    let prepared_metadata = prepare_people_metadata(config, &root)?;
-    let metadata_by_person: HashMap<_, _> = prepared_metadata
-        .into_iter()
-        .map(|prepared| (prepared.person_id, prepared.metadata))
-        .collect();
-    let mut patients = Vec::new();
-    for person in config.enabled_people() {
-        let metadata = metadata_by_person
-            .get(&person.id)
-            .cloned()
-            .ok_or_else(|| build_error(format!("metadati preflight mancanti: {}", person.id)))?;
-        let parameter_rules = load_person_parameter_rules(person)?;
-        patients.push(PreparedPatient {
-            person: person.clone(),
-            metadata,
-            parameter_rules,
-        });
-    }
-    patients
-        .into_iter()
-        .map(|patient| {
-            build_prepared_patient(
-                patient.person,
-                patient.metadata,
-                patient.parameter_rules,
-                options,
-            )
-        })
-        .collect()
+    trace_build_call!(
+        "build::build_all",
+        ["config" => config, "options" => &options],
+        paths ["config_path" => &config.path],
+        fields ["config_native_paths" => trace_accounts_paths(config)],
+        result_paths ["patient_native_paths" => trace_patient_results_paths],
+        || {
+            let root = repository_root(&config.path);
+            let prepared_metadata = prepare_people_metadata(config, &root)?;
+            let metadata_by_person: HashMap<_, _> = prepared_metadata
+                .into_iter()
+                .map(|prepared| (prepared.person_id, prepared.metadata))
+                .collect();
+            let mut patients = Vec::new();
+            for person in config.enabled_people() {
+                let metadata = metadata_by_person
+                    .get(&person.id)
+                    .cloned()
+                    .ok_or_else(|| build_error(format!("metadati preflight mancanti: {}", person.id)))?;
+                let parameter_rules = load_person_parameter_rules(person)?;
+                patients.push(PreparedPatient {
+                    person: person.clone(),
+                    metadata,
+                    parameter_rules,
+                });
+            }
+            patients
+                .into_iter()
+                .map(|patient| {
+                    build_prepared_patient(
+                        patient.person,
+                        patient.metadata,
+                        patient.parameter_rules,
+                        options,
+                    )
+                })
+                .collect()
+        }
+    )
 }
 
 fn build_prepared_patient(
@@ -193,6 +360,18 @@ fn build_prepared_patient(
     parameter_rules: Option<ParameterRules>,
     options: BuildOptions,
 ) -> Result<PatientBuildResult, OperationError> {
+    trace_build_call!(
+        "build::build_prepared_patient",
+        [
+            "person" => &person,
+            "metadata" => &metadata,
+            "parameter_rules" => &parameter_rules,
+            "options" => &options,
+        ],
+        paths [],
+        fields ["person_native_paths" => trace_person_paths(&person)],
+        result_paths ["patient_native_paths" => trace_patient_result_paths],
+        || {
     let build_root = &person.local_build;
     fs::create_dir_all(build_root).map_err(|cause| {
         filesystem_error(
@@ -325,11 +504,19 @@ fn build_prepared_patient(
         checksums,
         report,
     })
+        }
+    )
 }
 
 fn load_person_parameter_rules(
     person: &PersonConfig,
 ) -> Result<Option<ParameterRules>, OperationError> {
+    trace_build_call!(
+        "build::load_person_parameter_rules",
+        ["person" => person],
+        paths [],
+        fields ["person_native_paths" => trace_person_paths(person)],
+        || {
     let patient_path = person.metadata_directory.join("parameters.toml");
     let common_path = person
         .search
@@ -343,15 +530,26 @@ fn load_person_parameter_rules(
     }
     load_patient_parameter_rules(&common_path, &patient_path, &person.search.dictionary_data)
         .map(Some)
+        }
+    )
 }
 
 fn deduplicate_documents(documents: &[DocumentRecord]) -> Vec<DocumentRecord> {
+    trace_build_call!(
+        "build::deduplicate_documents",
+        ["documents" => documents],
+        paths [],
+        fields ["document_native_paths" => trace_document_paths(documents)],
+        result_paths ["document_native_paths" => trace_document_result_paths],
+        || {
     let mut seen = HashSet::new();
     documents
         .iter()
         .filter(|document| seen.insert(document.document_id.as_str()))
         .cloned()
         .collect()
+        }
+    )
 }
 
 fn extract_documents(
@@ -359,6 +557,12 @@ fn extract_documents(
     documents: &[DocumentRecord],
     options: BuildOptions,
 ) -> Result<ExtractionResult, OperationError> {
+    trace_build_call!(
+        "build::extract_documents",
+        ["person" => person, "documents" => documents, "options" => &options],
+        paths [],
+        fields ["person_native_paths" => trace_person_paths(person), "document_native_paths" => trace_document_paths(documents)],
+        || {
     let cache_path = person.local_build.join("cache/extracted_text.json");
     let cache = if options.mode == BuildMode::Incremental && !options.force_pdf_ocr {
         read_extraction_cache(&cache_path)
@@ -392,6 +596,8 @@ fn extract_documents(
         extracted,
         cached,
     })
+        }
+    )
 }
 
 fn extract_document_text(
@@ -399,6 +605,12 @@ fn extract_document_text(
     document: &DocumentRecord,
     force_pdf_ocr: bool,
 ) -> Result<ExtractedText, OperationError> {
+    trace_build_call!(
+        "build::extract_document_text",
+        ["person" => person, "document" => document, "force_pdf_ocr" => &force_pdf_ocr],
+        paths [],
+        fields ["person_native_paths" => trace_person_paths(person), "document_native_path" => TraceValue::path(&document.path)],
+        || {
     if document.kind == "pdf" {
         return Ok(extract_pdf_text_with_options(
             document,
@@ -447,18 +659,33 @@ fn extract_document_text(
         );
     }
     Ok(empty_extraction(document, Vec::new()))
+        }
+    )
 }
 
 fn empty_extraction(document: &DocumentRecord, warnings: Vec<String>) -> ExtractedText {
+    trace_build_call!(
+        "build::empty_extraction",
+        ["document" => document, "warnings" => &warnings],
+        paths [],
+        fields ["document_native_path" => TraceValue::path(&document.path)],
+        || {
     ExtractedText {
         document_id: document.document_id.clone(),
         text: String::new(),
         warnings,
         page_spans: Vec::new(),
     }
+        }
+    )
 }
 
 fn read_extraction_cache(path: &Path) -> BTreeMap<String, Value> {
+    trace_build_call!(
+        "build::read_extraction_cache",
+        [],
+        paths ["path" => path],
+        || {
     let Ok(bytes) = fs::read(path) else {
         return BTreeMap::new();
     };
@@ -478,9 +705,17 @@ fn read_extraction_cache(path: &Path) -> BTreeMap<String, Value> {
                 .collect()
         })
         .unwrap_or_default()
+        }
+    )
 }
 
 fn cached_extracted_text(entry: &Value, document: &DocumentRecord) -> Option<ExtractedText> {
+    trace_build_call!(
+        "build::cached_extracted_text",
+        ["entry" => entry, "document" => document],
+        paths [],
+        fields ["document_native_path" => TraceValue::path(&document.path)],
+        || {
     let identity = cache_identity(document);
     if identity
         .iter()
@@ -522,9 +757,17 @@ fn cached_extracted_text(entry: &Value, document: &DocumentRecord) -> Option<Ext
         warnings,
         page_spans,
     })
+        }
+    )
 }
 
 fn extraction_cache_entry(document: &DocumentRecord, extracted: &ExtractedText) -> Value {
+    trace_build_call!(
+        "build::extraction_cache_entry",
+        ["document" => document, "extracted" => extracted],
+        paths [],
+        fields ["document_native_path" => TraceValue::path(&document.path)],
+        || {
     let mut entry: Map<String, Value> = cache_identity(document).into_iter().collect();
     entry.insert("text".to_owned(), json!(extracted.text));
     entry.insert("warnings".to_owned(), json!(extracted.warnings));
@@ -543,9 +786,17 @@ fn extraction_cache_entry(document: &DocumentRecord, extracted: &ExtractedText) 
         ),
     );
     Value::Object(entry)
+        }
+    )
 }
 
 fn cache_identity(document: &DocumentRecord) -> Vec<(String, Value)> {
+    trace_build_call!(
+        "build::cache_identity",
+        ["document" => document],
+        paths [],
+        fields ["document_native_path" => TraceValue::path(&document.path)],
+        || {
     vec![
         ("document_id".to_owned(), json!(document.document_id)),
         ("path".to_owned(), json!(document.path.to_string_lossy())),
@@ -555,12 +806,19 @@ fn cache_identity(document: &DocumentRecord) -> Vec<(String, Value)> {
         ("container_id".to_owned(), json!(document.container_id)),
         ("internal_path".to_owned(), json!(document.internal_path)),
     ]
+        }
+    )
 }
 
 fn write_extraction_cache(
     path: &Path,
     documents: &BTreeMap<String, Value>,
 ) -> Result<(), OperationError> {
+    trace_build_call!(
+        "build::write_extraction_cache",
+        ["documents" => documents],
+        paths ["path" => path],
+        || {
     let parent = path.parent().expect("cache con directory genitore");
     fs::create_dir_all(parent)
         .map_err(|cause| filesystem_error("impossibile creare la cache", parent, cause))?;
@@ -572,12 +830,20 @@ fn write_extraction_cache(
     let mut output = bytes;
     output.push(b'\n');
     write_bytes(path, &output, "impossibile scrivere la cache di estrazione")
+        }
+    )
 }
 
 fn prepare_consultation_documents(
     person: &PersonConfig,
     documents: &[DocumentRecord],
 ) -> Result<Vec<String>, OperationError> {
+    trace_build_call!(
+        "build::prepare_consultation_documents",
+        ["person" => person, "documents" => documents],
+        paths [],
+        fields ["person_native_paths" => trace_person_paths(person), "document_native_paths" => trace_document_paths(documents)],
+        || {
     let root = person.local_build.join("rendered-documents");
     match fs::remove_dir_all(&root) {
         Ok(()) => {}
@@ -639,12 +905,18 @@ fn prepare_consultation_documents(
         }
     }
     Ok(warnings)
+        }
+    )
 }
 
 fn merge_parameter_observations(
     metadata: &CuratedMetadata,
     result: &ParameterBuildResult,
 ) -> Result<CuratedMetadata, OperationError> {
+    trace_build_call!(
+        "build::merge_parameter_observations",
+        ["metadata" => metadata, "result" => result],
+        || {
     let mut merged = metadata.clone();
     let mut replacements = HashMap::new();
     let existing: HashMap<_, _> = metadata
@@ -692,38 +964,54 @@ fn merge_parameter_observations(
             point
         }));
     Ok(merged)
+        }
+    )
 }
 
 fn compatible_series(
     left: &crate::metadata::ObservationSeries,
     right: &crate::metadata::ObservationSeries,
 ) -> bool {
-    left.value_type == right.value_type
-        && match (&left.unit, &right.unit) {
-            (None, None) => true,
-            (Some(left), Some(right)) => normalize_label(left) == normalize_label(right),
-            _ => false,
+    trace_build_call!(
+        "build::compatible_series",
+        ["left" => left, "right" => right],
+        || {
+            left.value_type == right.value_type
+                && match (&left.unit, &right.unit) {
+                    (None, None) => true,
+                    (Some(left), Some(right)) => normalize_label(left) == normalize_label(right),
+                    _ => false,
+                }
         }
+    )
 }
 
 fn parameter_document_hrefs(
     person: &PersonConfig,
     documents: &[DocumentRecord],
 ) -> HashMap<String, String> {
-    documents
-        .iter()
-        .filter(|document| document.origin == "source")
-        .filter_map(|document| {
-            let relative = document.path.strip_prefix(&person.source_documents).ok()?;
-            Some((
-                document.document_id.clone(),
-                format!(
-                    "../documents/{}",
-                    relative.to_string_lossy().replace('\\', "/")
-                ),
-            ))
-        })
-        .collect()
+    trace_build_call!(
+        "build::parameter_document_hrefs",
+        ["person" => person, "documents" => documents],
+        paths [],
+        fields ["person_native_paths" => trace_person_paths(person), "document_native_paths" => trace_document_paths(documents)],
+        || {
+            documents
+                .iter()
+                .filter(|document| document.origin == "source")
+                .filter_map(|document| {
+                    let relative = document.path.strip_prefix(&person.source_documents).ok()?;
+                    Some((
+                        document.document_id.clone(),
+                        format!(
+                            "../documents/{}",
+                            relative.to_string_lossy().replace('\\', "/")
+                        ),
+                    ))
+                })
+                .collect()
+        }
+    )
 }
 
 fn inspection_warnings(
@@ -732,6 +1020,12 @@ fn inspection_warnings(
     studies: &[DicomStudy],
     staging: &ContainerStagingResult,
 ) -> Vec<String> {
+    trace_build_call!(
+        "build::inspection_warnings",
+        ["documents" => documents, "duplicates" => duplicates, "studies" => studies, "staging" => staging],
+        paths [],
+        fields ["document_native_paths" => trace_document_paths(documents)],
+        || {
     let mut warnings = Vec::new();
     for (digest, copies) in duplicates {
         if let Some(retained) = copies.first() {
@@ -759,45 +1053,65 @@ fn inspection_warnings(
             .cloned(),
     );
     warnings
+        }
+    )
 }
 
 fn static_document_warning_messages(documents: &[DocumentRecord]) -> Vec<String> {
-    documents
-        .iter()
-        .filter(|document| document.kind == "binary")
-        .map(|document| {
-            let suffix = document
-                .path
-                .extension()
-                .map(|extension| format!(".{}", extension.to_string_lossy().to_lowercase()))
-                .unwrap_or_else(|| "file senza estensione".to_owned());
-            format!(
-                "{}: estrazione testo non supportata per {suffix}",
-                document.path.display()
-            )
-        })
-        .collect()
+    trace_build_call!(
+        "build::static_document_warning_messages",
+        ["documents" => documents],
+        paths [],
+        fields ["document_native_paths" => trace_document_paths(documents)],
+        || {
+            documents
+                .iter()
+                .filter(|document| document.kind == "binary")
+                .map(|document| {
+                    let suffix = document
+                        .path
+                        .extension()
+                        .map(|extension| format!(".{}", extension.to_string_lossy().to_lowercase()))
+                        .unwrap_or_else(|| "file senza estensione".to_owned());
+                    format!(
+                        "{}: estrazione testo non supportata per {suffix}",
+                        document.path.display()
+                    )
+                })
+                .collect()
+        }
+    )
 }
 
 fn extraction_warning_messages(
     documents: &[DocumentRecord],
     extracted: &[ExtractedText],
 ) -> Vec<String> {
-    documents
-        .iter()
-        .zip(extracted)
-        .flat_map(|(document, item)| {
-            item.warnings
+    trace_build_call!(
+        "build::extraction_warning_messages",
+        ["documents" => documents, "extracted" => extracted],
+        || {
+            documents
                 .iter()
-                .map(|warning| format!("{}: {warning}", document.path.display()))
-                .collect::<Vec<_>>()
-        })
-        .collect()
+                .zip(extracted)
+                .flat_map(|(document, item)| {
+                    item.warnings
+                        .iter()
+                        .map(|warning| format!("{}: {warning}", document.path.display()))
+                        .collect::<Vec<_>>()
+                })
+                .collect()
+        }
+    )
 }
 
 fn ensure_leaflet_downloads_succeeded(
     downloads: &LeafletDownloadResult,
 ) -> Result<(), OperationError> {
+    trace_build_call!(
+        "build::ensure_leaflet_downloads_succeeded",
+        ["downloads" => downloads],
+        || {
     if downloads.failures.is_empty() {
         return Ok(());
     }
@@ -815,12 +1129,20 @@ fn ensure_leaflet_downloads_succeeded(
     Err(build_error(format!(
         "download documenti AIFA non riuscito: {details}"
     )))
+        }
+    )
 }
 
 fn ensure_therapy_leaflets_complete(
     person: &PersonConfig,
     metadata: &CuratedMetadata,
 ) -> Result<(), OperationError> {
+    trace_build_call!(
+        "build::ensure_therapy_leaflets_complete",
+        ["person" => person, "metadata" => metadata],
+        paths [],
+        fields ["person_native_paths" => trace_person_paths(person)],
+        || {
     let medication_ids: HashSet<_> = metadata
         .therapies
         .iter()
@@ -874,6 +1196,8 @@ fn ensure_therapy_leaflets_complete(
         "documenti AIFA locali mancanti dopo il download: {}",
         incomplete.join(", ")
     )))
+        }
+    )
 }
 
 fn write_manifest(
@@ -882,6 +1206,13 @@ fn write_manifest(
     documents: usize,
     warnings: usize,
 ) -> Result<PathBuf, OperationError> {
+    trace_build_call!(
+        "build::write_manifest",
+        ["person" => person, "mode" => &mode, "documents" => &documents, "warnings" => &warnings],
+        paths [],
+        fields ["person_native_paths" => trace_person_paths(person)],
+        result_paths ["manifest_native_path" => trace_path_result],
+        || {
     let path = person.local_build.join("manifests/manifest.json");
     let base = json!({
         "schema_version": 1,
@@ -906,6 +1237,8 @@ fn write_manifest(
     payload["generated_at"] = json!(generated_at);
     write_json(&path, &payload, "impossibile scrivere il manifest build")?;
     Ok(path)
+        }
+    )
 }
 
 fn write_report(
@@ -914,6 +1247,13 @@ fn write_report(
     duplicates: usize,
     warning_messages: &[String],
 ) -> Result<PathBuf, OperationError> {
+    trace_build_call!(
+        "build::write_report",
+        ["person" => person, "counts" => counts, "duplicates" => &duplicates, "warning_messages" => warning_messages],
+        paths [],
+        fields ["person_native_paths" => trace_person_paths(person)],
+        result_paths ["report_native_path" => trace_path_result],
+        || {
     let path = person.local_build.join("reports/build_report.json");
     write_json(
         &path,
@@ -930,12 +1270,21 @@ fn write_report(
         "impossibile scrivere il report build",
     )?;
     Ok(path)
+        }
+    )
 }
 
 fn write_checksums(build_root: &Path) -> Result<PathBuf, OperationError> {
+    trace_build_call!(
+        "build::write_checksums",
+        ["build_root" => build_root],
+        paths [],
+        fields ["build_root_native_path" => TraceValue::path(build_root)],
+        result_paths ["checksums_native_path" => trace_path_result],
+        || {
     let target = build_root.join("checksums.sha256");
     let mut paths = Vec::new();
-    collect_files(build_root, &mut paths)?;
+    collect_files(build_root, &mut paths, 0)?;
     paths.sort();
     let mut rows = Vec::new();
     for path in paths.into_iter().filter(|path| path != &target) {
@@ -958,70 +1307,152 @@ fn write_checksums(build_root: &Path) -> Result<PathBuf, OperationError> {
         "impossibile scrivere i checksum",
     )?;
     Ok(target)
+        }
+    )
 }
 
-fn collect_files(directory: &Path, files: &mut Vec<PathBuf>) -> Result<(), OperationError> {
-    for entry in fs::read_dir(directory).map_err(|cause| {
-        filesystem_error("impossibile leggere la directory build", directory, cause)
-    })? {
-        let entry = entry.map_err(|cause| {
-            filesystem_error("impossibile leggere un artefatto build", directory, cause)
-        })?;
-        let path = entry.path();
-        let kind = entry.file_type().map_err(|cause| {
-            filesystem_error("impossibile determinare l'artefatto build", &path, cause)
-        })?;
-        if kind.is_dir() {
-            collect_files(&path, files)?;
-        } else if kind.is_file() {
-            files.push(path);
+fn collect_files(
+    directory: &Path,
+    files: &mut Vec<PathBuf>,
+    depth: usize,
+) -> Result<(), OperationError> {
+    let files_length_before = files.len();
+    let trace = trace_current(Component::Core, "build::collect_files", || {
+        if depth == 0 {
+            Vec::from([
+                TraceField::new("directory", TraceValue::path(directory)),
+                TraceField::new("depth", trace_debug(&depth)),
+                TraceField::new("files_before", trace_path_vector(files)),
+            ])
+        } else {
+            Vec::from([
+                TraceField::new("directory", TraceValue::path(directory)),
+                TraceField::new("depth", trace_debug(&depth)),
+                TraceField::new(
+                    "files_state_reference",
+                    TraceValue::Data(json!({
+                        "base": "root_call_files_before",
+                        "length_at_entry": files_length_before,
+                        "root_call_resolution": "nearest depth=0 build::collect_files ancestor via parent_call_id/call_id",
+                        "reconstruction": "follow call_id/parent_call_id tree; combine paths_added from the root subtree and select indices below length_at_entry",
+                    })),
+                ),
+            ])
         }
+    });
+    let trace_enabled = trace.is_some();
+    let mut paths_added = Vec::new();
+    let result = (|| {
+        for entry in fs::read_dir(directory).map_err(|cause| {
+            filesystem_error("impossibile leggere la directory build", directory, cause)
+        })? {
+            let entry = entry.map_err(|cause| {
+                filesystem_error("impossibile leggere un artefatto build", directory, cause)
+            })?;
+            let path = entry.path();
+            let kind = entry.file_type().map_err(|cause| {
+                filesystem_error("impossibile determinare l'artefatto build", &path, cause)
+            })?;
+            if kind.is_dir() {
+                collect_files(&path, files, depth + 1)?;
+            } else if kind.is_file() {
+                files.push(path);
+                if trace_enabled {
+                    let index = files.len() - 1;
+                    paths_added.push(json!({
+                        "index": index,
+                        "path": TraceValue::path(&files[index]).to_json(),
+                    }));
+                }
+            }
+        }
+        Ok(())
+    })();
+    if let Some(trace) = trace {
+        let result = json!({
+            "format": "rust_debug_with_reconstructible_path_delta",
+            "value": {
+                "return": redact_secret_assignments(&format!("{result:#?}")),
+                "depth": depth,
+                "files_length_after": files.len(),
+                "paths_added": paths_added,
+                "files_after": if depth == 0 { Some(trace_path_vector(files).to_json()) } else { None },
+            },
+        });
+        let _ = trace.finish(TraceValue::Data(result));
     }
-    Ok(())
+    result
 }
 
 fn sha256_file(path: &Path) -> Result<String, OperationError> {
-    let bytes = fs::read(path)
-        .map_err(|cause| filesystem_error("impossibile calcolare il checksum", path, cause))?;
-    Ok(format!("{:x}", Sha256::digest(bytes)))
+    trace_build_call!("build::sha256_file", [], paths ["path" => path], || {
+        let bytes = fs::read(path)
+            .map_err(|cause| filesystem_error("impossibile calcolare il checksum", path, cause))?;
+        Ok(format!("{:x}", Sha256::digest(bytes)))
+    })
 }
 
 fn write_json(path: &Path, value: &Value, context: &str) -> Result<(), OperationError> {
+    trace_build_call!(
+        "build::write_json",
+        ["value" => value, "context" => &context],
+        paths ["path" => path],
+        || {
     let mut contents = serde_json::to_vec_pretty(value).map_err(|cause| {
         build_error(format!("serializzazione JSON build non riuscita: {cause}"))
     })?;
     contents.push(b'\n');
     write_bytes(path, &contents, context)
+        }
+    )
 }
 
 fn write_bytes(path: &Path, contents: &[u8], context: &str) -> Result<(), OperationError> {
+    trace_build_call!(
+        "build::write_bytes",
+        ["contents" => contents, "context" => &context],
+        paths ["path" => path],
+        || {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|cause| {
             filesystem_error("impossibile creare la directory build", parent, cause)
         })?;
     }
     fs::write(path, contents).map_err(|cause| filesystem_error(context, path, cause))
+        }
+    )
 }
 
 fn repository_root(config_path: &Path) -> PathBuf {
-    let directory = config_path.parent().unwrap_or_else(|| Path::new("."));
-    if directory.file_name().is_some_and(|name| name == "config") {
-        directory.parent().unwrap_or(directory).to_path_buf()
-    } else {
-        directory.to_path_buf()
-    }
+    trace_build_call!("build::repository_root", [], paths ["config_path" => config_path], result_paths ["repository_root_native_path" => trace_path], || {
+        let directory = config_path.parent().unwrap_or_else(|| Path::new("."));
+        if directory.file_name().is_some_and(|name| name == "config") {
+            directory.parent().unwrap_or(directory).to_path_buf()
+        } else {
+            directory.to_path_buf()
+        }
+    })
 }
 
 fn lower_suffix(path: &Path) -> String {
-    path.extension()
-        .map(|extension| format!(".{}", extension.to_string_lossy().to_ascii_lowercase()))
-        .unwrap_or_default()
+    trace_build_call!("build::lower_suffix", [], paths ["path" => path], || {
+        path.extension()
+            .map(|extension| format!(".{}", extension.to_string_lossy().to_ascii_lowercase()))
+            .unwrap_or_default()
+    })
 }
 
 fn build_error(message: impl Into<String>) -> OperationError {
-    OperationError::new(ErrorCode::Configuration, message)
+    let message = message.into();
+    trace_build_call!("build::build_error", ["message" => &message], || {
+        OperationError::new(ErrorCode::Configuration, message)
+    })
 }
 
 fn filesystem_error(context: &str, path: &Path, cause: std::io::Error) -> OperationError {
-    build_error(format!("{context} {}: {cause}", path.display()))
+    trace_build_call!(
+        "build::filesystem_error",
+        ["context" => &context, "path" => path, "cause" => &cause],
+        || { build_error(format!("{context} {}: {cause}", path.display())) }
+    )
 }

@@ -1,5 +1,6 @@
 //! Ingestion and USB section parsing.
 
+use super::super::trace::{trace_config_call, trace_toml_value};
 use super::super::validation::{
     optional_bool, optional_choice, optional_nullable_string, optional_positive_integer,
     optional_string_list, reject_unknown, table_or_empty,
@@ -21,6 +22,7 @@ pub(in crate::config) fn parse_ingestion(
     context: &str,
     base: Option<&IngestionConfig>,
 ) -> Result<IngestionConfig, OperationError> {
+    trace_config_call!("config::parse_ingestion", ["context" => &context, "base" => &base], paths [], fields ["value" => trace_toml_value(value)], || {
     let table = table_or_empty(Some(value), context)?;
     reject_unknown(&table, INGESTION_FIELDS, context)?;
     let defaults = base.cloned().unwrap_or_default();
@@ -32,12 +34,14 @@ pub(in crate::config) fn parse_ingestion(
         exclude_patterns,
         include_patterns,
     })
+    })
 }
 
 pub(in crate::config) fn parse_usb(
     value: &Value,
     context: &str,
 ) -> Result<UsbConfig, OperationError> {
+    trace_config_call!("config::parse_usb", ["context" => &context], paths [], fields ["value" => trace_toml_value(value)], || {
     let table = table_or_empty(Some(value), context)?;
     reject_unknown(&table, USB_FIELDS, context)?;
     let defaults = UsbConfig::default();
@@ -57,5 +61,6 @@ pub(in crate::config) fn parse_usb(
             &["python", "rsync-preferred"],
             &defaults.copy_strategy,
         )?,
+    })
     })
 }

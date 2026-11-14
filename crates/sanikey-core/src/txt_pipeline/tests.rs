@@ -1,3 +1,5 @@
+//! Fixture sintetiche per le pipeline di consultazione TXT e PDF.
+
 use super::{
     build_consultation_pipeline, build_consultation_pipeline_with_renderer, build_pdf_pipeline,
     build_txt_pipeline,
@@ -16,6 +18,7 @@ static NEXT_DIRECTORY: AtomicUsize = AtomicUsize::new(0);
 
 struct TestDirectory(PathBuf);
 
+/// Gestisce le directory temporanee delle fixture della pipeline.
 impl TestDirectory {
     fn new() -> Self {
         let id = NEXT_DIRECTORY.fetch_add(1, Ordering::Relaxed);
@@ -32,6 +35,7 @@ impl TestDirectory {
     }
 }
 
+/// Rimuove i file temporanei generati dai test.
 impl Drop for TestDirectory {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.0);
@@ -503,4 +507,101 @@ fn pdf_pipeline_preserves_extraction_warnings_in_json() {
         exported["documents"][0]["page_spans"],
         serde_json::json!([])
     );
+}
+
+#[test]
+fn synthetic_trace_captures_pipeline_data_while_events_omit_it() {
+    use crate::logging::{Component, Level, Session};
+
+    let directory = TestDirectory::new();
+    let source = directory.path().join("source");
+    fs::create_dir_all(&source).expect("directory documenti sintetici");
+    let secret = "synthetic-secret-txt-9384";
+    let mut source_bytes =
+        format!("Synthetic trace payload with a private clinical note; password = \"{secret}\".")
+            .into_bytes();
+    source_bytes.push(0xff);
+    fs::write(
+        source.join("20260102 Synthetic private note.txt"),
+        source_bytes,
+    )
+    .expect("testo sintetico");
+    let office_source = directory.path().join("office-source");
+    fs::create_dir_all(&office_source).expect("directory Office sintetica");
+    fs::write(
+        office_source.join("20260103 Synthetic report.docx"),
+        b"Synthetic Office source bytes",
+    )
+    .expect("Office sintetico");
+
+    for (suffix, level) in [("events", Level::Events), ("trace", Level::Trace)] {
+        let logging = directory.path().join(format!("logs-{suffix}"));
+        let (session, path) =
+            Session::create_in_directory_with_level(&logging, Component::Core, level)
+                .expect("sessione sintetica");
+        let mut txt_person = person(
+            directory.path(),
+            &source,
+            &directory.path().join("metadata"),
+        );
+        txt_person.local_build = directory.path().join(format!("generated-{suffix}"));
+        let result = session
+            .scoped(|| build_txt_pipeline(&txt_person))
+            .expect("pipeline sintetica");
+        assert_eq!(result.documents, 1);
+        let mut office_person = person(
+            directory.path(),
+            &office_source,
+            &directory.path().join("metadata"),
+        );
+        office_person.local_build = directory.path().join(format!("office-generated-{suffix}"));
+        let office_result = session
+            .scoped(|| {
+                build_consultation_pipeline_with_renderer(&office_person, synthetic_office_renderer)
+            })
+            .expect("pipeline Office sintetica");
+        assert_eq!(office_result.documents, 1);
+        drop(session);
+
+        let contents = fs::read_to_string(path).expect("log sintetico");
+        if level == Level::Trace {
+            assert!(contents.contains("txt_pipeline::build_txt_pipeline"));
+            assert!(contents.contains("txt_pipeline::build_pipeline"));
+            assert!(contents.contains("txt_pipeline::read_document"));
+            assert!(contents.contains("txt_pipeline::build_database"));
+            assert!(contents.contains("txt_pipeline::office_renderer_boundary"));
+            assert!(contents.contains("Synthetic trace payload with a private clinical note"));
+            assert!(contents.contains("input_source_bytes"));
+            assert!(contents.contains("utf8_lossy"));
+            assert!(contents.contains("invalid_utf8_byte_sequences_not_preserved"));
+            assert!(contents.contains("secret_omitted"));
+            assert!(
+                !contents.contains(secret),
+                "secret escaped via spans: {:?}",
+                contents
+                    .lines()
+                    .filter(|line| line.contains(secret))
+                    .map(|line| line.replace(secret, "<synthetic-secret>"))
+                    .filter_map(|line| serde_json::from_str::<Value>(&line).ok())
+                    .map(|entry| {
+                        format!(
+                            "{} {}",
+                            entry["function"].as_str().unwrap_or("unknown"),
+                            entry["arguments"]
+                        )
+                    })
+                    .collect::<Vec<_>>()
+            );
+            assert!(contents.contains("source_documents"));
+            assert!(contents.contains("medical_archive.db"));
+            assert!(contents.contains("sqlite_engine_internals"));
+            assert!(contents.contains("filesystem_copy_contents"));
+            assert!(contents.contains("external_component"));
+        } else {
+            assert!(!contents.contains("function_enter"));
+            assert!(!contents.contains("Synthetic trace payload"));
+            assert!(!contents.contains(secret));
+            assert!(!contents.contains("20260102 Synthetic private note.txt"));
+        }
+    }
 }

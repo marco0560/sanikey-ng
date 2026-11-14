@@ -1,5 +1,8 @@
+//! Fixture sintetiche per export e validazione dell'immagine TXT.
+
 use super::{export_txt_simulation, validate_txt_simulation};
 use crate::config::{IngestionConfig, PersonConfig, SearchConfig, UiConfig};
+use crate::logging::{Component, Level, Session};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -8,6 +11,7 @@ static NEXT_DIRECTORY: AtomicUsize = AtomicUsize::new(0);
 
 struct TestDirectory(PathBuf);
 
+/// Gestisce la directory temporanea per gli export sintetici.
 impl TestDirectory {
     fn new() -> Self {
         let id = NEXT_DIRECTORY.fetch_add(1, Ordering::Relaxed);
@@ -24,6 +28,7 @@ impl TestDirectory {
     }
 }
 
+/// Elimina gli artefatti di export creati dal test.
 impl Drop for TestDirectory {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.0);
@@ -124,4 +129,100 @@ fn simulated_export_rejects_existing_targets_and_input_overlaps() {
     fs::create_dir(&existing).expect("target preesistente");
     assert!(export_txt_simulation(&person, &existing).is_err());
     assert!(export_txt_simulation(&person, &person.local_build).is_err());
+}
+
+#[test]
+fn trace_records_private_export_data_and_redacts_identified_assignments() {
+    let directory = TestDirectory::new();
+    let mut person = person(directory.path());
+    let private_label = "Persona sintetica riservata 5291";
+    let secret = "synthetic-secret-export-8043";
+    person.display_name = format!("{private_label} password={secret}");
+    let target = directory.path().join("usb-trace");
+    let log_directory = directory.path().join("logs");
+    let (session, log_path) =
+        Session::create_in_directory_with_level(&log_directory, Component::Core, Level::Trace)
+            .expect("sessione Trace sintetica");
+
+    let exported = session.scoped(|| {
+        let exported = export_txt_simulation(&person, &target).expect("export sintetico");
+        validate_txt_simulation(&exported.root).expect("validazione sintetica");
+        exported
+    });
+    let manifest: serde_json::Value =
+        serde_json::from_slice(&fs::read(&exported.manifest).expect("manifest sintetico"))
+            .expect("manifest JSON sintetico");
+    assert_eq!(manifest["patients"][0]["display_name"], person.display_name);
+    let root_index =
+        fs::read_to_string(exported.root.join("index.html")).expect("indice export sintetico");
+    assert!(root_index.contains(&person.display_name));
+    drop(session);
+
+    let log = fs::read_to_string(log_path).expect("log Trace sintetico");
+    assert!(log.contains(private_label));
+    assert!(log.contains("secret_omitted"));
+    assert!(
+        !log.contains(secret),
+        "secret escaped through trace record(s): {}",
+        log.lines()
+            .filter(|line| line.contains(secret))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+
+    let records = log
+        .lines()
+        .map(|line| serde_json::from_str::<serde_json::Value>(line).expect("record JSON valido"))
+        .collect::<Vec<_>>();
+    let inner_functions = [
+        "simulated_export::export_txt_simulation_inner",
+        "simulated_export::validate_txt_simulation_inner",
+        "simulated_export::validate_patient_inner",
+        "simulated_export::validate_document_links_inner",
+        "simulated_export::validate_checksums_inner",
+        "simulated_export::write_manifest_inner",
+        "simulated_export::write_root_index_inner",
+        "simulated_export::copy_tree_inner",
+        "simulated_export::copy_file_inner",
+        "simulated_export::checksum_tree_inner",
+        "simulated_export::collect_relative_files_inner",
+        "simulated_export::safe_relative_path_inner",
+        "simulated_export::percent_decode_inner",
+        "simulated_export::sha256_file_inner",
+        "simulated_export::count_files_inner",
+        "simulated_export::absolute_path_inner",
+        "simulated_export::reject_input_overlap_inner",
+    ];
+    for function in inner_functions {
+        let call_ids = records
+            .iter()
+            .filter(|record| record["type"] == "function_enter" && record["function"] == function)
+            .map(|record| record["call_id"].as_u64().expect("call ID"))
+            .collect::<Vec<_>>();
+        assert!(!call_ids.is_empty(), "span inner assente: {function}");
+        for call_id in call_ids {
+            assert!(
+                records.iter().any(|record| {
+                    record["type"] == "function_exit"
+                        && record["call_id"] == call_id
+                        && record["duration_ms"].as_u64().is_some()
+                }),
+                "span inner senza exit/durata: {function} #{call_id}"
+            );
+        }
+    }
+    let outer_call_id = records
+        .iter()
+        .find(|record| {
+            record["type"] == "function_enter"
+                && record["function"] == "simulated_export::export_txt_simulation"
+        })
+        .expect("span wrapper export")["call_id"]
+        .as_u64()
+        .expect("call ID wrapper");
+    assert!(records.iter().any(|record| {
+        record["type"] == "function_enter"
+            && record["function"] == "simulated_export::export_txt_simulation_inner"
+            && record["parent_call_id"] == outer_call_id
+    }));
 }

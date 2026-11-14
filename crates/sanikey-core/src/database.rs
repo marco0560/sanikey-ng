@@ -5,16 +5,163 @@ mod tests;
 
 use crate::config::PersonConfig;
 use crate::dicom::DicomStudy;
+use crate::logging::{
+    Component as LogComponent, TraceField, TraceOmission, TraceValue, trace_current,
+    trace_sensitive_text,
+};
 use crate::metadata::{CuratedMetadata, DocumentRecord};
 use crate::operation::{ErrorCode, OperationError};
 use crate::pdf::ExtractedText;
 use rusqlite::{Connection, params};
+use serde_json::json;
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 static BUILD_SEQUENCE: AtomicUsize = AtomicUsize::new(0);
+
+macro_rules! trace_database_call {
+    ($name:literal, [$($field:expr),* $(,)?], result $result_projection:expr, $body:expr) => {{
+        let trace = trace_current(LogComponent::Core, $name, || vec![$($field),*]);
+        let result = run_database_body(|| $body);
+        if let Some(trace) = trace {
+            let _ = trace.finish(($result_projection)(&result));
+        }
+        result
+    }};
+    ($name:literal, [$($field:expr),* $(,)?], $body:expr) => {{
+        let trace = trace_current(LogComponent::Core, $name, || vec![$($field),*]);
+        let result = run_database_body(|| $body);
+        if let Some(trace) = trace {
+            let _ = trace.finish(result.trace_value());
+        }
+        result
+    }};
+}
+
+/// Converte i risultati del database nella forma registrabile in Trace.
+trait DatabaseTraceOutput {
+    fn trace_value(&self) -> TraceValue;
+}
+
+/// Registra risultato o errore con redazione dei testi sensibili.
+impl<T: std::fmt::Debug> DatabaseTraceOutput for Result<T, OperationError> {
+    fn trace_value(&self) -> TraceValue {
+        match self {
+            Ok(value) => trace_sensitive_text(&format!("{value:#?}")),
+            Err(error) => TraceValue::Data(json!({
+                "state":"error",
+                "code":error.code().as_str(),
+                "message":trace_sensitive_text(error.message()).to_json(),
+            })),
+        }
+    }
+}
+
+/// Registra un percorso usando la codifica nativa lossless.
+impl DatabaseTraceOutput for PathBuf {
+    fn trace_value(&self) -> TraceValue {
+        TraceValue::path(self)
+    }
+}
+
+/// Redige le assegnazioni note nel testo restituito.
+impl DatabaseTraceOutput for String {
+    fn trace_value(&self) -> TraceValue {
+        trace_sensitive_text(self)
+    }
+}
+
+/// Registra codice e messaggio redatto dell'errore.
+impl DatabaseTraceOutput for OperationError {
+    fn trace_value(&self) -> TraceValue {
+        TraceValue::Data(json!({
+            "state":"error",
+            "code":self.code().as_str(),
+            "message":trace_sensitive_text(self.message()).to_json(),
+        }))
+    }
+}
+
+fn trace_database_build_result(result: &Result<DatabaseBuildResult, OperationError>) -> TraceValue {
+    match result {
+        Ok(result) => TraceValue::record(&[
+            TraceField::new("state", TraceValue::data("succeeded")),
+            TraceField::new("database_path", TraceValue::path(&result.path)),
+            TraceField::new("documents", TraceValue::data(result.documents as u64)),
+            TraceField::new(
+                "timeline_events",
+                TraceValue::data(result.timeline_events as u64),
+            ),
+            TraceField::new(
+                "dicom_studies",
+                TraceValue::data(result.dicom_studies as u64),
+            ),
+        ]),
+        Err(error) => error.trace_value(),
+    }
+}
+
+fn run_database_body<T>(body: impl FnOnce() -> T) -> T {
+    body()
+}
+
+fn trace_document(document: &DocumentRecord) -> TraceValue {
+    TraceValue::Data(serde_json::json!({
+        "document_id": trace_sensitive_text(&document.document_id).to_json(),
+        "patient_id": trace_sensitive_text(&document.patient_id).to_json(),
+        "path": TraceValue::path(&document.path).to_json(),
+        "sqlite_path_text_lossy": trace_sensitive_text(&document.path.to_string_lossy()).to_json(),
+        "sqlite_path_encoding": "lossy_utf8",
+        "title": trace_sensitive_text(&document.title).to_json(),
+        "category": trace_sensitive_text(&document.category).to_json(),
+        "kind": trace_sensitive_text(&document.kind).to_json(),
+        "sha256": trace_sensitive_text(&document.sha256).to_json(),
+        "date": document.date.as_deref().map(trace_sensitive_text).map(|value| value.to_json()),
+        "series": document.series.as_deref().map(trace_sensitive_text).map(|value| value.to_json()),
+        "tags": document.tags.iter().map(|value| trace_sensitive_text(value).to_json()).collect::<Vec<_>>(),
+        "origin": trace_sensitive_text(&document.origin).to_json(),
+        "container_id": document.container_id.as_deref().map(trace_sensitive_text).map(|value| value.to_json()),
+        "internal_path": document.internal_path.as_deref().map(trace_sensitive_text).map(|value| value.to_json()),
+    }))
+}
+
+fn trace_documents(documents: &[DocumentRecord]) -> TraceValue {
+    TraceValue::Data(serde_json::Value::Array(
+        documents
+            .iter()
+            .map(|document| trace_document(document).to_json())
+            .collect(),
+    ))
+}
+
+fn trace_studies(studies: &[DicomStudy]) -> TraceValue {
+    TraceValue::Data(serde_json::Value::Array(
+        studies
+            .iter()
+            .map(|study| {
+                serde_json::json!({
+                    "study_id": trace_sensitive_text(&study.study_id).to_json(),
+                    "patient_id": trace_sensitive_text(&study.patient_id).to_json(),
+                    "support_path": TraceValue::path(&study.support_path).to_json(),
+                    "sqlite_support_path_text_lossy": trace_sensitive_text(&study.support_path.to_string_lossy()).to_json(),
+                    "support_kind": trace_sensitive_text(&study.support_kind).to_json(),
+                    "extracted_path": study.extracted_path.as_deref().map(|path| TraceValue::path(path).to_json()),
+                    "sqlite_extracted_path_text_lossy": study.extracted_path.as_deref().map(|path| trace_sensitive_text(&path.to_string_lossy()).to_json()),
+                    "viewer_paths": study.viewer_paths.iter().map(|path| TraceValue::path(path).to_json()).collect::<Vec<_>>(),
+                    "html_viewer_path": study.html_viewer_path.as_deref().map(|path| TraceValue::path(path).to_json()),
+                    "warnings": study.warnings.iter().map(|value| trace_sensitive_text(value).to_json()).collect::<Vec<_>>(),
+                    "study_instance_uid": study.study_instance_uid.as_deref().map(trace_sensitive_text).map(|value| value.to_json()),
+                    "study_date": study.study_date.as_deref().map(trace_sensitive_text).map(|value| value.to_json()),
+                    "study_description": study.study_description.as_deref().map(trace_sensitive_text).map(|value| value.to_json()),
+                    "instance_count": study.instance_count,
+                    "support_paths": study.support_paths.iter().map(|path| TraceValue::path(path).to_json()).collect::<Vec<_>>(),
+                })
+            })
+            .collect(),
+    ))
+}
 
 /// Riepilogo della generazione dell'archivio SQLite di una persona.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -32,10 +179,17 @@ pub struct DatabaseBuildResult {
 /// Restituisce il percorso dell'archivio generato per una persona.
 #[must_use]
 pub fn database_path(person: &PersonConfig) -> PathBuf {
-    person
-        .local_build
-        .join("database")
-        .join("medical_archive.db")
+    trace_database_call!(
+        "database::database_path",
+        [TraceField::new(
+            "local_build",
+            TraceValue::path(&person.local_build)
+        )],
+        person
+            .local_build
+            .join("database")
+            .join("medical_archive.db")
+    )
 }
 
 /// Costruisce un database nuovo e completo, sostituendo l'artefatto solo a commit riuscito.
@@ -46,50 +200,110 @@ pub fn build_database(
     dicom_studies: &[DicomStudy],
     extracted_text: &[ExtractedText],
 ) -> Result<DatabaseBuildResult, OperationError> {
-    let path = database_path(person);
-    let parent = path
-        .parent()
-        .expect("il database ha una directory genitore");
-    fs::create_dir_all(parent).map_err(|error| {
-        database_error(format!(
-            "creazione directory SQLite {}: {error}",
-            parent.display()
-        ))
-    })?;
-    let mut stage = DatabaseStage::new(&path);
-    {
-        let mut connection = Connection::open(&stage.path).map_err(|error| {
-            database_error(format!("apertura database SQLite temporaneo: {error}"))
-        })?;
-        connection
-            .pragma_update(None, "foreign_keys", "ON")
-            .map_err(|error| database_error(format!("attivazione foreign key SQLite: {error}")))?;
-        let transaction = connection
-            .transaction()
-            .map_err(|error| database_error(format!("inizio transazione SQLite: {error}")))?;
-        transaction
-            .execute_batch(SCHEMA)
-            .map_err(|error| database_error(format!("creazione schema SQLite: {error}")))?;
-        insert_documents(&transaction, documents, extracted_text)?;
-        insert_metadata(&transaction, metadata)?;
-        insert_dicom(&transaction, dicom_studies)?;
-        transaction
-            .commit()
-            .map_err(|error| database_error(format!("commit transazione SQLite: {error}")))?;
-    }
-    fs::rename(&stage.path, &path).map_err(|error| {
-        database_error(format!(
-            "finalizzazione database {}: {error}",
-            path.display()
-        ))
-    })?;
-    stage.committed = true;
-    Ok(DatabaseBuildResult {
-        path,
-        documents: documents.len(),
-        timeline_events: metadata.timeline_events.len(),
-        dicom_studies: dicom_studies.len(),
-    })
+    trace_database_call!(
+        "database::build_database",
+        [
+            TraceField::new("person_id", trace_sensitive_text(&person.id)),
+            TraceField::new("database_path", TraceValue::path(&database_path(person))),
+            TraceField::new("documents", trace_documents(documents)),
+            TraceField::new(
+                "curated_metadata",
+                trace_sensitive_text(&format!("{metadata:#?}"))
+            ),
+            TraceField::new("dicom_studies", trace_studies(dicom_studies)),
+            TraceField::new(
+                "extracted_text",
+                trace_sensitive_text(&format!("{extracted_text:#?}"))
+            ),
+            TraceField::new("sqlite_schema", TraceValue::data(SCHEMA)),
+            TraceField::new(
+                "sqlite_runtime_state",
+                TraceValue::Omitted(TraceOmission::ExternalComponent)
+            ),
+        ],
+        result trace_database_build_result,
+        build_database_impl(person, documents, metadata, dicom_studies, extracted_text)
+    )
+}
+
+fn build_database_impl(
+    person: &PersonConfig,
+    documents: &[DocumentRecord],
+    metadata: &CuratedMetadata,
+    dicom_studies: &[DicomStudy],
+    extracted_text: &[ExtractedText],
+) -> Result<DatabaseBuildResult, OperationError> {
+    trace_database_call!(
+        "database::build_database_impl",
+        [
+            TraceField::new("person_id", trace_sensitive_text(&person.id)),
+            TraceField::new("database_path", TraceValue::path(&database_path(person))),
+            TraceField::new("documents", trace_documents(documents)),
+            TraceField::new(
+                "curated_metadata",
+                trace_sensitive_text(&format!("{metadata:#?}"))
+            ),
+            TraceField::new("dicom_studies", trace_studies(dicom_studies)),
+            TraceField::new(
+                "extracted_text",
+                trace_sensitive_text(&format!("{extracted_text:#?}"))
+            ),
+            TraceField::new("sqlite_schema", TraceValue::data(SCHEMA)),
+            TraceField::new(
+                "sqlite_runtime_state",
+                TraceValue::Omitted(TraceOmission::ExternalComponent)
+            ),
+        ],
+        result trace_database_build_result,
+        {
+            let path = database_path(person);
+            let parent = path
+                .parent()
+                .expect("il database ha una directory genitore");
+            fs::create_dir_all(parent).map_err(|error| {
+                database_error(format!(
+                    "creazione directory SQLite {}: {error}",
+                    parent.display()
+                ))
+            })?;
+            let mut stage = DatabaseStage::new(&path);
+            {
+                let mut connection = Connection::open(&stage.path).map_err(|error| {
+                    database_error(format!("apertura database SQLite temporaneo: {error}"))
+                })?;
+                connection
+                    .pragma_update(None, "foreign_keys", "ON")
+                    .map_err(|error| {
+                        database_error(format!("attivazione foreign key SQLite: {error}"))
+                    })?;
+                let transaction = connection.transaction().map_err(|error| {
+                    database_error(format!("inizio transazione SQLite: {error}"))
+                })?;
+                transaction
+                    .execute_batch(SCHEMA)
+                    .map_err(|error| database_error(format!("creazione schema SQLite: {error}")))?;
+                insert_documents(&transaction, documents, extracted_text)?;
+                insert_metadata(&transaction, metadata)?;
+                insert_dicom(&transaction, dicom_studies)?;
+                transaction.commit().map_err(|error| {
+                    database_error(format!("commit transazione SQLite: {error}"))
+                })?;
+            }
+            fs::rename(&stage.path, &path).map_err(|error| {
+                database_error(format!(
+                    "finalizzazione database {}: {error}",
+                    path.display()
+                ))
+            })?;
+            stage.committed = true;
+            Ok(DatabaseBuildResult {
+                path,
+                documents: documents.len(),
+                timeline_events: metadata.timeline_events.len(),
+                dicom_studies: dicom_studies.len(),
+            })
+        }
+    )
 }
 
 struct DatabaseStage {
@@ -97,28 +311,66 @@ struct DatabaseStage {
     committed: bool,
 }
 
+/// Gestisce il file temporaneo usato per costruire il database.
 impl DatabaseStage {
     fn new(database_path: &Path) -> Self {
-        let sequence = BUILD_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-        let file_name = database_path
-            .file_name()
-            .expect("il database ha un nome file")
-            .to_string_lossy();
-        let path = database_path.with_file_name(format!(
-            ".{file_name}.building-{}-{sequence}",
-            std::process::id()
-        ));
-        Self {
-            path,
-            committed: false,
-        }
+        trace_database_call!(
+            "database::DatabaseStage::new",
+            [TraceField::new(
+                "database_path",
+                TraceValue::path(database_path)
+            )],
+            {
+                let sequence = BUILD_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+                let file_name = database_path
+                    .file_name()
+                    .expect("il database ha un nome file")
+                    .to_string_lossy();
+                let path = database_path.with_file_name(format!(
+                    ".{file_name}.building-{}-{sequence}",
+                    std::process::id()
+                ));
+                Self {
+                    path,
+                    committed: false,
+                }
+            }
+        )
     }
 }
 
+/// Serializza il percorso temporaneo e lo stato di commit.
+impl DatabaseTraceOutput for DatabaseStage {
+    fn trace_value(&self) -> TraceValue {
+        TraceValue::record(&[
+            TraceField::new("path", TraceValue::path(&self.path)),
+            TraceField::new("committed", TraceValue::data(self.committed)),
+        ])
+    }
+}
+
+/// Rimuove il file temporaneo se la build non è stata completata.
 impl Drop for DatabaseStage {
     fn drop(&mut self) {
-        if !self.committed {
-            let _ = fs::remove_file(&self.path);
+        let trace = trace_current(LogComponent::Core, "database::DatabaseStage::drop", || {
+            vec![
+                TraceField::new("path", TraceValue::path(&self.path)),
+                TraceField::new("committed", TraceValue::data(self.committed)),
+            ]
+        });
+        let cleanup_result = if !self.committed {
+            Some(fs::remove_file(&self.path).is_ok())
+        } else {
+            None
+        };
+        if let Some(trace) = trace {
+            let _ = trace.finish(TraceValue::record(&[
+                TraceField::new(
+                    "cleanup_attempted",
+                    TraceValue::data(cleanup_result.is_some()),
+                ),
+                TraceField::new("cleanup_succeeded", TraceValue::data(cleanup_result)),
+            ]));
         }
     }
 }
@@ -128,107 +380,186 @@ fn insert_documents(
     documents: &[DocumentRecord],
     extracted_text: &[ExtractedText],
 ) -> Result<(), OperationError> {
-    let mut document_by_id = HashMap::with_capacity(documents.len());
-    for document in documents {
-        if let Some(previous) = document_by_id.insert(document.document_id.as_str(), document) {
-            return Err(database_error(format!(
-                "ID documento SQLite duplicato {} tra {} e {}; conflitto rilevato prima dell'inserimento",
-                document.document_id,
-                document_location(previous),
-                document_location(document)
-            )));
-        }
-    }
-    let text_by_document_id: HashMap<_, _> = extracted_text
-        .iter()
-        .filter(|item| !item.text.is_empty())
-        .map(|item| (item.document_id.as_str(), item.text.as_str()))
-        .collect();
-    for document in documents {
-        connection
-            .execute(
-                "INSERT INTO documents (
+    trace_database_call!(
+        "database::insert_documents",
+        [
+            TraceField::new("documents", trace_documents(documents)),
+            TraceField::new(
+                "extracted_text",
+                trace_sensitive_text(&format!("{extracted_text:#?}"))
+            ),
+            TraceField::new(
+                "sqlite_connection",
+                TraceValue::Omitted(TraceOmission::ExternalComponent)
+            ),
+        ],
+        insert_documents_impl(connection, documents, extracted_text)
+    )
+}
+
+fn insert_documents_impl(
+    connection: &Connection,
+    documents: &[DocumentRecord],
+    extracted_text: &[ExtractedText],
+) -> Result<(), OperationError> {
+    trace_database_call!(
+        "database::insert_documents_impl",
+        [
+            TraceField::new("documents", trace_documents(documents)),
+            TraceField::new(
+                "extracted_text",
+                trace_sensitive_text(&format!("{extracted_text:#?}"))
+            ),
+            TraceField::new(
+                "sqlite_connection",
+                TraceValue::Omitted(TraceOmission::ExternalComponent)
+            ),
+        ],
+        {
+            let mut document_by_id = HashMap::with_capacity(documents.len());
+            for document in documents {
+                if let Some(previous) =
+                    document_by_id.insert(document.document_id.as_str(), document)
+                {
+                    return Err(database_error(format!(
+                        "ID documento SQLite duplicato {} tra {} e {}; conflitto rilevato prima dell'inserimento",
+                        document.document_id,
+                        document_location(previous),
+                        document_location(document)
+                    )));
+                }
+            }
+            let text_by_document_id: HashMap<_, _> = extracted_text
+                .iter()
+                .filter(|item| !item.text.is_empty())
+                .map(|item| (item.document_id.as_str(), item.text.as_str()))
+                .collect();
+            for document in documents {
+                connection
+                    .execute(
+                        "INSERT INTO documents (
                     id, patient_id, path, title, category, kind, sha256,
                     document_date, series, origin, container_id, internal_path
                  ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
-                params![
-                    document.document_id,
-                    document.patient_id,
-                    document.path.to_string_lossy().as_ref(),
-                    document.title,
-                    document.category,
-                    document.kind,
-                    document.sha256,
-                    document.date,
-                    document.series,
-                    document.origin,
-                    document.container_id,
-                    document.internal_path,
-                ],
-            )
-            .map_err(|error| {
-                database_error(format!(
-                    "inserimento documento SQLite {} (id {}): {error}",
-                    document_location(document),
-                    document.document_id
-                ))
-            })?;
-        let row_id = connection.last_insert_rowid();
-        let text = text_by_document_id
-            .get(document.document_id.as_str())
-            .copied()
-            .unwrap_or_default();
-        if !text.is_empty() {
-            connection
-                .execute(
-                    "INSERT INTO document_text(document_id, text) VALUES (?1, ?2)",
-                    params![document.document_id, text],
-                )
-                .map_err(|error| {
-                    database_error(format!("inserimento testo estratto SQLite: {error}"))
-                })?;
-        }
-        connection
-            .execute(
-                "INSERT INTO document_fts(rowid, title, category, tags, text)
+                        params![
+                            document.document_id,
+                            document.patient_id,
+                            document.path.to_string_lossy().as_ref(),
+                            document.title,
+                            document.category,
+                            document.kind,
+                            document.sha256,
+                            document.date,
+                            document.series,
+                            document.origin,
+                            document.container_id,
+                            document.internal_path,
+                        ],
+                    )
+                    .map_err(|error| {
+                        database_error(format!(
+                            "inserimento documento SQLite {} (id {}): {error}",
+                            document_location(document),
+                            document.document_id
+                        ))
+                    })?;
+                let row_id = connection.last_insert_rowid();
+                let text = text_by_document_id
+                    .get(document.document_id.as_str())
+                    .copied()
+                    .unwrap_or_default();
+                if !text.is_empty() {
+                    connection
+                        .execute(
+                            "INSERT INTO document_text(document_id, text) VALUES (?1, ?2)",
+                            params![document.document_id, text],
+                        )
+                        .map_err(|error| {
+                            database_error(format!("inserimento testo estratto SQLite: {error}"))
+                        })?;
+                }
+                connection
+                    .execute(
+                        "INSERT INTO document_fts(rowid, title, category, tags, text)
                  VALUES (?1, ?2, ?3, ?4, ?5)",
-                params![
-                    row_id,
-                    document.title,
-                    document.category,
-                    document.tags.join(" "),
-                    text,
-                ],
-            )
-            .map_err(|error| database_error(format!("indicizzazione documento FTS5: {error}")))?;
-    }
-    Ok(())
+                        params![
+                            row_id,
+                            document.title,
+                            document.category,
+                            document.tags.join(" "),
+                            text,
+                        ],
+                    )
+                    .map_err(|error| {
+                        database_error(format!("indicizzazione documento FTS5: {error}"))
+                    })?;
+            }
+            Ok(())
+        }
+    )
 }
 
 fn document_location(document: &DocumentRecord) -> String {
-    match (&document.container_id, &document.internal_path) {
-        (Some(container_id), Some(internal_path)) => format!(
-            "{} (membro {internal_path} del contenitore {container_id})",
-            document.path.display()
-        ),
-        _ => document.path.display().to_string(),
-    }
+    trace_database_call!(
+        "database::document_location",
+        [TraceField::new("document", trace_document(document))],
+        match (&document.container_id, &document.internal_path) {
+            (Some(container_id), Some(internal_path)) => format!(
+                "{} (membro {internal_path} del contenitore {container_id})",
+                document.path.display()
+            ),
+            _ => document.path.display().to_string(),
+        }
+    )
 }
 
 fn insert_metadata(
     connection: &Connection,
     metadata: &CuratedMetadata,
 ) -> Result<(), OperationError> {
-    for item in &metadata.problems {
-        connection
-            .execute(
-                "INSERT INTO problems(id, title, status) VALUES (?1, ?2, ?3)",
-                params![item.id, item.title, item.status],
-            )
-            .map_err(|error| database_error(format!("inserimento problema: {error}")))?;
-    }
-    for item in &metadata.medications {
-        connection
+    trace_database_call!(
+        "database::insert_metadata",
+        [
+            TraceField::new(
+                "curated_metadata",
+                trace_sensitive_text(&format!("{metadata:#?}"))
+            ),
+            TraceField::new(
+                "sqlite_connection",
+                TraceValue::Omitted(TraceOmission::ExternalComponent)
+            ),
+        ],
+        insert_metadata_impl(connection, metadata)
+    )
+}
+
+fn insert_metadata_impl(
+    connection: &Connection,
+    metadata: &CuratedMetadata,
+) -> Result<(), OperationError> {
+    trace_database_call!(
+        "database::insert_metadata_impl",
+        [
+            TraceField::new(
+                "curated_metadata",
+                trace_sensitive_text(&format!("{metadata:#?}"))
+            ),
+            TraceField::new(
+                "sqlite_connection",
+                TraceValue::Omitted(TraceOmission::ExternalComponent)
+            ),
+        ],
+        {
+            for item in &metadata.problems {
+                connection
+                    .execute(
+                        "INSERT INTO problems(id, title, status) VALUES (?1, ?2, ?3)",
+                        params![item.id, item.title, item.status],
+                    )
+                    .map_err(|error| database_error(format!("inserimento problema: {error}")))?;
+            }
+            for item in &metadata.medications {
+                connection
             .execute(
                 "INSERT INTO medications(id, name, active_ingredient, form, strength_per_unit)
              VALUES (?1, ?2, ?3, ?4, ?5)",
@@ -241,31 +572,31 @@ fn insert_metadata(
                 ],
             )
             .map_err(|error| database_error(format!("inserimento farmaco: {error}")))?;
-    }
-    for item in &metadata.therapies {
-        connection.execute(
+            }
+            for item in &metadata.therapies {
+                connection.execute(
             "INSERT INTO therapies(id, medication_id, start_date, end_date, dosage, role, schedule, instructions)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             params![item.id, item.medication_id, item.start_date, item.end_date, item.dosage,
                 item.role, item.schedule.join(","), item.instructions],
         ).map_err(|error| database_error(format!("inserimento terapia: {error}")))?;
-    }
-    for item in &metadata.procedures {
-        connection
+            }
+            for item in &metadata.procedures {
+                connection
             .execute(
                 "INSERT INTO procedures(id, title, procedure_date, status) VALUES (?1, ?2, ?3, ?4)",
                 params![item.id, item.title, item.date, item.status],
             )
             .map_err(|error| database_error(format!("inserimento procedura: {error}")))?;
-    }
-    for item in &metadata.observations {
-        connection.execute(
+            }
+            for item in &metadata.observations {
+                connection.execute(
             "INSERT INTO observations(id, kind, value, observation_date) VALUES (?1, ?2, ?3, ?4)",
             params![item.id, item.kind, item.value, item.date],
         ).map_err(|error| database_error(format!("inserimento osservazione: {error}")))?;
-    }
-    for item in &metadata.observation_series {
-        connection.execute(
+            }
+            for item in &metadata.observation_series {
+                connection.execute(
             "INSERT INTO observation_series(id, name, value_type, unit, description,
              warn_duplicate_same_day, synonyms, parameter_rule_id, parameter_rule_version,
              parameter_rule_digest, unit_variant) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
@@ -274,11 +605,11 @@ fn insert_metadata(
                 item.parameter_rule_id, item.parameter_rule_version,
                 item.parameter_rule_digest, item.unit_variant],
         ).map_err(|error| database_error(format!("inserimento serie osservazioni: {error}")))?;
-    }
-    for item in &metadata.observation_points {
-        connection
-            .execute(
-                "INSERT INTO observation_points(
+            }
+            for item in &metadata.observation_points {
+                connection
+                    .execute(
+                        "INSERT INTO observation_points(
                 id, series_id, observation_date, source_type, source_reference,
                 numeric_value, text_value, systolic, diastolic, pulse, note,
                 source_kind, document_id, document_href, document_title,
@@ -290,45 +621,47 @@ fn insert_metadata(
                 ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16,
                 ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31, ?32
              )",
-                params![
-                    item.id,
-                    item.series_id,
-                    item.observation_date,
-                    item.source_type,
-                    item.source_reference,
-                    item.numeric_value,
-                    item.text_value,
-                    item.systolic,
-                    item.diastolic,
-                    item.pulse,
-                    item.note,
-                    item.source_kind,
-                    item.document_id,
-                    item.document_href,
-                    item.document_title,
-                    item.document_category,
-                    item.source_text_digest,
-                    item.original_line,
-                    item.line_number,
-                    item.page_number,
-                    item.character_start,
-                    item.character_end,
-                    item.matched_label,
-                    item.raw_value,
-                    item.parsed_value,
-                    item.raw_unit,
-                    item.normalized_unit,
-                    item.qualifier,
-                    item.rule_id,
-                    item.rule_version,
-                    item.rule_digest,
-                    item.reason_code
-                ],
-            )
-            .map_err(|error| database_error(format!("inserimento punto osservazioni: {error}")))?;
-    }
-    for item in &metadata.timeline_events {
-        connection
+                        params![
+                            item.id,
+                            item.series_id,
+                            item.observation_date,
+                            item.source_type,
+                            item.source_reference,
+                            item.numeric_value,
+                            item.text_value,
+                            item.systolic,
+                            item.diastolic,
+                            item.pulse,
+                            item.note,
+                            item.source_kind,
+                            item.document_id,
+                            item.document_href,
+                            item.document_title,
+                            item.document_category,
+                            item.source_text_digest,
+                            item.original_line,
+                            item.line_number,
+                            item.page_number,
+                            item.character_start,
+                            item.character_end,
+                            item.matched_label,
+                            item.raw_value,
+                            item.parsed_value,
+                            item.raw_unit,
+                            item.normalized_unit,
+                            item.qualifier,
+                            item.rule_id,
+                            item.rule_version,
+                            item.rule_digest,
+                            item.reason_code
+                        ],
+                    )
+                    .map_err(|error| {
+                        database_error(format!("inserimento punto osservazioni: {error}"))
+                    })?;
+            }
+            for item in &metadata.timeline_events {
+                connection
             .execute(
                 "INSERT INTO timeline_events(id, title, start_date, end_date, source, links)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
@@ -342,22 +675,51 @@ fn insert_metadata(
                 ],
             )
             .map_err(|error| database_error(format!("inserimento evento cronologia: {error}")))?;
-    }
-    Ok(())
+            }
+            Ok(())
+        }
+    )
 }
 
 fn insert_dicom(connection: &Connection, studies: &[DicomStudy]) -> Result<(), OperationError> {
-    for study in studies {
-        let viewer_count = i64::try_from(study.viewer_paths.len()).map_err(|error| {
-            database_error(format!("conteggio viewer DICOM fuori intervallo: {error}"))
-        })?;
-        let warning_count = i64::try_from(study.warnings.len()).map_err(|error| {
-            database_error(format!("conteggio avvisi DICOM fuori intervallo: {error}"))
-        })?;
-        let instance_count = i64::try_from(study.instance_count).map_err(|error| {
-            database_error(format!("conteggio istanze DICOM fuori intervallo: {error}"))
-        })?;
-        connection.execute(
+    trace_database_call!(
+        "database::insert_dicom",
+        [
+            TraceField::new("dicom_studies", trace_studies(studies)),
+            TraceField::new(
+                "sqlite_connection",
+                TraceValue::Omitted(TraceOmission::ExternalComponent)
+            ),
+        ],
+        insert_dicom_impl(connection, studies)
+    )
+}
+
+fn insert_dicom_impl(
+    connection: &Connection,
+    studies: &[DicomStudy],
+) -> Result<(), OperationError> {
+    trace_database_call!(
+        "database::insert_dicom_impl",
+        [
+            TraceField::new("dicom_studies", trace_studies(studies)),
+            TraceField::new(
+                "sqlite_connection",
+                TraceValue::Omitted(TraceOmission::ExternalComponent)
+            ),
+        ],
+        {
+            for study in studies {
+                let viewer_count = i64::try_from(study.viewer_paths.len()).map_err(|error| {
+                    database_error(format!("conteggio viewer DICOM fuori intervallo: {error}"))
+                })?;
+                let warning_count = i64::try_from(study.warnings.len()).map_err(|error| {
+                    database_error(format!("conteggio avvisi DICOM fuori intervallo: {error}"))
+                })?;
+                let instance_count = i64::try_from(study.instance_count).map_err(|error| {
+                    database_error(format!("conteggio istanze DICOM fuori intervallo: {error}"))
+                })?;
+                connection.execute(
             "INSERT INTO dicom_studies(id, patient_id, support_path, support_kind, extracted_path,
              viewer_count, warning_count, study_instance_uid, study_date, study_description, instance_count)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
@@ -366,12 +728,18 @@ fn insert_dicom(connection: &Connection, studies: &[DicomStudy]) -> Result<(), O
                 viewer_count, warning_count, study.study_instance_uid, study.study_date,
                 study.study_description, instance_count],
         ).map_err(|error| database_error(format!("inserimento studio DICOM: {error}")))?;
-    }
-    Ok(())
+            }
+            Ok(())
+        }
+    )
 }
 
 fn database_error(message: String) -> OperationError {
-    OperationError::new(ErrorCode::Configuration, message)
+    trace_database_call!(
+        "database::database_error",
+        [TraceField::new("message", trace_sensitive_text(&message))],
+        OperationError::new(ErrorCode::Configuration, message)
+    )
 }
 
 const SCHEMA: &str = r#"

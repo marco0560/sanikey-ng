@@ -1,5 +1,6 @@
 //! Shared optional path validation for configuration sections.
 
+use super::super::trace::{trace_config_call, trace_optional_path_result, trace_toml_table};
 use super::super::validation::{error, resolve_path};
 use crate::operation::OperationError;
 use std::path::{Path, PathBuf};
@@ -12,6 +13,7 @@ pub(in crate::config) fn optional_path(
     base_dir: &Path,
     default: Option<&Path>,
 ) -> Result<Option<PathBuf>, OperationError> {
+    trace_config_call!("config::optional_path", ["field" => &field, "context" => &context], paths ["base_dir" => base_dir], fields ["table" => trace_toml_table(table), "default_native_path" => super::super::trace::trace_optional_path(default)], result_paths trace_optional_path_result, || {
     let Some(value) = table.get(field) else {
         return Ok(default.map(Path::to_path_buf));
     };
@@ -33,4 +35,5 @@ pub(in crate::config) fn optional_path(
         )));
     }
     Ok(Some(path))
+    })
 }

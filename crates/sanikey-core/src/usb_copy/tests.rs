@@ -1,10 +1,15 @@
+//! Fixture sintetiche per la copia verificata delle immagini USB.
+
 #[cfg(target_os = "linux")]
 use super::mirror_validated_txt_image_on_linux_volume;
-use super::{mirror_directory, mirror_validated_txt_image, resolve_path};
+
+use super::{mirror_directory, mirror_validated_txt_image, resolve_path, trace_error};
 use crate::config::{
     AccountsConfig, IngestionConfig, PersonConfig, SearchConfig, UiConfig, UsbConfig,
 };
-use crate::operation::{CancellationToken, OperationEvent, OperationOutcome, OperationPhase};
+use crate::operation::{
+    CancellationToken, ErrorCode, OperationError, OperationEvent, OperationOutcome, OperationPhase,
+};
 use crate::simulated_export::{export_txt_simulation, validate_txt_simulation};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -14,6 +19,7 @@ static NEXT_DIRECTORY: AtomicUsize = AtomicUsize::new(0);
 
 struct TestDirectory(PathBuf);
 
+/// Gestisce directory sorgente e destinazione temporanee dei test USB.
 impl TestDirectory {
     fn new() -> Self {
         let id = NEXT_DIRECTORY.fetch_add(1, Ordering::Relaxed);
@@ -24,6 +30,7 @@ impl TestDirectory {
     }
 }
 
+/// Pulisce le directory temporanee create dalle fixture.
 impl Drop for TestDirectory {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.0);
@@ -344,4 +351,118 @@ fn rejects_source_target_overlap() {
         .to_path_buf();
     let parent = mirror_directory(&source, &target_parent, &CancellationToken::default());
     assert!(matches!(parent.outcome, OperationOutcome::Failed(_)));
+}
+
+#[test]
+fn synthetic_trace_records_copy_boundaries_and_events_omit_file_data() {
+    use crate::logging::{Component, Level, Session};
+
+    let temp = TestDirectory::new();
+    let source = temp.0.join("synthetic-source");
+    fs::create_dir_all(source.join("nested")).expect("albero sintetico");
+    fs::write(
+        source.join("nested/private-synthetic.txt"),
+        b"synthetic private payload",
+    )
+    .expect("contenuto sintetico");
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStringExt;
+        fs::write(
+            source.join(std::ffi::OsString::from_vec(
+                b"non-unicode-\xff.bin".to_vec(),
+            )),
+            [3_u8, 5, 8],
+        )
+        .expect("file con nome non Unicode");
+    }
+
+    for (suffix, level) in [("events", Level::Events), ("trace", Level::Trace)] {
+        let logs = temp.0.join(format!("logs-{suffix}"));
+        let (session, log_path) =
+            Session::create_in_directory_with_level(&logs, Component::Core, level)
+                .expect("sessione sintetica");
+        let target = temp.0.join(format!("target-{suffix}"));
+        let result =
+            session.scoped(|| mirror_directory(&source, &target, &CancellationToken::default()));
+        assert!(matches!(result.outcome, OperationOutcome::Succeeded(_)));
+        assert_eq!(read_tree(&source), read_tree(&target));
+        drop(session);
+
+        let log = fs::read_to_string(log_path).expect("log sintetico");
+        if level == Level::Trace {
+            assert!(log.contains("usb_copy::mirror_directory"));
+            assert!(log.contains("usb_copy::mirror_directory_inner"));
+            assert!(log.contains("usb_copy::collect_source_tree"));
+            assert!(log.contains("usb_copy::copy_file_atomically"));
+            assert!(log.contains("usb_copy::sha256_file"));
+            assert!(log.contains("private-synthetic.txt"));
+            assert!(log.contains("expected_sha256"));
+            assert!(log.contains("bytes_copied"));
+            assert!(log.contains("file_contents_read"));
+            assert!(log.contains("transferred_contents"));
+            assert!(log.contains("external_component"));
+            let payload_bytes = b"synthetic private payload"
+                .iter()
+                .map(u8::to_string)
+                .collect::<Vec<_>>()
+                .join(",");
+            assert!(log.contains(&format!("[{payload_bytes}]")));
+            assert!(!log.contains("synthetic private payload"));
+            #[cfg(unix)]
+            {
+                assert!(log.contains("unix_bytes"));
+                assert!(log.contains("255"));
+            }
+        } else {
+            assert!(!log.contains("function_enter"));
+            assert!(!log.contains("private-synthetic.txt"));
+            assert!(!log.contains("synthetic private payload"));
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn validated_copy_trace_redacts_secret_assignments_in_config_debug() {
+    use crate::logging::{Component, Level, Session};
+
+    let temp = TestDirectory::new();
+    let mut configured_person = person(&temp.0);
+    configured_person.local_build = temp.0.join("generated/api_key=synthetic-usb-config-secret");
+    let config = accounts_config(&configured_person);
+    let (session, log_path) = Session::create_in_directory_with_level(
+        &temp.0.join("logs"),
+        Component::Core,
+        Level::Trace,
+    )
+    .expect("sessione log sintetica");
+
+    let result = session.scoped(|| {
+        mirror_validated_txt_image_on_linux_volume(
+            &config,
+            temp.0.join("missing-source"),
+            temp.0.join("missing-target"),
+            &CancellationToken::default(),
+        )
+    });
+    assert!(matches!(result.outcome, OperationOutcome::Failed(_)));
+    drop(session);
+
+    let contents = fs::read_to_string(log_path).expect("log sintetico");
+    assert!(contents.contains("Persona sintetica"));
+    assert!(contents.contains("secret_omitted"));
+    assert!(!contents.contains("synthetic-usb-config-secret"));
+}
+
+#[test]
+fn error_trace_redacts_known_assignments_and_keeps_other_private_message_text() {
+    let original = "password = synthetic-usb-secret\npercorso privato sintetico";
+    let error = OperationError::new(ErrorCode::Usb, original);
+    let projection = trace_error(&error).to_json().to_string();
+
+    assert!(!projection.contains("synthetic-usb-secret"));
+    assert!(projection.contains("secret_omitted"));
+    assert!(projection.contains("percorso privato sintetico"));
+    assert_eq!(error.message(), original);
 }
