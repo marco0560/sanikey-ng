@@ -1,6 +1,6 @@
 //! Fixture sintetiche per la generazione degli export.
 
-use super::{generate_exports, render_markdown, write_json, write_script};
+use super::{generate_exports, render_markdown, write_bytes, write_json, write_script};
 use crate::config::{IngestionConfig, PersonConfig, SearchConfig, SearchDictionary, UiConfig};
 use crate::dicom::DicomStudy;
 use crate::logging::{Component, Level, Session};
@@ -10,7 +10,7 @@ use crate::metadata::{
     TherapyEpisode,
 };
 use crate::operation::{ErrorCode, OperationError};
-use serde_json::Value;
+use serde_json::{Value, json};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -76,6 +76,65 @@ fn document(person: &PersonConfig, name: &str) -> DocumentRecord {
         container_id: None,
         internal_path: None,
     }
+}
+
+fn expected_data(value: Value) -> Value {
+    json!({"kind": "data", "value": value})
+}
+
+fn expected_path(path: &Path) -> Value {
+    expected_data(json!({
+        "encoding": "utf8",
+        "value": path.to_str().expect("percorso UTF-8 sintetico"),
+    }))
+}
+
+fn expected_text(value: &str) -> Value {
+    let value = value.replace(
+        "password = synthetic-export-trace-secret",
+        "password = [secret_omitted]",
+    );
+    let value = value.replace(
+        "api_key = synthetic-export-trace-secret",
+        "api_key = [secret_omitted]",
+    );
+    expected_data(json!({
+        "format": "text_redacted_known_secret_assignments",
+        "value": value,
+    }))
+}
+
+fn assert_export_span(
+    records: &[Value],
+    function: &str,
+    arguments: Value,
+    result: Value,
+    parent_call_id: Option<u64>,
+) -> u64 {
+    let entries: Vec<_> = records
+        .iter()
+        .filter(|record| record["type"] == "function_enter" && record["function"] == function)
+        .collect();
+    assert_eq!(entries.len(), 1, "una sola entrata per {function}");
+    assert_eq!(
+        entries[0]["arguments"], arguments,
+        "argomenti di {function}"
+    );
+    let call_id = entries[0]["call_id"].as_u64().expect("call_id numerico");
+    assert_eq!(entries[0]["parent_call_id"].as_u64(), parent_call_id);
+    let exits: Vec<_> = records
+        .iter()
+        .filter(|record| {
+            record["type"] == "function_exit"
+                && record["function"] == function
+                && record["call_id"] == call_id
+        })
+        .collect();
+    assert_eq!(exits.len(), 1, "una sola uscita correlata per {function}");
+    assert_eq!(exits[0]["outcome"], "returned");
+    assert_eq!(exits[0]["result"], result, "risultato di {function}");
+    assert!(exits[0]["duration_ms"].as_u64().is_some());
+    call_id
 }
 
 #[test]
@@ -887,4 +946,167 @@ fn markdown_exports_remove_unsafe_link_and_image_destinations() {
         render_markdown("[safe](https://example.test)"),
         "<p><a href=\"https://example.test\">safe</a></p>\n"
     );
+}
+
+#[test]
+fn synthetic_export_spans_match_complete_arguments_results_and_binary_omission() {
+    let directory = TestDirectory::new();
+    let binary_path = directory.path().join("nested/output.bin");
+    let source_text = "Synthetic password = synthetic-export-trace-secret; retained";
+    let api_text = "api_key = synthetic-export-trace-secret; retained";
+    let fields = vec![
+        ("Visible", json!("ordinary text")),
+        ("Secret", json!(api_text)),
+        ("Empty", json!("")),
+        ("Null", Value::Null),
+        ("Count", json!(3)),
+    ];
+    let leaflet = MedicationLeaflet {
+        medication_id: "med-synthetic".to_owned(),
+        codice_sis: "SIS-7".to_owned(),
+        aic6: "AIC-8".to_owned(),
+        downloaded_at: None,
+        source_fingerprint: None,
+    };
+    let bytes = [0x00, 0xff, 0x80];
+    let (session, log_path) = Session::create_in_directory_with_level(
+        &directory.path().join("logs"),
+        Component::Core,
+        Level::Trace,
+    )
+    .expect("sessione trace sintetica");
+    let returned = session.scoped(|| {
+        let joined = super::join_present(["Synthetic", source_text, "", "detail"]);
+        let visible = super::visible_fields(fields.clone());
+        let number = super::format_number(42.5);
+        let url = super::aifa_url(&leaflet, "FI");
+        let unsafe_url = super::unsafe_markdown_url("  JAVASCRIPT:alert(1) ", false);
+        let escaped = super::escape_html(
+            "Private <detail> & api_key = synthetic-export-trace-secret; retained",
+        );
+        write_bytes(&binary_path, &bytes).expect("scrittura binaria sintetica");
+        (joined, visible, number, url, unsafe_url, escaped, ())
+    });
+    assert_eq!(returned.0, format!("Synthetic {source_text} detail"));
+    assert_eq!(returned.1.len(), 3);
+    assert_eq!(returned.2, "42.5");
+    assert_eq!(
+        returned.3,
+        "https://api.aifa.gov.it/aifa-bdf-eif-be/1.0.0/organizzazione/SIS-7/farmaci/AIC-8/stampati?ts=FI"
+    );
+    assert!(returned.4);
+    assert_eq!(
+        returned.5,
+        "Private &lt;detail&gt; &amp; api_key = synthetic-export-trace-secret; retained"
+    );
+    assert_eq!(returned.6, ());
+    assert_eq!(fs::read(&binary_path).expect("byte scritti"), bytes);
+    drop(session);
+
+    let records: Vec<Value> = fs::read_to_string(log_path)
+        .expect("log export sintetico")
+        .lines()
+        .map(|line| serde_json::from_str(line).expect("JSON valido"))
+        .collect();
+    let secret_text = "Synthetic password = [secret_omitted]; retained";
+    let api_text_redacted = "api_key = [secret_omitted]; retained";
+    let join_id = assert_export_span(
+        &records,
+        "exports::join_present",
+        json!([{"name": "parts", "content": expected_data(json!([
+            "Synthetic",
+            "Synthetic password = [secret_omitted]; retained",
+            "",
+            "detail",
+        ]))}]),
+        expected_text(&format!("Synthetic {secret_text} detail")),
+        None,
+    );
+    let visible_id = assert_export_span(
+        &records,
+        "exports::visible_fields",
+        json!([{"name": "fields", "content": expected_data(json!([
+            ["Visible", "ordinary text"],
+            ["Secret", "api_key = [secret_omitted]; retained"],
+            ["Empty", ""],
+            ["Null", null],
+            ["Count", 3],
+        ]))}]),
+        expected_data(json!([
+            {"label": "Visible", "value": "ordinary text"},
+            {"label": "Secret", "value": api_text_redacted},
+            {"label": "Count", "value": 3},
+        ])),
+        None,
+    );
+    let number_id = assert_export_span(
+        &records,
+        "exports::format_number",
+        json!([{"name": "value", "content": expected_data(json!(42.5))}]),
+        expected_text("42.5"),
+        None,
+    );
+    let aifa_id = assert_export_span(
+        &records,
+        "exports::aifa_url",
+        json!([
+            {"name": "codice_sis", "content": expected_text("SIS-7")},
+            {"name": "aic6", "content": expected_text("AIC-8")},
+            {"name": "stamp_type", "content": expected_text("FI")},
+        ]),
+        expected_text(&returned.3),
+        None,
+    );
+    let unsafe_id = assert_export_span(
+        &records,
+        "exports::unsafe_markdown_url",
+        json!([
+            {"name": "destination", "content": expected_text("  JAVASCRIPT:alert(1) ")},
+            {"name": "image", "content": expected_data(json!(false))},
+        ]),
+        expected_data(json!(true)),
+        None,
+    );
+    let escape_id = assert_export_span(
+        &records,
+        "exports::escape_html",
+        json!([{"name": "value", "content": expected_text("Private <detail> & api_key = synthetic-export-trace-secret; retained")}]),
+        expected_text(
+            "Private &lt;detail&gt; &amp; api_key = synthetic-export-trace-secret; retained",
+        ),
+        None,
+    );
+    let write_id = assert_export_span(
+        &records,
+        "exports::write_bytes",
+        json!([
+            {"name": "path", "content": expected_path(&binary_path)},
+            {"name": "byte_count", "content": expected_data(json!(3))},
+            {"name": "contents", "content": {"kind": "omitted", "reason": "unsupported_type"}},
+        ]),
+        expected_text("()"),
+        None,
+    );
+    let impl_id = assert_export_span(
+        &records,
+        "exports::write_bytes_impl",
+        json!([
+            {"name": "path", "content": expected_path(&binary_path)},
+            {"name": "byte_count", "content": expected_data(json!(3))},
+            {"name": "contents", "content": {"kind": "omitted", "reason": "unsupported_type"}},
+        ]),
+        expected_text("()"),
+        Some(write_id),
+    );
+    let call_ids = [
+        join_id, visible_id, number_id, aifa_id, unsafe_id, escape_id, write_id, impl_id,
+    ];
+    let mut unique_call_ids = call_ids.to_vec();
+    unique_call_ids.sort_unstable();
+    unique_call_ids.dedup();
+    assert_eq!(unique_call_ids.len(), call_ids.len());
+    let log = serde_json::to_string(&records).expect("records serializzabili");
+    assert!(log.contains("secret_omitted"));
+    assert!(log.contains("unsupported_type"));
+    assert!(!log.contains("synthetic-export-trace-secret"));
 }

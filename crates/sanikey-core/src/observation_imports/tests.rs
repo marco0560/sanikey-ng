@@ -1,10 +1,12 @@
 //! Fixture sintetiche per importazione e aggiornamento delle osservazioni.
 
-use super::{ensure_observation_imports_current, import_observations};
+use super::{Cell, ensure_observation_imports_current, import_observations};
 use crate::logging::{Component, Level, Session};
+use serde_json::{Value as JsonValue, json};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use toml::{Table, Value as TomlValue};
 
 static NEXT_ID: AtomicU64 = AtomicU64::new(0);
 
@@ -44,6 +46,72 @@ fn setup(csv: &str, manifest: &str) -> (TestDirectory, PathBuf, PathBuf) {
     fs::write(documents.join("input.csv"), csv).expect("CSV sintetico");
     fs::write(metadata.join("observation_imports.toml"), manifest).expect("manifest sintetico");
     (directory, metadata, documents)
+}
+
+fn traced<R>(operation: impl FnOnce() -> R) -> (R, String, Vec<JsonValue>) {
+    let directory = TestDirectory::new();
+    let log_directory = directory.0.join("trace");
+    let (session, log_path) =
+        Session::create_in_directory_with_level(&log_directory, Component::Core, Level::Trace)
+            .expect("sessione Trace sintetica");
+    let result = session.scoped(operation);
+    session.finish(Component::Core).expect("chiusura Trace");
+    let contents = fs::read_to_string(log_path).expect("log Trace sintetico");
+    let records = contents
+        .lines()
+        .map(|line| serde_json::from_str(line).expect("record JSON sintetico"))
+        .collect();
+    (result, contents, records)
+}
+
+fn function_span<'a>(records: &'a [JsonValue], function: &str) -> (&'a JsonValue, &'a JsonValue) {
+    let enters: Vec<_> = records
+        .iter()
+        .filter(|record| record["type"] == "function_enter" && record["function"] == function)
+        .collect();
+    assert_eq!(enters.len(), 1, "ingresso univoco di {function}");
+    let enter = enters[0];
+    let exits: Vec<_> = records
+        .iter()
+        .filter(|record| {
+            record["type"] == "function_exit"
+                && record["function"] == function
+                && record["call_id"] == enter["call_id"]
+        })
+        .collect();
+    assert_eq!(exits.len(), 1, "uscita correlata di {function}");
+    let exit = exits[0];
+    assert_eq!(exit["outcome"], "returned");
+    assert!(exit["duration_ms"].as_u64().is_some());
+    (enter, exit)
+}
+
+fn expected_data(value: JsonValue) -> JsonValue {
+    json!({"kind":"data", "value":value})
+}
+
+fn expected_text(value: &str) -> JsonValue {
+    expected_data(json!({
+        "format":"text_redacted_known_secret_assignments",
+        "value":value
+    }))
+}
+
+fn expected_omission(reason: &str) -> JsonValue {
+    expected_data(json!([
+        expected_argument("state", expected_data(json!("omitted"))),
+        expected_argument("reason", expected_data(json!(reason)))
+    ]))
+}
+
+fn expected_argument(name: &str, content: JsonValue) -> JsonValue {
+    json!({"name":name, "content":content})
+}
+
+fn assert_span(records: &[JsonValue], function: &str, arguments: JsonValue, result: JsonValue) {
+    let (enter, exit) = function_span(records, function);
+    assert_eq!(enter["arguments"], arguments);
+    assert_eq!(exit["result"], result);
 }
 
 #[test]
@@ -289,6 +357,204 @@ fn error_text_is_redacted_in_trace_without_changing_the_returned_error() {
             .join("\n")
     );
     assert!(log.contains("secret_omitted"));
+}
+
+#[test]
+fn synthetic_trace_records_complete_observation_import_helper_spans() {
+    let slug_input = "Hb / 13.7";
+    let (slug, _, slug_records) = traced(|| super::slug(slug_input));
+    assert_eq!(slug, "Hb---13.7");
+    assert_span(
+        &slug_records,
+        "observation_imports::slug",
+        json!([expected_argument("value", expected_text(slug_input))]),
+        expected_text("Hb---13.7"),
+    );
+
+    let secret = "synthetic-observation-token-41";
+    let key_input = format!("api_key={secret}");
+    let expected_key = format!("\"api_key={secret}\"");
+    let (key, key_log, key_records) = traced(|| super::toml_key(&key_input));
+    assert_eq!(key, expected_key);
+    assert!(key_log.contains("secret_omitted"));
+    assert!(!key_log.contains(secret));
+    assert_span(
+        &key_records,
+        "observation_imports::toml_key",
+        json!([expected_argument(
+            "value",
+            expected_text("api_key=[secret_omitted]")
+        )]),
+        expected_text("\"api_key=[secret_omitted]\""),
+    );
+
+    let date_cell = Cell::Date("2026-05-06".into());
+    let (date, _, date_records) = traced(|| super::date_value(&date_cell));
+    assert_eq!(date.as_deref(), Some("2026-05-06"));
+    assert_span(
+        &date_records,
+        "observation_imports::date_value",
+        json!([expected_argument(
+            "value",
+            expected_data(json!({"value":{"type":"string", "value":"2026-05-06"}}))
+        )]),
+        expected_text("Some(\n    \"2026-05-06\",\n)"),
+    );
+
+    let private_cell = Cell::Text("nota sintetica non registrata".into());
+    let (cell, _, cell_records) = traced(|| super::cell_text(&private_cell));
+    assert_eq!(cell.as_deref(), Some("nota sintetica non registrata"));
+    assert_span(
+        &cell_records,
+        "observation_imports::cell_text",
+        json!([
+            expected_argument("cell_type", expected_data(json!("text"))),
+            expected_argument(
+                "cell_value",
+                expected_omission("source_column_provenance_unavailable")
+            )
+        ]),
+        expected_data(json!([
+            expected_argument("has_value", expected_data(json!(true))),
+            expected_argument(
+                "cell_value",
+                expected_omission("source_column_provenance_unavailable")
+            )
+        ])),
+    );
+
+    let mut settings = Table::new();
+    settings.insert(
+        "api_key".into(),
+        TomlValue::String("synthetic-key-58".into()),
+    );
+    settings.insert("limit".into(), TomlValue::Integer(7));
+    let (limit, limit_log, limit_records) = traced(|| super::table_int(&settings, "limit"));
+    assert_eq!(limit, Some(7));
+    assert!(limit_log.contains("secret_omitted"));
+    assert!(!limit_log.contains("synthetic-key-58"));
+    assert_span(
+        &limit_records,
+        "observation_imports::table_int",
+        json!([
+            expected_argument(
+                "table",
+                expected_data(json!({
+                    "api_key":{"kind":"secret_omitted"},
+                    "limit":{"type":"integer", "value":7}
+                }))
+            ),
+            expected_argument("field", expected_text("limit"))
+        ]),
+        expected_text("Some(\n    7,\n)"),
+    );
+
+    let mut labels = Table::new();
+    labels.insert(
+        "labels".into(),
+        TomlValue::Array(vec![
+            TomlValue::String("first".into()),
+            TomlValue::String("second".into()),
+        ]),
+    );
+    labels.insert(
+        "api_key".into(),
+        TomlValue::String("synthetic-array-key".into()),
+    );
+    let path = Path::new("/synthetic/observation-imports.toml");
+    let (values, values_log, values_records) = traced(|| super::array(&labels, "labels", path));
+    assert_eq!(
+        values.expect("array value"),
+        [
+            TomlValue::String("first".into()),
+            TomlValue::String("second".into())
+        ]
+    );
+    assert!(values_log.contains("secret_omitted"));
+    assert!(!values_log.contains("synthetic-array-key"));
+    assert_span(
+        &values_records,
+        "observation_imports::array",
+        json!([
+            expected_argument(
+                "table",
+                expected_data(json!({
+                    "api_key":{"kind":"secret_omitted"},
+                    "labels":{"type":"array", "value":[
+                        {"type":"string", "value":"first"},
+                        {"type":"string", "value":"second"}
+                    ]}
+                }))
+            ),
+            expected_argument("key", expected_text("labels")),
+            expected_argument(
+                "path",
+                expected_data(
+                    json!({"encoding":"utf8", "value":"/synthetic/observation-imports.toml"})
+                )
+            )
+        ]),
+        expected_data(json!({
+            "type":"array",
+            "value":[
+                {"type":"string", "value":"first"},
+                {"type":"string", "value":"second"}
+            ]
+        })),
+    );
+
+    let mut text_config = Table::new();
+    text_config.insert("title".into(), TomlValue::String("  sintesi  ".into()));
+    let (title, _, title_records) = traced(|| super::table_str(&text_config, "title"));
+    assert_eq!(title, Some("  sintesi  "));
+    assert_span(
+        &title_records,
+        "observation_imports::table_str",
+        json!([
+            expected_argument(
+                "table",
+                expected_data(json!({"title":{"type":"string", "value":"  sintesi  "}}))
+            ),
+            expected_argument("field", expected_text("title"))
+        ]),
+        expected_text("Some(\n    \"  sintesi  \",\n)"),
+    );
+
+    let mut bool_config = Table::new();
+    bool_config.insert("enabled".into(), TomlValue::Boolean(false));
+    bool_config.insert(
+        "token".into(),
+        TomlValue::String("synthetic-bool-token".into()),
+    );
+    let bool_path = Path::new("/synthetic/observation-imports.toml");
+    let (enabled, bool_log, bool_records) =
+        traced(|| super::optional_bool(&bool_config, "enabled", true, bool_path, 4));
+    assert!(!enabled.expect("boolean setting"));
+    assert!(bool_log.contains("secret_omitted"));
+    assert!(!bool_log.contains("synthetic-bool-token"));
+    assert_span(
+        &bool_records,
+        "observation_imports::optional_bool",
+        json!([
+            expected_argument(
+                "table",
+                expected_data(json!({
+                    "enabled":{"type":"boolean", "value":false},
+                    "token":{"kind":"secret_omitted"}
+                }))
+            ),
+            expected_argument("field", expected_text("enabled")),
+            expected_argument("default", expected_data(json!(true))),
+            expected_argument(
+                "path",
+                expected_data(
+                    json!({"encoding":"utf8", "value":"/synthetic/observation-imports.toml"})
+                )
+            ),
+            expected_argument("index", expected_data(json!(4)))
+        ]),
+        expected_text("false"),
+    );
 }
 
 fn write_xlsx(path: &Path) {

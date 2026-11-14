@@ -1,11 +1,13 @@
 //! Fixture sintetiche per estrazione e staging dei contenitori.
 
-use super::{is_container_path, safe_member_path, stage_container_documents};
+use super::{
+    is_container_path, parse_7z_listing, safe_member_path, stage_container_documents, write_member,
+};
 use crate::config::{IngestionConfig, PersonConfig, SearchConfig, UiConfig};
 use crate::inventory::scan_document_inventory;
 use crate::logging::{Component, Level, Session};
 use crate::metadata::DocumentRecord;
-use serde_json::Value;
+use serde_json::{Value, json};
 use std::fs;
 use std::io::{Cursor, Write};
 use std::path::{Path, PathBuf};
@@ -119,6 +121,222 @@ fn command_available(name: &str) -> bool {
             .iter()
             .any(|candidate| directory.join(candidate).is_file())
     })
+}
+
+fn expected_text_trace(value: &str) -> Value {
+    json!({
+        "kind": "data",
+        "value": {
+            "format": "text_redacted_known_secret_assignments",
+            "value": value,
+        }
+    })
+}
+
+fn expected_path_trace(path: &Path) -> Value {
+    json!({
+        "kind": "data",
+        "value": {"encoding": "utf8", "value": path.to_str().expect("path sintetico UTF-8")}
+    })
+}
+
+fn expected_arguments(fields: Vec<(&str, Value)>) -> Value {
+    Value::Array(
+        fields
+            .into_iter()
+            .map(|(name, content)| json!({"name": name, "content": content}))
+            .collect(),
+    )
+}
+
+fn assert_complete_trace_calls(records: &[Value], function: &str, expected: Vec<(Value, Value)>) {
+    let entries: Vec<_> = records
+        .iter()
+        .filter(|record| record["type"] == "function_enter" && record["function"] == function)
+        .collect();
+    assert_eq!(entries.len(), expected.len(), "numero ingressi: {function}");
+    let mut unmatched = entries;
+    for (arguments, result) in expected {
+        let index = unmatched
+            .iter()
+            .position(|entry| entry["arguments"] == arguments)
+            .unwrap_or_else(|| {
+                panic!(
+                    "argomenti completi assenti per {function}: {arguments}; osservati: {unmatched:?}"
+                )
+            });
+        let entry = unmatched.remove(index);
+        let call_id = entry["call_id"].as_u64().expect("call_id numerico");
+        let exits: Vec<_> = records
+            .iter()
+            .filter(|record| {
+                record["type"] == "function_exit"
+                    && record["function"] == function
+                    && record["call_id"] == call_id
+            })
+            .collect();
+        assert_eq!(exits.len(), 1, "uscita correlata: {function}#{call_id}");
+        assert_eq!(exits[0]["outcome"], "returned", "esito: {function}");
+        assert!(
+            exits[0]["duration_ms"].is_u64(),
+            "durata assente: {function}#{call_id}"
+        );
+        assert_eq!(exits[0]["result"], result, "risultato: {function}");
+    }
+    assert!(unmatched.is_empty());
+}
+
+#[test]
+fn traced_container_helpers_match_complete_arguments_results_and_omissions() {
+    let directory = TestDirectory::new();
+    let container_path = Path::new("archive.TAR.XZ");
+    let target = directory.path().join("staging");
+    let member_name = "./reports/Report.txt";
+    let expected_member_path = target.join("reports/Report.txt");
+    let listing = concat!(
+        "7-Zip synthetic listing\n",
+        "----------\n",
+        "Path = reports\n",
+        "Folder = +\n",
+        "----------\n",
+        "Path = api_key=SYNTHETIC-CONTAINER-NAME/report.txt\n",
+        "Size = 3\n",
+        "----------\n",
+        "Path = ignored.bin\n",
+        "Folder = +\n",
+    );
+    let secret_member_path = "api_key=[secret_omitted]";
+    let output_path = directory.path().join("members/nested/report.txt");
+    let member_bytes = b"SYNTHETIC-CONTAINER-CONTENT";
+    let (session, log_path) = Session::create_in_directory_with_level(
+        &directory.path().join("logs"),
+        Component::Core,
+        Level::Trace,
+    )
+    .expect("sessione trace sintetica");
+
+    let (is_container, parsed, safe_path, write_result) = session.scoped(|| {
+        let is_container = is_container_path(container_path);
+        let parsed = parse_7z_listing(listing);
+        let safe_path = safe_member_path(&target, member_name);
+        let mut input = Cursor::new(member_bytes.as_slice());
+        let write_result = write_member(&mut input, &output_path);
+        (is_container, parsed, safe_path, write_result)
+    });
+    drop(session);
+
+    assert!(is_container);
+    assert_eq!(
+        parsed,
+        ["api_key=SYNTHETIC-CONTAINER-NAME/report.txt".to_owned()]
+    );
+    assert_eq!(safe_path, Ok(expected_member_path.clone()));
+    write_result.expect("scrittura membro sintetico");
+    assert_eq!(
+        fs::read(&output_path).expect("membro scritto"),
+        member_bytes
+    );
+
+    let log = fs::read_to_string(log_path).expect("log trace sintetico");
+    assert!(!log.contains("SYNTHETIC-CONTAINER-NAME"));
+    assert!(!log.contains("SYNTHETIC-CONTAINER-CONTENT"));
+    assert!(log.contains("secret_omitted"));
+    assert!(log.contains("external_component"));
+    assert!(log.contains("unsupported_type"));
+    let records: Vec<Value> = log
+        .lines()
+        .map(|line| serde_json::from_str(line).expect("record JSON sintetico"))
+        .collect();
+
+    let container_arguments =
+        expected_arguments(vec![("path", expected_path_trace(container_path))]);
+    assert_complete_trace_calls(
+        &records,
+        "containers::is_container_path",
+        vec![(
+            container_arguments.clone(),
+            json!({"kind": "data", "value": true}),
+        )],
+    );
+    assert_complete_trace_calls(
+        &records,
+        "containers::is_container_path_impl",
+        vec![(container_arguments, json!({"kind": "data", "value": true}))],
+    );
+
+    let redacted_listing =
+        listing.replace("SYNTHETIC-CONTAINER-NAME/report.txt", "[secret_omitted]");
+    let listing_arguments = expected_arguments(vec![
+        ("listing", expected_text_trace(&redacted_listing)),
+        (
+            "encoding",
+            json!({"kind": "data", "value": "utf8_lossy_upstream"}),
+        ),
+    ]);
+    let parsed_result = json!({
+        "kind": "data",
+        "value": [expected_text_trace(secret_member_path)],
+    });
+    assert_complete_trace_calls(
+        &records,
+        "containers::parse_7z_listing",
+        vec![(listing_arguments, parsed_result.clone())],
+    );
+    assert_complete_trace_calls(
+        &records,
+        "containers::parse_7z_listing_impl",
+        vec![(
+            expected_arguments(vec![("listing", expected_text_trace(&redacted_listing))]),
+            parsed_result,
+        )],
+    );
+
+    let safe_arguments = expected_arguments(vec![
+        ("target", expected_path_trace(&target)),
+        ("member_name", expected_text_trace(member_name)),
+    ]);
+    let safe_result = expected_path_trace(&expected_member_path);
+    assert_complete_trace_calls(
+        &records,
+        "containers::safe_member_path",
+        vec![(safe_arguments.clone(), safe_result.clone())],
+    );
+    assert_complete_trace_calls(
+        &records,
+        "containers::safe_member_path_impl",
+        vec![(safe_arguments, safe_result)],
+    );
+
+    let output_arguments = expected_arguments(vec![
+        ("path", expected_path_trace(&output_path)),
+        (
+            "member_contents",
+            json!({"kind": "omitted", "reason": "external_component"}),
+        ),
+    ]);
+    assert_complete_trace_calls(
+        &records,
+        "containers::write_member",
+        vec![(
+            output_arguments,
+            json!({"kind": "data", "value": "succeeded"}),
+        )],
+    );
+    let create_result = json!({
+        "kind": "data",
+        "value": [
+            {"name": "state", "content": {"kind": "data", "value": "succeeded"}},
+            {"name": "file_handle", "content": {"kind": "omitted", "reason": "unsupported_type"}},
+        ]
+    });
+    assert_complete_trace_calls(
+        &records,
+        "containers::create_member",
+        vec![(
+            expected_arguments(vec![("path", expected_path_trace(&output_path))]),
+            create_result,
+        )],
+    );
 }
 
 #[test]
