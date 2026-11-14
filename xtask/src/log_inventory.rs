@@ -29,6 +29,7 @@ pub(crate) fn run() -> Result<(), String> {
     let mut opaque_macros = Vec::new();
     let mut trace_hints = Vec::new();
     let mut trace_macro_hints = Vec::new();
+    let mut trace_function_hints = Vec::new();
     for path in files {
         let source =
             fs::read_to_string(&path).map_err(|error| format!("{}: {error}", path.display()))?;
@@ -60,6 +61,7 @@ pub(crate) fn run() -> Result<(), String> {
             .map(|(scope, path, _)| json!({"file": file, "source_sha256": digest, "scope": scope, "path": path, "hint": "trace macro name; not proof of symbol coverage"})));
         opaque_macros.extend(visitor.opaque_macros.into_iter().map(|(scope, path, kind)| json!({"file": file, "source_sha256": digest, "scope": scope, "path": path, "kind": kind})));
         trace_hints.extend(visitor.trace_current_sites.into_iter().map(|scope| json!({"file": file, "source_sha256": digest, "scope": scope, "hint": "trace_current call site; not proof of symbol coverage"})));
+        trace_function_hints.extend(visitor.trace_function_sites.into_iter().map(|(scope, path)| json!({"file": file, "source_sha256": digest, "scope": scope, "path": path, "hint": "trace wrapper name; not proof of symbol coverage"})));
     }
     let report = json!({
         "schema": 2,
@@ -67,6 +69,7 @@ pub(crate) fn run() -> Result<(), String> {
         "opaque_macros": opaque_macros,
         "trace_current_call_sites": trace_hints,
         "trace_macro_call_sites": trace_macro_hints,
+        "trace_function_call_sites": trace_function_hints,
         "limitations": [
             "Inventario sintattico: gli attributi di strumentazione non dimostrano la copertura a runtime.",
             "I token e gli attributi macro non sono espansi; funzioni generate richiedono un inventario separato.",
@@ -77,6 +80,7 @@ pub(crate) fn run() -> Result<(), String> {
             "L'identità id è stabile per lo stesso contenuto del file; modifiche precedenti possono cambiare gli ordinali successivi.",
             "Le chiamate trace_current sono indizi sintattici separati e non dimostrano la strumentazione di un simbolo.",
             "Le macro trace_*_call sono riconosciute solo dal nome; i loro token non sono espansi e la presenza non prova la copertura.",
+            "Le funzioni wrapper di tracing sono riconosciute solo dal nome e possono includere falsi positivi; la presenza non prova la copertura.",
             "Sono escluse le directory tests, i file tests.rs e *_tests.rs e gli elementi marcati cfg(test) o test.",
             "I file esterni di moduli non ereditano automaticamente le condizioni cfg della dichiarazione nel file padre; la verifica dei moduli condizionali resta necessaria."
         ]
@@ -91,6 +95,11 @@ pub(crate) fn run() -> Result<(), String> {
 fn is_trace_macro_hint(path: &str) -> bool {
     let name = path.rsplit("::").next().unwrap_or(path);
     name.starts_with("trace_") && name.ends_with("_call")
+}
+
+/// Recognizes known wrapper names as hints, without proving instrumentation.
+fn is_trace_function_hint(path: &str) -> bool {
+    is_trace_macro_hint(path) || path.rsplit("::").next() == Some("trace_export_operation")
 }
 
 fn collect_sources(directory: &Path, files: &mut Vec<PathBuf>) -> Result<(), String> {
@@ -120,6 +129,7 @@ struct Inventory {
     entries: Vec<Entry>,
     opaque_macros: Vec<(String, String, &'static str)>,
     trace_current_sites: Vec<String>,
+    trace_function_sites: Vec<(String, String)>,
     foreign_abi: Option<String>,
 }
 
@@ -364,13 +374,17 @@ impl<'ast> Visit<'ast> for Inventory {
     }
 
     fn visit_expr_call(&mut self, node: &'ast ExprCall) {
-        if let syn::Expr::Path(ExprPath { path, .. }) = node.func.as_ref()
-            && path
+        if let syn::Expr::Path(ExprPath { path, .. }) = node.func.as_ref() {
+            let name = path
                 .segments
                 .last()
-                .is_some_and(|segment| segment.ident == "trace_current")
-        {
-            self.trace_current_sites.push(self.scope.join("::"));
+                .map(|segment| segment.ident.to_string());
+            if name.as_deref() == Some("trace_current") {
+                self.trace_current_sites.push(self.scope.join("::"));
+            } else if name.as_deref().is_some_and(is_trace_function_hint) {
+                self.trace_function_sites
+                    .push((self.scope.join("::"), name.unwrap()));
+            }
         }
         visit::visit_expr_call(self, node);
     }
@@ -438,13 +452,15 @@ impl<'ast> Visit<'ast> for Inventory {
 
 #[cfg(test)]
 mod tests {
-    use super::{Inventory, Visit, is_trace_macro_hint};
+    use super::{Inventory, Visit, is_trace_function_hint, is_trace_macro_hint};
 
     #[test]
     fn recognizes_only_trace_macro_name_hints() {
         assert!(is_trace_macro_hint("crate::logging::trace_build_call"));
         assert!(!is_trace_macro_hint("trace_current"));
         assert!(!is_trace_macro_hint("some_other_call"));
+        assert!(is_trace_function_hint("trace_export_operation"));
+        assert!(!is_trace_function_hint("trace_sensitive_text"));
     }
 
     #[test]
@@ -485,6 +501,7 @@ mod tests {
                 make!();
                 #[cfg(any(test, windows))] fn supported_on_test_or_windows() {}
                 #[cfg(all(unix, feature = "native"))] fn native() { trace_current("entry"); }
+                fn wrapped() { trace_cli_call("entry"); }
                 trait Service { fn declared(&self); fn defaulted(&self) {} }
                 impl Service for Device { fn declared(&self) {} }
                 extern "C" { pub fn host_callback(value: i32) -> i32; }
@@ -535,6 +552,10 @@ mod tests {
         );
         assert_eq!(inventory.opaque_macros.len(), 2);
         assert_eq!(inventory.trace_current_sites, ["ui::native"]);
+        assert_eq!(
+            inventory.trace_function_sites,
+            [("ui::wrapped".into(), "trace_cli_call".into())]
+        );
         assert!(
             !inventory
                 .entries

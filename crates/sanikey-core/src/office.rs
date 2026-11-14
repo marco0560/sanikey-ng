@@ -507,20 +507,18 @@ fn run_process(program: &Path, arguments: &[OsString]) -> Result<ExitStatus, Pro
                 TraceValue::Omitted(TraceOmission::ExternalComponent),
             ),
         ],
-        || run_process_impl(program, arguments),
+        || {
+            let mut child = Command::new(program)
+                .args(arguments)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .map_err(|_| ProcessFailure::Launch)?;
+            wait_for_process(&mut child, CONVERSION_TIMEOUT)
+        },
         |result: &Result<ExitStatus, ProcessFailure>| trace_process_result(result)
     )
-}
-
-fn run_process_impl(program: &Path, arguments: &[OsString]) -> Result<ExitStatus, ProcessFailure> {
-    let mut child = Command::new(program)
-        .args(arguments)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .map_err(|_| ProcessFailure::Launch)?;
-    wait_for_process(&mut child, CONVERSION_TIMEOUT)
 }
 
 fn wait_for_process(child: &mut Child, timeout: Duration) -> Result<ExitStatus, ProcessFailure> {

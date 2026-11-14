@@ -1148,7 +1148,12 @@ fn create_private_temp_file_impl(directory: &Path) -> Result<(PathBuf, File), Op
 }
 
 fn aifa_persistence_error(message: String) -> OperationError {
-    OperationError::new(ErrorCode::Configuration, message)
+    trace_aifa_call!(
+        "aifa::aifa_persistence_error",
+        [TraceField::new("message", trace_sensitive_text(&message))],
+        OperationError::new(ErrorCode::Configuration, message),
+        |error: &OperationError| trace_sensitive_text(error.message())
+    )
 }
 
 /// Client sincrono per interrogare il catalogo pubblico AIFA.
@@ -1266,7 +1271,28 @@ impl AifaClient {
         medication: &Medication,
         query: Option<&str>,
     ) -> (Option<AifaCandidateSearch>, bool) {
-        lookup_candidate_search_with_classification(medication, query, |path| self.get_json(path))
+        let input_has_secret = medication_contains_identified_secret(medication)
+            || query.is_some_and(text_contains_identified_secret);
+        trace_aifa_call!(
+            "aifa::AifaClient::lookup_candidate_search_classified",
+            [
+                TraceField::new("medication", trace_medication(medication)),
+                TraceField::new(
+                    "query",
+                    query.map_or_else(|| TraceValue::data(Value::Null), trace_sensitive_text)
+                ),
+                TraceField::new("agent", TraceValue::Omitted(TraceOmission::UnsupportedType)),
+            ],
+            lookup_candidate_search_with_classification(medication, query, |path| self
+                .get_json(path)),
+            |result: &(Option<AifaCandidateSearch>, bool)| {
+                if input_has_secret || result.1 {
+                    TraceValue::Secret
+                } else {
+                    trace_search_result(&result.0)
+                }
+            }
+        )
     }
 
     fn get_json(&self, path: &str) -> Option<Value> {

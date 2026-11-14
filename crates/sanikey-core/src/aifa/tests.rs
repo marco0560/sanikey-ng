@@ -72,8 +72,18 @@ fn aifa_client_constructors_have_nested_trace_spans_and_representable_results() 
     .expect("sessione sintetica");
 
     session.scoped(|| {
-        let _client = AifaClient::new();
+        let client = AifaClient::new();
         let _default_client = AifaClient::default();
+        let medication = Medication {
+            id: "synthetic".into(),
+            name: "synthetic".into(),
+            active_ingredient: None,
+            form: None,
+            strength_per_unit: None,
+        };
+        let (result, classified) = client.lookup_candidate_search_classified(&medication, Some(""));
+        assert!(result.is_some());
+        assert!(!classified);
     });
     drop(session);
 
@@ -82,6 +92,12 @@ fn aifa_client_constructors_have_nested_trace_spans_and_representable_results() 
         .lines()
         .map(|line| serde_json::from_str::<Value>(line).expect("record JSON valido"))
         .collect::<Vec<_>>();
+    assert!(
+        records
+            .iter()
+            .any(|record| record["type"] == "function_exit"
+                && record["function"] == "aifa::AifaClient::lookup_candidate_search_classified")
+    );
     for function in ["aifa::AifaClient::new", "aifa::AifaClient::default"] {
         let entry = records
             .iter()

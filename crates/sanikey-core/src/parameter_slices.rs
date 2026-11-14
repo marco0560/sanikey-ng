@@ -157,15 +157,17 @@ pub struct DiscoverySettings {
 
 impl Default for DiscoverySettings {
     fn default() -> Self {
-        Self {
-            min_label_length: 2,
-            max_label_length: 80,
-            max_label_words: 8,
-            min_occurrences: 2,
-            min_distinct_documents: 2,
-            min_distinct_dates: 1,
-            excluded_labels: Vec::new(),
-        }
+        trace_parameter_call!("parameter_slices::DiscoverySettings::default", [], || {
+            Self {
+                min_label_length: 2,
+                max_label_length: 80,
+                max_label_words: 8,
+                min_occurrences: 2,
+                min_distinct_documents: 2,
+                min_distinct_dates: 1,
+                excluded_labels: Vec::new(),
+            }
+        })
     }
 }
 
@@ -1618,6 +1620,7 @@ mod tests {
                 Session::create_in_directory_with_level(&directory, Component::Core, level)
                     .expect("sessione log sintetica");
             session.scoped(|| {
+                assert_eq!(DiscoverySettings::default().min_label_length, 2);
                 let result =
                     discover_candidates(&documents, &extracted, Some(&hrefs), &permissive(), None)
                         .expect("discovery sintetica");
@@ -1639,6 +1642,7 @@ mod tests {
             let contents = fs::read_to_string(&path).expect("log sintetico leggibile");
             if level == Level::Trace {
                 assert!(contents.contains("parameter_slices::discover_candidates"));
+                assert!(contents.contains("parameter_slices::DiscoverySettings::default"));
                 assert!(contents.contains("parameter_slices::discover_configured_candidates"));
                 assert!(contents.contains("Hb: 13.7 g/dL"));
                 assert!(contents.contains("secret_omitted"));
