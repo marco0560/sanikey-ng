@@ -3,7 +3,9 @@
 use super::{find_duplicate_documents, scan_document_inventory, scan_documents, sha256_file};
 use crate::config::{IngestionConfig, PersonConfig, SearchConfig, UiConfig};
 use crate::logging::{Component, Level, Session};
-use crate::operation::ErrorCode;
+use crate::metadata::DocumentRecord;
+use crate::operation::{ErrorCode, OperationError};
+use serde_json::{Value, json};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -48,6 +50,120 @@ fn person(root: &Path) -> PersonConfig {
         search: SearchConfig::default(),
         ingestion: IngestionConfig::default(),
     }
+}
+
+fn traced_path(path: &Path) -> Value {
+    if let Some(text) = path.to_str() {
+        return json!({
+            "kind": "data",
+            "value": {"encoding": "utf8", "value": text},
+        });
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        json!({
+            "kind": "data",
+            "value": {"encoding": "unix_bytes", "value": path.as_os_str().as_bytes()},
+        })
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt;
+        json!({
+            "kind": "data",
+            "value": {
+                "encoding": "windows_utf16",
+                "value": path.as_os_str().encode_wide().collect::<Vec<_>>(),
+            },
+        })
+    }
+}
+
+fn traced_debug<T: std::fmt::Debug + ?Sized>(value: &T) -> Value {
+    json!({
+        "kind": "data",
+        "value": {
+            "format": "rust_debug",
+            "value": crate::logging::redact_secret_assignments(&format!("{value:#?}")),
+        },
+    })
+}
+
+fn traced_argument(name: &str, content: Value) -> Value {
+    json!({"name": name, "content": content})
+}
+
+fn trace_document_paths(documents: &[DocumentRecord]) -> Value {
+    json!({
+        "kind": "data",
+        "value": documents
+            .iter()
+            .enumerate()
+            .map(|(index, document)| json!({
+                "index": index,
+                "document_id": document.document_id,
+                "path": traced_path(&document.path),
+            }))
+            .collect::<Vec<_>>(),
+    })
+}
+
+fn trace_person_paths(person: &PersonConfig) -> Value {
+    json!({
+        "kind": "data",
+        "value": [
+            {"name": "source_documents", "path": traced_path(&person.source_documents)},
+            {"name": "metadata_directory", "path": traced_path(&person.metadata_directory)},
+            {"name": "local_build", "path": traced_path(&person.local_build)},
+            {"name": "ui.background_image", "path": null},
+            {"name": "search.dictionary", "path": null},
+        ],
+    })
+}
+
+fn trace_operation_exit(debug_result: &str, native_paths: Value) -> Value {
+    json!({
+        "kind": "data",
+        "value": {
+            "format": "rust_debug",
+            "value": crate::logging::redact_secret_assignments(debug_result),
+            "native_paths": native_paths,
+        },
+    })
+}
+
+fn assert_inventory_spans(records: &[Value], function: &str, mut expected: Vec<(Value, Value)>) {
+    let entries: Vec<_> = records
+        .iter()
+        .filter(|record| record["type"] == "function_enter" && record["function"] == function)
+        .collect();
+    assert_eq!(entries.len(), expected.len(), "entrate di {function}");
+    let mut unmatched = entries;
+    for (arguments, result) in expected.drain(..) {
+        let entry_index = unmatched
+            .iter()
+            .position(|entry| entry["arguments"] == arguments)
+            .unwrap_or_else(|| panic!("argomenti attesi assenti per {function}: {arguments}"));
+        let entry = unmatched.remove(entry_index);
+        let call_id = entry["call_id"].as_u64().expect("call_id numerico");
+        let exits: Vec<_> = records
+            .iter()
+            .filter(|record| {
+                record["type"] == "function_exit"
+                    && record["function"] == function
+                    && record["call_id"] == call_id
+            })
+            .collect();
+        assert_eq!(exits.len(), 1, "una sola uscita per {function}#{call_id}");
+        assert_eq!(exits[0]["outcome"], "returned");
+        assert_eq!(exits[0]["result"], result, "risultato di {function}");
+        assert!(
+            exits[0]["duration_ms"].as_u64().is_some(),
+            "durata mancante per {function}#{call_id}"
+        );
+    }
+    assert!(unmatched.is_empty());
 }
 
 #[test]
@@ -404,4 +520,307 @@ fn inventory_trace_preserves_non_unicode_paths_and_is_off_at_events_level() {
             assert!(!log.contains("patient-a"));
         }
     }
+}
+
+#[test]
+fn synthetic_inventory_spans_record_arguments_results_durations_and_redactions() {
+    let directory = TestDirectory::new();
+    let scan_person = person(&directory.path().join("scan"));
+    fs::create_dir_all(&scan_person.source_documents).expect("root scansione vuota");
+
+    let direct_root = directory.path().join("direct");
+    fs::create_dir_all(&direct_root).expect("root documento diretto");
+    let direct_path = direct_root.join("20260102 Direct report.txt");
+    fs::write(&direct_path, b"direct synthetic bytes").expect("documento diretto sintetico");
+
+    let staged_root = directory.path().join("staging");
+    fs::create_dir_all(staged_root.join("archive")).expect("root staging sintetico");
+    let staged_path = staged_root.join("archive/20260103 Staged report.txt");
+    fs::write(&staged_path, b"staged synthetic bytes").expect("documento staging sintetico");
+
+    let checksum_path = directory.path().join("checksum-only.bin");
+    fs::write(&checksum_path, b"checksum synthetic bytes").expect("file checksum sintetico");
+
+    let documents = vec![
+        DocumentRecord {
+            document_id: "shared-digest".to_owned(),
+            patient_id: "patient-a".to_owned(),
+            path: directory.path().join("duplicates/a.txt"),
+            title: "A".to_owned(),
+            category: "reports".to_owned(),
+            kind: "text".to_owned(),
+            sha256: "shared-digest".to_owned(),
+            date: None,
+            series: None,
+            tags: Vec::new(),
+            origin: "source".to_owned(),
+            container_id: None,
+            internal_path: None,
+        },
+        DocumentRecord {
+            document_id: "shared-digest".to_owned(),
+            patient_id: "patient-a".to_owned(),
+            path: directory.path().join("duplicates/b.txt"),
+            title: "B".to_owned(),
+            category: "reports".to_owned(),
+            kind: "text".to_owned(),
+            sha256: "shared-digest".to_owned(),
+            date: None,
+            series: None,
+            tags: Vec::new(),
+            origin: "source".to_owned(),
+            container_id: None,
+            internal_path: None,
+        },
+    ];
+
+    let mut filtered_person = person(directory.path());
+    filtered_person.ingestion = IngestionConfig {
+        include_patterns: Vec::new(),
+        exclude_patterns: vec!["**/*.tmp".to_owned()],
+    };
+    let excluded_path = "excluded/report.tmp";
+    let secret = "synthetic-inventory-secret";
+    let error_action = format!("password = {secret}");
+    let cause = std::io::Error::other(format!("api_key = {secret}"));
+
+    let (
+        inventory,
+        unique,
+        duplicates,
+        direct_record,
+        staged_record,
+        excluded,
+        checksum,
+        error,
+        contents,
+    ) = {
+        let (session, log_path) = Session::create_in_directory_with_level(
+            &directory.path().join("logs"),
+            Component::Core,
+            Level::Trace,
+        )
+        .expect("sessione trace sintetica");
+        let results = session.scoped(|| {
+            (
+                scan_document_inventory(&scan_person).expect("inventario vuoto sintetico"),
+                scan_documents(&scan_person).expect("documenti distinti vuoti sintetici"),
+                find_duplicate_documents(&documents),
+                super::document_record(direct_path.clone(), &direct_root, "patient-direct")
+                    .expect("record diretto sintetico"),
+                super::staged_document_record(
+                    staged_path.clone(),
+                    &staged_root,
+                    "patient-staged",
+                    "container-synthetic",
+                )
+                .expect("record staging sintetico"),
+                super::is_ingestion_excluded(&filtered_person.ingestion, excluded_path),
+                sha256_file(&checksum_path).expect("digest sintetico"),
+                super::filesystem_error(&error_action, &direct_path, cause),
+            )
+        });
+        let (
+            inventory,
+            unique,
+            duplicates,
+            direct_record,
+            staged_record,
+            excluded,
+            checksum,
+            error,
+        ) = results;
+        drop(session);
+        let contents = fs::read_to_string(log_path).expect("log inventario sintetico");
+        let records = contents
+            .lines()
+            .map(|line| serde_json::from_str::<Value>(line).expect("JSON valido"))
+            .collect::<Vec<_>>();
+        let no_paths = json!({"kind": "data", "value": []});
+        let mut expected = Vec::new();
+
+        let person_arguments = json!([
+            traced_argument("person", traced_debug(&scan_person)),
+            traced_argument("person_native_paths", trace_person_paths(&scan_person)),
+        ]);
+        let empty_result = Ok::<Vec<DocumentRecord>, OperationError>(Vec::new());
+        let empty_native_paths = json!({
+            "kind": "data",
+            "value": trace_document_paths(&[]),
+        });
+        let empty_exit = trace_operation_exit(&format!("{empty_result:#?}"), empty_native_paths);
+        expected.push((person_arguments.clone(), empty_exit.clone()));
+        expected.push((person_arguments, empty_exit));
+        assert_inventory_spans(&records, "inventory::scan_document_inventory", expected);
+
+        assert_inventory_spans(
+            &records,
+            "inventory::scan_documents",
+            vec![(
+                json!([
+                    traced_argument("person", traced_debug(&scan_person)),
+                    traced_argument("person_native_paths", trace_person_paths(&scan_person)),
+                ]),
+                trace_operation_exit(
+                    &format!("{empty_result:#?}"),
+                    json!({
+                        "kind": "data",
+                        "value": trace_document_paths(&[]),
+                    }),
+                ),
+            )],
+        );
+
+        let duplicate_native_paths = json!({
+            "kind": "data",
+            "value": [{
+                "digest": "shared-digest",
+                "documents": trace_document_paths(&documents),
+            }],
+        });
+        assert_inventory_spans(
+            &records,
+            "inventory::find_duplicate_documents",
+            vec![(
+                json!([
+                    traced_argument("documents", traced_debug(&documents)),
+                    traced_argument("document_native_paths", trace_document_paths(&documents)),
+                ]),
+                trace_operation_exit(&format!("{duplicates:#?}"), duplicate_native_paths),
+            )],
+        );
+
+        let direct_result = Ok::<DocumentRecord, OperationError>(direct_record.clone());
+        let mut staged_source_record = staged_record.clone();
+        staged_source_record.origin = "source".to_owned();
+        staged_source_record.container_id = None;
+        staged_source_record.internal_path = None;
+        let staged_source_result = Ok::<DocumentRecord, OperationError>(staged_source_record);
+        let staged_result = Ok::<DocumentRecord, OperationError>(staged_record.clone());
+        assert_inventory_spans(
+            &records,
+            "inventory::document_record",
+            vec![
+                (
+                    json!([
+                        traced_argument("patient_id", traced_debug(&"patient-direct")),
+                        traced_argument("path", traced_path(&direct_path)),
+                        traced_argument("root", traced_path(&direct_root)),
+                    ]),
+                    trace_operation_exit(
+                        &format!("{direct_result:#?}"),
+                        json!({
+                            "kind": "data",
+                            "value": {"path": traced_path(&direct_path)},
+                        }),
+                    ),
+                ),
+                (
+                    json!([
+                        traced_argument("patient_id", traced_debug(&"patient-staged")),
+                        traced_argument("path", traced_path(&staged_path)),
+                        traced_argument("root", traced_path(&staged_root)),
+                    ]),
+                    trace_operation_exit(
+                        &format!("{staged_source_result:#?}"),
+                        json!({
+                            "kind": "data",
+                            "value": {"path": traced_path(&staged_path)},
+                        }),
+                    ),
+                ),
+            ],
+        );
+        assert_inventory_spans(
+            &records,
+            "inventory::staged_document_record",
+            vec![(
+                json!([
+                    traced_argument("patient_id", traced_debug(&"patient-staged")),
+                    traced_argument("container_id", traced_debug(&"container-synthetic")),
+                    traced_argument("path", traced_path(&staged_path)),
+                    traced_argument("root", traced_path(&staged_root)),
+                ]),
+                trace_operation_exit(
+                    &format!("{staged_result:#?}"),
+                    json!({
+                        "kind": "data",
+                        "value": {"path": traced_path(&staged_path)},
+                    }),
+                ),
+            )],
+        );
+
+        assert_inventory_spans(
+            &records,
+            "inventory::is_ingestion_excluded",
+            vec![(
+                json!([
+                    traced_argument("config", traced_debug(&filtered_person.ingestion)),
+                    traced_argument("path", traced_debug(&excluded_path)),
+                    traced_argument("path_native", traced_path(Path::new(excluded_path))),
+                ]),
+                trace_operation_exit(&format!("{excluded:#?}"), no_paths.clone()),
+            )],
+        );
+
+        let expected_digest = sha256_file(&checksum_path).expect("digest atteso sintetico");
+        let mut checksum_calls = Vec::new();
+        for path in [&direct_path, &staged_path, &checksum_path] {
+            let expected = Ok::<String, OperationError>(if path == &checksum_path {
+                expected_digest.clone()
+            } else {
+                sha256_file(path).expect("digest record sintetico")
+            });
+            checksum_calls.push((
+                json!([traced_argument("path", traced_path(path))]),
+                trace_operation_exit(&format!("{expected:#?}"), no_paths.clone()),
+            ));
+        }
+        assert_inventory_spans(&records, "inventory::sha256_file", checksum_calls);
+
+        assert_inventory_spans(
+            &records,
+            "inventory::filesystem_error",
+            vec![(
+                json!([
+                    traced_argument("action", traced_debug(&error_action)),
+                    traced_argument(
+                        "cause",
+                        traced_debug(&std::io::Error::other(format!("api_key = {secret}")))
+                    ),
+                    traced_argument("path", traced_path(&direct_path)),
+                ]),
+                trace_operation_exit(&format!("{error:#?}"), no_paths),
+            )],
+        );
+        (
+            inventory,
+            unique,
+            duplicates,
+            direct_record,
+            staged_record,
+            excluded,
+            checksum,
+            error,
+            contents,
+        )
+    };
+
+    assert!(inventory.is_empty());
+    assert!(unique.is_empty());
+    assert_eq!(duplicates.len(), 1);
+    assert_eq!(direct_record.patient_id, "patient-direct");
+    assert_eq!(direct_record.origin, "source");
+    assert_eq!(staged_record.origin, "container");
+    assert_eq!(
+        staged_record.container_id.as_deref(),
+        Some("container-synthetic")
+    );
+    assert!(excluded);
+    assert_eq!(checksum.len(), 64);
+    assert_eq!(error.code(), ErrorCode::Configuration);
+    assert!(error.message().contains(secret));
+    assert!(contents.contains("secret_omitted"));
+    assert!(!contents.contains(secret));
 }

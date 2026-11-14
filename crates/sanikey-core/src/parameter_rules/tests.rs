@@ -9,6 +9,8 @@ use crate::logging::{Component, Level, Session};
 use crate::operation::ErrorCode;
 use crate::parameter_slices::ParameterCandidate;
 use indexmap::IndexMap;
+use rust_decimal::Decimal;
+use serde_json::Value;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -101,6 +103,66 @@ fn rule_toml(display_name: &str, version: i64) -> String {
         version = 1
         "#
     )
+}
+
+fn traced<R>(directory: &TestDirectory, operation: impl FnOnce() -> R) -> (R, String, Vec<Value>) {
+    static NEXT_TRACE: AtomicUsize = AtomicUsize::new(0);
+    let logs = directory.0.join(format!(
+        "logs-{}",
+        NEXT_TRACE.fetch_add(1, Ordering::Relaxed)
+    ));
+    let (session, path) =
+        Session::create_in_directory_with_level(&logs, Component::Core, Level::Trace)
+            .expect("sessione Trace sintetica");
+    let result = session.scoped(operation);
+    session.finish(Component::Core).expect("chiusura Trace");
+    let contents = fs::read_to_string(path).expect("log Trace sintetico");
+    let records = contents
+        .lines()
+        .map(|line| serde_json::from_str(line).expect("record JSON sintetico"))
+        .collect();
+    (result, contents, records)
+}
+
+fn function_span<'a>(records: &'a [Value], function: &str) -> (&'a Value, &'a Value) {
+    let enters: Vec<_> = records
+        .iter()
+        .filter(|record| record["type"] == "function_enter" && record["function"] == function)
+        .collect();
+    assert_eq!(enters.len(), 1, "ingresso univoco di {function}");
+    let enter = enters[0];
+    let exits: Vec<_> = records
+        .iter()
+        .filter(|record| {
+            record["type"] == "function_exit"
+                && record["function"] == function
+                && record["call_id"] == enter["call_id"]
+        })
+        .collect();
+    assert_eq!(exits.len(), 1, "uscita correlata di {function}");
+    let exit = exits[0];
+    assert_eq!(exit["outcome"], "returned");
+    assert!(exit["duration_ms"].as_u64().is_some());
+    (enter, exit)
+}
+
+/// Builds the JSON shape required by the trace contract from an explicit value.
+fn expected_debug_trace(value: &str) -> Value {
+    serde_json::json!({
+        "kind":"data",
+        "value":{"format":"rust_debug", "value":value}
+    })
+}
+
+/// Builds the JSON shape required by the trace contract from explicit text.
+fn expected_text_trace(value: &str) -> Value {
+    serde_json::json!({
+        "kind":"data",
+        "value":{
+            "format":"text_redacted_known_secret_assignments",
+            "value":value
+        }
+    })
 }
 
 #[test]
@@ -499,4 +561,200 @@ fn trace_redacts_secret_keys_recursively_in_parsed_parameter_toml() {
     assert!(contents.contains("synthetic-config-note"));
     assert!(contents.contains("secret_omitted"));
     assert!(!contents.contains("synthetic-config-secret"));
+}
+
+#[test]
+fn synthetic_trace_records_complete_parameter_rule_spans() {
+    let directory = TestDirectory::new();
+
+    let normalized_input = "Ｈｂ";
+    let (normalized, normalized_log, normalized_records) =
+        traced(&directory, || super::normalized_nfkc(normalized_input));
+    assert_eq!(normalized, "hb");
+    let (enter, exit) = function_span(&normalized_records, "parameter_rules::normalized_nfkc");
+    assert_eq!(
+        enter["arguments"],
+        serde_json::json!([{
+            "name":"value",
+            "content":expected_text_trace("Ｈｂ")
+        }])
+    );
+    assert_eq!(exit["result"], expected_debug_trace("\"hb\""));
+    assert!(normalized_log.contains("Ｈｂ"));
+
+    let secret_number = "password=synthetic-decimal-secret";
+    let (parsed, decimal_log, decimal_records) = traced(&directory, || {
+        super::parse_decimal(secret_number, "integer")
+    });
+    assert_eq!(parsed, None);
+    let (enter, exit) = function_span(&decimal_records, "parameter_rules::parse_decimal");
+    assert_eq!(
+        enter["arguments"],
+        serde_json::json!([
+            {"name":"raw", "content":expected_text_trace("password=[secret_omitted]")},
+            {"name":"format", "content":expected_text_trace("integer")}
+        ])
+    );
+    assert_eq!(exit["result"], expected_debug_trace("None"));
+    assert!(!decimal_log.contains("synthetic-decimal-secret"));
+
+    let unit_input = " g／dL\u{00a0} ";
+    let (unit, unit_log, unit_records) = traced(&directory, || super::normalize_unit(unit_input));
+    assert_eq!(unit, "g/dL");
+    let (enter, exit) = function_span(&unit_records, "parameter_rules::normalize_unit");
+    assert_eq!(
+        enter["arguments"],
+        serde_json::json!([{
+            "name":"value",
+            "content":expected_text_trace(" g／dL\u{00a0} ")
+        }])
+    );
+    assert_eq!(exit["result"], expected_debug_trace("\"g/dL\""));
+    assert!(unit_log.contains(unit_input.trim()));
+
+    let rules_path = directory.0.join("parameters.toml");
+    fs::write(&rules_path, rule_toml("Emoglobina", 1)).expect("regole sintetiche");
+    let rules = load_parameter_rules(&rules_path, &dictionary()).expect("regole valide");
+    let rule = &rules.rules[0];
+
+    let range_value = Decimal::new(999, 0);
+    let range_unit = Some("g/dL".to_owned());
+    let expected_range: Result<(Decimal, Option<String>), &str> = Err("REJECTED_OUT_OF_RANGE");
+    let (range, _range_log, range_records) = traced(&directory, || {
+        super::check_range(range_value, range_unit.clone(), rule)
+    });
+    assert_eq!(range, expected_range);
+    let (enter, exit) = function_span(&range_records, "parameter_rules::check_range");
+    assert_eq!(
+        enter["arguments"],
+        serde_json::json!([
+            {"name":"value", "content":expected_debug_trace("999")},
+            {"name":"unit", "content":expected_debug_trace(&format!("{range_unit:#?}"))},
+            {"name":"rule", "content":expected_debug_trace(&format!("{rule:#?}"))}
+        ])
+    );
+    assert_eq!(
+        exit["result"],
+        expected_debug_trace(&format!("{expected_range:#?}"))
+    );
+
+    let mut conversion_candidate = candidate("hb", "Hb: 137 g/l");
+    conversion_candidate.raw_value = "137".into();
+    conversion_candidate.parsed_value = Some(137.0);
+    conversion_candidate.number_format = Some("integer".into());
+    conversion_candidate.raw_unit = Some("g/l".into());
+    let expected_conversion = Ok((Decimal::new(137, 1), Some("g/dL".to_owned())));
+    let (conversion, _conversion_log, conversion_records) = traced(&directory, || {
+        super::value_and_unit(&conversion_candidate, rule)
+    });
+    assert_eq!(conversion, expected_conversion);
+    let (enter, exit) = function_span(&conversion_records, "parameter_rules::value_and_unit");
+    assert_eq!(
+        enter["arguments"],
+        serde_json::json!([
+            {
+                "name":"candidate",
+                "content":expected_debug_trace(&format!("{conversion_candidate:#?}"))
+            },
+            {"name":"rule", "content":expected_debug_trace(&format!("{rule:#?}"))}
+        ])
+    );
+    assert_eq!(
+        exit["result"],
+        expected_debug_trace(&format!("{expected_conversion:#?}"))
+    );
+
+    let mut private_candidate =
+        candidate("hb", "Hb: 13,7 g/dL\npassword = synthetic-candidate-secret");
+    private_candidate.context = private_candidate.original_line.clone();
+    let candidates = vec![private_candidate];
+    let decisions = vec![RuleDecision {
+        candidate_id: "candidate-hb".into(),
+        rule_id: "emoglobina".into(),
+        accepted: true,
+        reason_code: "ACCEPTED_CONFIGURED_SYNONYM".into(),
+    }];
+    let (evaluated, evaluation_log, evaluation_records) = traced(&directory, || {
+        super::evaluate_parameter_candidates(&candidates, &rules.rules)
+    });
+    assert_eq!(evaluated, decisions);
+    assert!(!evaluation_log.contains("synthetic-candidate-secret"));
+    let (enter, exit) = function_span(
+        &evaluation_records,
+        "parameter_rules::evaluate_parameter_candidates",
+    );
+    assert_eq!(
+        enter["arguments"],
+        serde_json::json!([
+            {
+                "name":"candidates",
+                "content":expected_debug_trace(
+                    &format!("{candidates:#?}").replace(
+                        "synthetic-candidate-secret",
+                        "[secret_omitted]"
+                    )
+                )
+            },
+            {"name":"rules", "content":expected_debug_trace(&format!("{:#?}", rules.rules))}
+        ])
+    );
+    assert_eq!(
+        exit["result"],
+        expected_debug_trace(&format!("{decisions:#?}"))
+    );
+
+    let (built, build_log, build_records) = traced(&directory, || {
+        super::build_parameter_slices(&candidates, &rules)
+    });
+    assert_eq!(built.points.len(), 1);
+    assert_eq!(built.decisions, decisions);
+    assert!(!build_log.contains("synthetic-candidate-secret"));
+    let (enter, exit) = function_span(&build_records, "parameter_rules::build_parameter_slices");
+    assert_eq!(
+        enter["arguments"],
+        serde_json::json!([
+            {
+                "name":"candidates",
+                "content":expected_debug_trace(
+                    &format!("{candidates:#?}").replace(
+                        "synthetic-candidate-secret",
+                        "[secret_omitted]"
+                    )
+                )
+            },
+            {"name":"rules", "content":expected_debug_trace(&format!("{rules:#?}"))}
+        ])
+    );
+    assert_eq!(exit["result"]["value"]["format"], "rust_debug");
+    let build_output = exit["result"]["value"]["value"]
+        .as_str()
+        .expect("risultato Debug del build");
+    for expected_field in ["series:", "points:", "decisions:", "candidate-hb"] {
+        assert!(
+            build_output.contains(expected_field),
+            "campo {expected_field}"
+        );
+    }
+
+    let message = "Configurazione sintetica api_key=synthetic-error-secret";
+    let (error, error_log, error_records) = traced(&directory, || super::config_error(message));
+    assert_eq!(error.code(), ErrorCode::Configuration);
+    assert_eq!(error.message(), message);
+    assert!(!error_log.contains("synthetic-error-secret"));
+    let (enter, exit) = function_span(&error_records, "parameter_rules::config_error");
+    assert_eq!(
+        enter["arguments"],
+        serde_json::json!([{
+            "name":"message",
+            "content":expected_text_trace(
+                "Configurazione sintetica api_key=[secret_omitted]"
+            )
+        }])
+    );
+    assert_eq!(
+        exit["result"],
+        expected_debug_trace(
+            "OperationError {\n    code: Configuration,\n    message: \"Configurazione sintetica api_key=[secret_omitted]\",\n}"
+        )
+    );
 }

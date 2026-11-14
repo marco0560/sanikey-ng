@@ -10,6 +10,7 @@ use crate::metadata::{
 };
 use crate::pdf::ExtractedText;
 use rusqlite::Connection;
+use serde_json::{Value, json};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -187,6 +188,274 @@ fn study(root: &Path) -> DicomStudy {
         instance_count: 2,
         support_paths: vec![],
     }
+}
+
+fn expected_text_trace(value: &str) -> Value {
+    json!({
+        "kind": "data",
+        "value": {
+            "format": "text_redacted_known_secret_assignments",
+            "value": value,
+        }
+    })
+}
+
+fn expected_path_trace(path: &Path) -> Value {
+    json!({
+        "kind": "data",
+        "value": {"encoding": "utf8", "value": path.to_str().expect("path fixture UTF-8")}
+    })
+}
+
+fn expected_arguments(fields: Vec<(&str, Value)>) -> Value {
+    Value::Array(
+        fields
+            .into_iter()
+            .map(|(name, content)| json!({"name": name, "content": content}))
+            .collect(),
+    )
+}
+
+fn expected_document_trace(path: &Path) -> Value {
+    let path_text = path.to_string_lossy();
+    json!({
+        "kind": "data",
+        "value": [{
+            "kind": "data",
+            "value": {
+                "document_id": expected_text_trace("doc-a"),
+                "patient_id": expected_text_trace("patient-a"),
+                "path": expected_path_trace(path),
+                "sqlite_path_text_lossy": expected_text_trace(&path_text),
+                "sqlite_path_encoding": "lossy_utf8",
+                "title": expected_text_trace("Blood Test"),
+                "category": expected_text_trace("Laboratorio"),
+                "kind": expected_text_trace("text"),
+                "sha256": expected_text_trace("synthetic-sha256"),
+                "date": expected_text_trace("2026-01-02"),
+                "series": null,
+                "tags": [expected_text_trace("laboratorio")],
+                "origin": expected_text_trace("source"),
+                "container_id": null,
+                "internal_path": null,
+            }
+        }]
+    })
+}
+
+fn expected_study_trace(support_path: &Path) -> Value {
+    json!({
+        "kind": "data",
+        "value": [{
+                "study_id": expected_text_trace("study-a"),
+                "patient_id": expected_text_trace("patient-a"),
+                "support_path": expected_path_trace(support_path),
+                "sqlite_support_path_text_lossy": expected_text_trace(&support_path.to_string_lossy()),
+                "support_kind": expected_text_trace("dicom_study"),
+                "extracted_path": null,
+                "sqlite_extracted_path_text_lossy": null,
+                "viewer_paths": [],
+                "html_viewer_path": null,
+                "warnings": [],
+                "study_instance_uid": expected_text_trace("1.2.826.0.1.3680043.10.543.1"),
+                "study_date": expected_text_trace("2026-01-02"),
+                "study_description": expected_text_trace("Synthetic Study"),
+                "instance_count": 2,
+                "support_paths": [],
+        }]
+    })
+}
+
+fn assert_database_trace_calls(
+    records: &[Value],
+    function: &str,
+    arguments: &Value,
+    result: &Value,
+    expected_count: Option<usize>,
+) {
+    let entries: Vec<_> = records
+        .iter()
+        .filter(|record| record["type"] == "function_enter" && record["function"] == function)
+        .collect();
+    assert!(!entries.is_empty(), "ingresso mancante: {function}");
+    if let Some(expected_count) = expected_count {
+        assert_eq!(entries.len(), expected_count, "numero ingressi: {function}");
+    }
+    for entry in entries {
+        assert_eq!(entry["arguments"], *arguments, "argomenti: {function}");
+        let call_id = entry["call_id"].as_u64().expect("call_id numerico");
+        let exits: Vec<_> = records
+            .iter()
+            .filter(|record| {
+                record["type"] == "function_exit"
+                    && record["function"] == function
+                    && record["call_id"] == call_id
+            })
+            .collect();
+        assert_eq!(exits.len(), 1, "uscita correlata per {function}#{call_id}");
+        assert_eq!(exits[0]["outcome"], "returned", "esito: {function}");
+        assert!(
+            exits[0]["duration_ms"].is_u64(),
+            "durata mancante: {function}#{call_id}"
+        );
+        assert_eq!(exits[0]["result"], *result, "risultato: {function}");
+    }
+}
+
+#[test]
+fn synthetic_database_trace_matches_complete_arguments_results_and_durations() {
+    let directory = TestDirectory::new();
+    let person = person(directory.path());
+    let document = document(directory.path());
+    let metadata = CuratedMetadata::default();
+    let dicom = study(directory.path());
+    let extracted = ExtractedText {
+        document_id: document.document_id.clone(),
+        text: "api_key=SYNTHETIC-DATABASE-SECRET".into(),
+        warnings: vec!["synthetic parser warning".into()],
+        page_spans: vec![],
+    };
+    let extracted_text = [extracted];
+    let documents = [document];
+    let dicom_studies = [dicom];
+    let logs = directory.path().join("logs");
+    let (session, log_path) =
+        Session::create_in_directory_with_level(&logs, Component::Core, Level::Trace)
+            .expect("sessione trace sintetica");
+
+    let result = session
+        .scoped(|| {
+            build_database(
+                &person,
+                &documents,
+                &metadata,
+                &dicom_studies,
+                &extracted_text,
+            )
+        })
+        .expect("build database sintetico");
+    drop(session);
+    assert_eq!(result.documents, 1);
+    assert_eq!(result.timeline_events, 0);
+    assert_eq!(result.dicom_studies, 1);
+
+    let log = fs::read_to_string(log_path).expect("log trace sintetico");
+    assert!(!log.contains("SYNTHETIC-DATABASE-SECRET"));
+    assert!(log.contains("secret_omitted"));
+    let records: Vec<Value> = log
+        .lines()
+        .map(|line| serde_json::from_str(line).expect("record JSON sintetico"))
+        .collect();
+    let database = database_path(&person);
+    let documents_trace = expected_document_trace(&documents[0].path);
+    let studies_trace = expected_study_trace(&dicom_studies[0].support_path);
+    let metadata_debug = concat!(
+        "CuratedMetadata {\n",
+        "    problems: [],\n",
+        "    medications: [],\n",
+        "    medication_leaflets: [],\n",
+        "    medication_leaflet_exclusions: [],\n",
+        "    therapies: [],\n",
+        "    procedures: [],\n",
+        "    observations: [],\n",
+        "    observation_series: [],\n",
+        "    observation_points: [],\n",
+        "    timeline_events: [],\n",
+        "    document_tags: {},\n",
+        "    clinical_summary: None,\n",
+        "}"
+    );
+    let extracted_debug_redacted = concat!(
+        "[\n",
+        "    ExtractedText {\n",
+        "        document_id: \"doc-a\",\n",
+        "        text: \"api_key=[secret_omitted]\",\n",
+        "        warnings: [\n",
+        "            \"synthetic parser warning\",\n",
+        "        ],\n",
+        "        page_spans: [],\n",
+        "    },\n",
+        "]"
+    );
+    let empty_result = expected_text_trace("()");
+
+    assert_database_trace_calls(
+        &records,
+        "database::database_path",
+        &expected_arguments(vec![(
+            "local_build",
+            expected_path_trace(&person.local_build),
+        )]),
+        &expected_path_trace(&database),
+        Some(3),
+    );
+    let document_arguments = expected_arguments(vec![
+        ("documents", documents_trace),
+        (
+            "extracted_text",
+            expected_text_trace(extracted_debug_redacted),
+        ),
+        (
+            "sqlite_connection",
+            json!({"kind": "omitted", "reason": "external_component"}),
+        ),
+    ]);
+    assert_database_trace_calls(
+        &records,
+        "database::insert_documents",
+        &document_arguments,
+        &empty_result,
+        Some(1),
+    );
+    assert_database_trace_calls(
+        &records,
+        "database::insert_documents_impl",
+        &document_arguments,
+        &empty_result,
+        Some(1),
+    );
+    let metadata_arguments = expected_arguments(vec![
+        ("curated_metadata", expected_text_trace(metadata_debug)),
+        (
+            "sqlite_connection",
+            json!({"kind": "omitted", "reason": "external_component"}),
+        ),
+    ]);
+    assert_database_trace_calls(
+        &records,
+        "database::insert_metadata",
+        &metadata_arguments,
+        &empty_result,
+        Some(1),
+    );
+    assert_database_trace_calls(
+        &records,
+        "database::insert_metadata_impl",
+        &metadata_arguments,
+        &empty_result,
+        Some(1),
+    );
+    let dicom_arguments = expected_arguments(vec![
+        ("dicom_studies", studies_trace),
+        (
+            "sqlite_connection",
+            json!({"kind": "omitted", "reason": "external_component"}),
+        ),
+    ]);
+    assert_database_trace_calls(
+        &records,
+        "database::insert_dicom",
+        &dicom_arguments,
+        &empty_result,
+        Some(1),
+    );
+    assert_database_trace_calls(
+        &records,
+        "database::insert_dicom_impl",
+        &dicom_arguments,
+        &empty_result,
+        Some(1),
+    );
 }
 
 #[test]
