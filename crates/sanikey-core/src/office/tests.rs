@@ -206,6 +206,134 @@ fn process_trace_captures_native_command_and_exit_but_events_stay_terse() {
     }
 }
 
+#[cfg(unix)]
+#[test]
+fn office_helper_traces_record_arguments_results_durations_and_secret_omissions() {
+    use super::{find_program_in_path, path_to_file_url, supports_conversion};
+    use serde_json::json;
+
+    fn path_value(path: &std::path::Path) -> serde_json::Value {
+        json!({
+            "kind": "data",
+            "value": {
+                "encoding": "utf8",
+                "value": path.to_str().expect("path sintetico UTF-8"),
+            },
+        })
+    }
+
+    fn assert_call(
+        records: &[serde_json::Value],
+        function: &str,
+        arguments: serde_json::Value,
+        result: serde_json::Value,
+    ) {
+        let entries: Vec<_> = records
+            .iter()
+            .filter(|record| record["type"] == "function_enter" && record["function"] == function)
+            .collect();
+        assert_eq!(entries.len(), 1, "ingresso univoco di {function}");
+        assert!(entries[0]["call_id"].as_u64().is_some());
+        assert_eq!(
+            entries[0]["arguments"], arguments,
+            "argomenti di {function}"
+        );
+
+        let exits: Vec<_> = records
+            .iter()
+            .filter(|record| {
+                record["type"] == "function_exit"
+                    && record["function"] == function
+                    && record["call_id"] == entries[0]["call_id"]
+            })
+            .collect();
+        assert_eq!(exits.len(), 1, "uscita correlata di {function}");
+        assert_eq!(exits[0]["outcome"], "returned");
+        assert!(exits[0]["duration_ms"].as_u64().is_some());
+        assert_eq!(exits[0]["result"], result, "risultato di {function}");
+    }
+
+    let directory = TestDirectory::new();
+    let executable = directory.path().join("pandoc");
+    fs::write(&executable, b"synthetic executable").expect("eseguibile sintetico");
+    let lookup_path = directory.path().as_os_str();
+    let ordinary_path = PathBuf::from("/synthetic/profilo è");
+    let secret_source = directory
+        .path()
+        .join("api_key=SYNTHETIC-OFFICE-TRACE-SECRET/source.docx");
+    let record = document_record(
+        secret_source.to_str().expect("path sintetico UTF-8"),
+        "office",
+    );
+
+    let logs = directory.path().join("logs");
+    let (session, log_path) =
+        Session::create_in_directory_with_level(&logs, Component::Core, Level::Trace)
+            .expect("sessione Trace sintetica");
+    let (found, url, supported) = session.scoped(|| {
+        (
+            find_program_in_path("pandoc", lookup_path),
+            path_to_file_url(&ordinary_path),
+            supports_conversion(&record),
+        )
+    });
+    assert_eq!(found, Some(executable.clone()));
+    assert_eq!(url, "file:///synthetic/profilo%20%C3%A8");
+    assert!(supported);
+    session.finish(Component::Core).expect("chiusura Trace");
+
+    let log = fs::read_to_string(log_path).expect("log Trace sintetico");
+    assert!(!log.contains("SYNTHETIC-OFFICE-TRACE-SECRET"));
+    assert!(log.contains("secret_omitted"));
+    let records: Vec<serde_json::Value> = log
+        .lines()
+        .map(|line| serde_json::from_str(line).expect("record JSON sintetico"))
+        .collect();
+    let expected_directory = path_value(directory.path());
+    assert_call(
+        &records,
+        "office::find_program_in_path",
+        json!([
+            {
+                "name": "name",
+                "content": {
+                    "kind": "data",
+                    "value": {
+                        "format": "text_redacted_known_secret_assignments",
+                        "value": "pandoc",
+                    },
+                },
+            },
+            {
+                "name": "path_search_directories",
+                "content": {"kind": "data", "value": [expected_directory]},
+            },
+        ]),
+        path_value(&executable),
+    );
+    assert_call(
+        &records,
+        "office::path_to_file_url",
+        json!([{"name": "path", "content": path_value(&ordinary_path)}]),
+        json!({
+            "kind": "data",
+            "value": {
+                "format": "text_redacted_known_secret_assignments",
+                "value": "file:///synthetic/profilo%20%C3%A8",
+            },
+        }),
+    );
+    assert_call(
+        &records,
+        "office::supports_conversion",
+        json!([
+            {"name": "record_path", "content": {"kind": "secret_omitted"}},
+            {"name": "record_kind", "content": {"kind": "data", "value": "office"}},
+        ]),
+        json!({"kind": "data", "value": true}),
+    );
+}
+
 #[test]
 fn render_trace_marks_source_contents_as_unobserved_for_unsupported_formats() {
     let directory = TestDirectory::new();

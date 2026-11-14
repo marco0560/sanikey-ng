@@ -1006,6 +1006,94 @@
       "evidence": "observation_imports::tests::synthetic_trace_records_complete_observation_import_helper_spans confronta input e output di table_str, call_id e durata.",
       "evidence_file": "crates/sanikey-core/src/observation_imports/tests.rs",
       "evidence_sha256": "64784d2ba4371904c60e35996e270340a1514a5f7371ad3c86c8d4e64a18378a"
+    },
+    {
+      "id": "crates/sanikey-core/src/office.rs#560eeb4e0ecbef87f9c11ce5eda889c1d7aefe0151d388c71476f81389810dac:18",
+      "source_sha256": "560eeb4e0ecbef87f9c11ce5eda889c1d7aefe0151d388c71476f81389810dac",
+      "status": "covered",
+      "evidence": "office::tests::office_helper_traces_record_arguments_results_durations_and_secret_omissions confronta argomenti e risultati dei casi sintetici, call_id, durata e redazione.",
+      "evidence_file": "crates/sanikey-core/src/office/tests.rs",
+      "evidence_sha256": "f5fe88816a592a825a48a083746e7a5ab29a2f306f81b9fbe915f9a43d002794"
+    },
+    {
+      "id": "crates/sanikey-core/src/office.rs#560eeb4e0ecbef87f9c11ce5eda889c1d7aefe0151d388c71476f81389810dac:26",
+      "source_sha256": "560eeb4e0ecbef87f9c11ce5eda889c1d7aefe0151d388c71476f81389810dac",
+      "status": "covered",
+      "evidence": "office::tests::office_helper_traces_record_arguments_results_durations_and_secret_omissions confronta argomenti e risultati dei casi sintetici, call_id, durata e redazione.",
+      "evidence_file": "crates/sanikey-core/src/office/tests.rs",
+      "evidence_sha256": "f5fe88816a592a825a48a083746e7a5ab29a2f306f81b9fbe915f9a43d002794"
+    },
+    {
+      "id": "crates/sanikey-core/src/office.rs#560eeb4e0ecbef87f9c11ce5eda889c1d7aefe0151d388c71476f81389810dac:32",
+      "source_sha256": "560eeb4e0ecbef87f9c11ce5eda889c1d7aefe0151d388c71476f81389810dac",
+      "status": "covered",
+      "evidence": "office::tests::office_helper_traces_record_arguments_results_durations_and_secret_omissions confronta argomenti e risultati dei casi sintetici, call_id, durata e redazione.",
+      "evidence_file": "crates/sanikey-core/src/office/tests.rs",
+      "evidence_sha256": "f5fe88816a592a825a48a083746e7a5ab29a2f306f81b9fbe915f9a43d002794"
+    },
+    {
+      "id": "crates/sanikey-core/src/vital_signs.rs#8b54d36faa4dad0b2e174ba25ce85c050ff0a79848db9aaecfdfd4c4cabad946:3",
+      "source_sha256": "8b54d36faa4dad0b2e174ba25ce85c050ff0a79848db9aaecfdfd4c4cabad946",
+      "status": "covered",
+      "evidence": "vital_signs::tests::trace_spans_match_vital_sign_arguments_results_ids_durations_and_redactions confronta argomenti e risultati dei casi sintetici, call_id, durata e redazione.",
+      "evidence_file": "crates/sanikey-core/src/vital_signs/tests.rs",
+      "evidence_sha256": "6537628b12c460a2077c07b66556958c6049e77801cf079ad136f6ba2e18d63f"
+    },
+    {
+      "id": "crates/sanikey-core/src/vital_signs.rs#8b54d36faa4dad0b2e174ba25ce85c050ff0a79848db9aaecfdfd4c4cabad946:13",
+      "source_sha256": "8b54d36faa4dad0b2e174ba25ce85c050ff0a79848db9aaecfdfd4c4cabad946",
+      "status": "covered",
+      "evidence": "vital_signs::tests::trace_spans_match_vital_sign_arguments_results_ids_durations_and_redactions confronta argomenti e risultati dei casi sintetici, call_id, durata e redazione.",
+      "evidence_file": "crates/sanikey-core/src/vital_signs/tests.rs",
+      "evidence_sha256": "6537628b12c460a2077c07b66556958c6049e77801cf079ad136f6ba2e18d63f"
+    },
+    {
+      "id": "crates/sanikey-core/src/vital_signs.rs#8b54d36faa4dad0b2e174ba25ce85c050ff0a79848db9aaecfdfd4c4cabad946:22",
+      "source_sha256": "8b54d36faa4dad0b2e174ba25ce85c050ff0a79848db9aaecfdfd4c4cabad946",
+      "status": "covered",
+      "evidence": "vital_signs::tests::trace_spans_match_vital_sign_arguments_results_ids_durations_and_redactions confronta argomenti e risultati dei casi sintetici, call_id, durata e redazione.",
+      "evidence_file": "crates/sanikey-core/src/vital_signs/tests.rs",
+      "evidence_sha256": "6537628b12c460a2077c07b66556958c6049e77801cf079ad136f6ba2e18d63f"
+    },
+    {
+      "id": "crates/sanikey-core/src/vital_signs.rs#8b54d36faa4dad0b2e174ba25ce85c050ff0a79848db9aaecfdfd4c4cabad946:33",
+      "source_sha256": "8b54d36faa4dad0b2e174ba25ce85c050ff0a79848db9aaecfdfd4c4cabad946",
+      "status": "covered",
+      "evidence": "vital_signs::tests::trace_spans_match_vital_sign_arguments_results_ids_durations_and_redactions confronta argomenti e risultati dei casi sintetici, call_id, durata e redazione.",
+      "evidence_file": "crates/sanikey-core/src/vital_signs/tests.rs",
+      "evidence_sha256": "6537628b12c460a2077c07b66556958c6049e77801cf079ad136f6ba2e18d63f"
+    },
+    {
+      "id": "crates/sanikey-core/src/vital_signs.rs#8b54d36faa4dad0b2e174ba25ce85c050ff0a79848db9aaecfdfd4c4cabad946:37",
+      "source_sha256": "8b54d36faa4dad0b2e174ba25ce85c050ff0a79848db9aaecfdfd4c4cabad946",
+      "status": "covered",
+      "evidence": "vital_signs::tests::trace_spans_match_vital_sign_arguments_results_ids_durations_and_redactions confronta argomenti e risultati dei casi sintetici, call_id, durata e redazione.",
+      "evidence_file": "crates/sanikey-core/src/vital_signs/tests.rs",
+      "evidence_sha256": "6537628b12c460a2077c07b66556958c6049e77801cf079ad136f6ba2e18d63f"
+    },
+    {
+      "id": "crates/sanikey-core/src/vital_signs.rs#8b54d36faa4dad0b2e174ba25ce85c050ff0a79848db9aaecfdfd4c4cabad946:39",
+      "source_sha256": "8b54d36faa4dad0b2e174ba25ce85c050ff0a79848db9aaecfdfd4c4cabad946",
+      "status": "covered",
+      "evidence": "vital_signs::tests::trace_spans_match_vital_sign_arguments_results_ids_durations_and_redactions confronta argomenti e risultati dei casi sintetici, call_id, durata e redazione.",
+      "evidence_file": "crates/sanikey-core/src/vital_signs/tests.rs",
+      "evidence_sha256": "6537628b12c460a2077c07b66556958c6049e77801cf079ad136f6ba2e18d63f"
+    },
+    {
+      "id": "crates/sanikey-core/src/txt_pipeline.rs#49f15ddd86b9914d41ce98047c2e3448990b35d61ee8b8a136938abf52941045:44",
+      "source_sha256": "49f15ddd86b9914d41ce98047c2e3448990b35d61ee8b8a136938abf52941045",
+      "status": "covered",
+      "evidence": "txt_pipeline::tests::synthetic_trace_spans_record_txt_pipeline_arguments_results_and_limits confronta argomenti e risultato completi nel percorso sintetico riuscito, call_id, durata e omissioni.",
+      "evidence_file": "crates/sanikey-core/src/txt_pipeline/tests.rs",
+      "evidence_sha256": "12a11bac2233d56afcf0aa2362bee1ea467490108a1fe789ba4432bc815efb62"
+    },
+    {
+      "id": "crates/sanikey-core/src/txt_pipeline.rs#49f15ddd86b9914d41ce98047c2e3448990b35d61ee8b8a136938abf52941045:46",
+      "source_sha256": "49f15ddd86b9914d41ce98047c2e3448990b35d61ee8b8a136938abf52941045",
+      "status": "covered",
+      "evidence": "txt_pipeline::tests::synthetic_trace_spans_record_txt_pipeline_arguments_results_and_limits confronta argomenti e risultato completi nel percorso sintetico riuscito, call_id, durata e omissioni.",
+      "evidence_file": "crates/sanikey-core/src/txt_pipeline/tests.rs",
+      "evidence_sha256": "12a11bac2233d56afcf0aa2362bee1ea467490108a1fe789ba4432bc815efb62"
     }
   ]
 }

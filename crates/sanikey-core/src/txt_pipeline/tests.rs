@@ -61,6 +61,144 @@ fn repository_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
+fn trace_records(path: &Path) -> Vec<Value> {
+    fs::read_to_string(path)
+        .expect("log traccia sintetico")
+        .lines()
+        .map(|line| serde_json::from_str(line).expect("record JSON valido"))
+        .collect()
+}
+
+fn trace_entry<'a>(records: &'a [Value], function: &str) -> &'a Value {
+    let mut entries = records
+        .iter()
+        .filter(|record| record["type"] == "function_enter" && record["function"] == function);
+    let entry = entries
+        .next()
+        .unwrap_or_else(|| panic!("span assente: {function}"));
+    assert!(entries.next().is_none(), "span duplicata: {function}");
+    entry
+}
+
+fn trace_exit<'a>(records: &'a [Value], entry: &Value) -> &'a Value {
+    let call_id = entry["call_id"].as_u64().expect("call_id numerico");
+    let function = entry["function"].as_str().expect("nome funzione");
+    let mut exits = records.iter().filter(|record| {
+        record["type"] == "function_exit"
+            && record["function"] == function
+            && record["call_id"].as_u64() == Some(call_id)
+    });
+    let exit = exits
+        .next()
+        .unwrap_or_else(|| panic!("uscita assente: {function}#{call_id}"));
+    assert!(
+        exits.next().is_none(),
+        "uscita duplicata: {function}#{call_id}"
+    );
+    assert_eq!(exit["outcome"], "returned", "esito di {function}#{call_id}");
+    assert!(
+        exit["duration_ms"].as_u64().is_some(),
+        "durata assente: {function}#{call_id}"
+    );
+    exit
+}
+
+fn trace_argument<'a>(entry: &'a Value, name: &str) -> &'a Value {
+    entry["arguments"]
+        .as_array()
+        .expect("argomenti array")
+        .iter()
+        .find(|argument| argument["name"] == name)
+        .unwrap_or_else(|| panic!("argomento {name} assente in {}", entry["function"]))
+}
+
+fn expected_trace_path(path: &Path) -> Value {
+    serde_json::json!({
+        "kind":"data",
+        "value":{
+            "encoding":"utf8",
+            "value":path.to_str().expect("percorso UTF-8")
+        }
+    })
+}
+
+fn expected_trace_debug<T: std::fmt::Debug>(value: &T) -> Value {
+    serde_json::json!({
+        "kind":"data",
+        "value":{
+            "format":"text_redacted_known_secret_assignments",
+            "value":format!("{value:#?}")
+        }
+    })
+}
+
+fn expected_trace_person(patient: &PersonConfig) -> Value {
+    serde_json::json!({
+        "kind":"data",
+        "value":{
+            "id":patient.id,
+            "display_name":patient.display_name,
+            "source_documents":expected_trace_path(&patient.source_documents),
+            "metadata_directory":expected_trace_path(&patient.metadata_directory),
+            "local_build":expected_trace_path(&patient.local_build),
+            "enabled":patient.enabled,
+            "ui":expected_trace_debug(&patient.ui),
+            "search":expected_trace_debug(&patient.search),
+            "ingestion":expected_trace_debug(&patient.ingestion)
+        }
+    })
+}
+
+fn expected_trace_argument(name: &str, content: Value) -> Value {
+    serde_json::json!({"name":name, "content":content})
+}
+
+fn expected_txt_pipeline_arguments(patient: &PersonConfig, heading: Option<&str>) -> Value {
+    let mut arguments = vec![
+        expected_trace_argument("person", expected_trace_person(patient)),
+        expected_trace_argument(
+            "source_documents",
+            expected_trace_path(&patient.source_documents),
+        ),
+        expected_trace_argument(
+            "metadata_directory",
+            expected_trace_path(&patient.metadata_directory),
+        ),
+        expected_trace_argument("local_build", expected_trace_path(&patient.local_build)),
+    ];
+    if let Some(heading) = heading {
+        arguments.extend([
+            expected_trace_argument(
+                "include_predicate",
+                serde_json::json!({"kind":"omitted", "reason":"unsupported_type"}),
+            ),
+            expected_trace_argument(
+                "reader",
+                serde_json::json!({"kind":"omitted", "reason":"unsupported_type"}),
+            ),
+            expected_trace_argument(
+                "heading",
+                serde_json::json!({"kind":"data", "value":heading}),
+            ),
+        ]);
+    }
+    Value::Array(arguments)
+}
+
+fn expected_pipeline_exit(result: &super::TxtPipelineResult) -> Value {
+    serde_json::json!({
+        "kind":"data",
+        "value":{
+            "result":expected_trace_debug(result),
+            "path_projection":{
+                "database":expected_trace_path(&result.database),
+                "data":expected_trace_path(&result.data),
+                "frontend":expected_trace_path(&result.frontend)
+            }
+        }
+    })
+}
+
 #[test]
 fn txt_pipeline_matches_the_synthetic_baseline_and_builds_searchable_outputs() {
     let root = repository_root();
@@ -507,6 +645,150 @@ fn pdf_pipeline_preserves_extraction_warnings_in_json() {
         exported["documents"][0]["page_spans"],
         serde_json::json!([])
     );
+}
+
+#[test]
+fn synthetic_trace_spans_record_txt_pipeline_arguments_results_and_limits() {
+    use crate::logging::{Component, Level, Session};
+
+    let directory = TestDirectory::new();
+    let source = directory.path().join("source");
+    fs::create_dir_all(&source).expect("directory documenti sintetici");
+    let secret = "synthetic-txt-secret-6172";
+    let source_path = source.join("20260102 Nota clinica sintetica.txt");
+    let mut source_bytes =
+        format!("Risultato clinico sintetico; password = \"{secret}\".").into_bytes();
+    source_bytes.push(0xff);
+    fs::write(&source_path, &source_bytes).expect("documento TXT sintetico");
+
+    let mut patient = person(
+        directory.path(),
+        &source,
+        &directory.path().join("metadata"),
+    );
+    patient.local_build = directory.path().join("trace-output");
+
+    let log_directory = directory.path().join("trace-logs");
+    let (session, log_path) =
+        Session::create_in_directory_with_level(&log_directory, Component::Core, Level::Trace)
+            .expect("sessione Trace sintetica");
+    let result = session
+        .scoped(|| build_txt_pipeline(&patient))
+        .expect("pipeline TXT sintetica");
+    assert_eq!(result.documents, 1);
+    drop(session);
+
+    let contents = fs::read_to_string(&log_path).expect("log Trace sintetico");
+    assert!(
+        !contents.contains(secret),
+        "un segreto noto è finito nel log"
+    );
+    let records = trace_records(&log_path);
+    let build_txt = trace_entry(&records, "txt_pipeline::build_txt_pipeline");
+    let build_txt_exit = trace_exit(&records, build_txt);
+    let build_pipeline = trace_entry(&records, "txt_pipeline::build_pipeline");
+    let build_pipeline_exit = trace_exit(&records, build_pipeline);
+    let read_document = trace_entry(&records, "txt_pipeline::read_document");
+    let read_document_exit = trace_exit(&records, read_document);
+    let build_database = trace_entry(&records, "txt_pipeline::build_database");
+    let build_database_exit = trace_exit(&records, build_database);
+
+    assert!(build_txt["parent_call_id"].is_null());
+    assert_eq!(build_pipeline["parent_call_id"], build_txt["call_id"]);
+    assert_eq!(read_document["parent_call_id"], build_pipeline["call_id"]);
+    assert_eq!(build_database["parent_call_id"], build_pipeline["call_id"]);
+
+    assert_eq!(
+        build_txt["arguments"],
+        expected_txt_pipeline_arguments(&patient, None)
+    );
+    assert_eq!(
+        build_pipeline["arguments"],
+        expected_txt_pipeline_arguments(&patient, Some("Archivio TXT"))
+    );
+
+    // Questi controlli documentano omissioni e flusso annidato; gli argomenti
+    // interni complessi non hanno expected completi indipendenti e non bastano
+    // a dichiarare read_document o build_database coperti.
+    assert_eq!(
+        trace_argument(build_database, "sqlite_engine_internals")["content"],
+        serde_json::json!({"kind":"omitted", "reason":"external_component"})
+    );
+    assert_eq!(
+        trace_argument(build_database, "patient_id")["content"]["value"],
+        "patient-a"
+    );
+    assert_eq!(
+        trace_argument(build_database, "database_path")["content"]["value"]["value"],
+        result.database.to_str().expect("percorso UTF-8")
+    );
+    let database_documents =
+        trace_argument(build_database, "documents")["content"]["value"]["value"]
+            .as_str()
+            .expect("documenti serializzati");
+    assert!(database_documents.contains("Risultato clinico sintetico"));
+    assert!(database_documents.contains("[secret_omitted]"));
+    assert_eq!(
+        trace_argument(build_database, "document_paths")["content"]["value"][0]["source_path"]["value"]
+            ["value"],
+        source_path.to_str().expect("percorso UTF-8")
+    );
+    assert_eq!(
+        trace_argument(read_document, "document_path")["content"]["value"]["value"],
+        source_path.to_str().expect("percorso UTF-8")
+    );
+    assert_eq!(
+        trace_argument(read_document, "record")["content"]["value"]["title"],
+        "Nota clinica sintetica"
+    );
+    assert_eq!(
+        trace_argument(read_document, "configured_tags")["content"]["kind"],
+        "data"
+    );
+    assert_eq!(
+        trace_argument(read_document, "options")["content"]["kind"],
+        "data"
+    );
+
+    let expected_exit = expected_pipeline_exit(&result);
+    assert_eq!(build_txt_exit["result"], expected_exit);
+    assert_eq!(build_pipeline_exit["result"], expected_exit);
+    assert_eq!(read_document_exit["result"]["kind"], "data");
+    assert_eq!(
+        read_document_exit["result"]["value"]["result"]["kind"],
+        "data"
+    );
+    assert_eq!(
+        read_document_exit["result"]["value"]["input_source_bytes"]["encoding"],
+        "utf8_lossy"
+    );
+    assert_eq!(
+        read_document_exit["result"]["value"]["input_source_bytes"]["raw_bytes"],
+        serde_json::json!({
+            "kind":"omitted",
+            "reason":"invalid_utf8_byte_sequences_not_preserved"
+        })
+    );
+    assert_eq!(
+        read_document_exit["result"]["value"]["record_path"]["kind"],
+        "data"
+    );
+    let read_result = read_document_exit["result"]["value"]["result"]["value"]["value"]
+        .as_str()
+        .expect("risultato TXT serializzato");
+    assert!(read_result.contains("Risultato clinico sintetico"));
+    assert!(read_result.contains("[secret_omitted]"));
+    assert_eq!(build_database_exit["result"]["kind"], "data");
+    assert_eq!(
+        build_database_exit["result"]["value"]["result"]["kind"],
+        "data"
+    );
+    assert_eq!(
+        build_database_exit["result"]["value"]["result"]["value"]["value"],
+        "()"
+    );
+    assert!(contents.contains("secret_omitted"));
+    assert!(contents.contains("Risultato clinico sintetico"));
 }
 
 #[test]
