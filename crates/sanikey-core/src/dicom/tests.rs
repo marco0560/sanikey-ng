@@ -666,6 +666,32 @@ fn previews_report_unsupported_pixels_without_losing_the_instance() {
 }
 
 #[test]
+fn trace_redacts_secret_in_preview_warning_without_changing_the_warning() {
+    let temp = TempDir::new();
+    let secret = "synthetic-dicom-path-secret";
+    let path = temp.path().join(format!("api_key={secret}.dcm"));
+    dicom_file(&path, Some("1.2.3"), None, None);
+    let person = person(temp.path());
+    let document = document(path, "dicom_file", "metadata-only", None);
+    let studies = catalog_dicom_studies(&person, &[document]);
+
+    let (previews, log, records) = traced(&temp, || {
+        generate_dicom_previews(&person, &studies).expect("anteprime DICOM sintetiche")
+    });
+
+    let warning = &previews[0].warnings[0];
+    assert!(warning.contains(secret));
+
+    let (_, exit) = function_span(&records, "dicom::generate_dicom_previews");
+    let trace_warning = exit["result"]["value"]["output"]["value"][0]["warnings"][0]
+        .as_str()
+        .expect("warning proiettato in Trace");
+    assert!(trace_warning.contains("[secret_omitted]"));
+    assert!(!trace_warning.contains(secret));
+    assert!(!log.contains(secret));
+}
+
+#[test]
 fn synthetic_trace_records_complete_dicom_helper_calls() {
     use crate::logging::trace_sensitive_text;
     use sha2::{Digest, Sha256};

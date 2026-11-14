@@ -253,68 +253,68 @@
       "evidence_sha256": "e9ac50f5618aa701a389b0013a0232ba1a90290ea113408399e14ca0f632ba03"
     },
     {
-      "id": "crates/sanikey-core/src/dicom.rs#9c576489bbb8498db42947099c26dda0ec83f40d20e23a9863f7f78dc574f019:29",
-      "source_sha256": "9c576489bbb8498db42947099c26dda0ec83f40d20e23a9863f7f78dc574f019",
+      "id": "crates/sanikey-core/src/dicom.rs#e3e526588540abbf838a6c361c94a5d848a80b790856abd4b983b28a883d7474:29",
+      "source_sha256": "e3e526588540abbf838a6c361c94a5d848a80b790856abd4b983b28a883d7474",
       "status": "covered",
       "evidence": "dicom::tests::synthetic_trace_records_complete_dicom_helper_calls confronta argomenti e risultati rappresentabili di read_dicom_metadata, call_id e durata.",
       "evidence_file": "crates/sanikey-core/src/dicom/tests.rs",
-      "evidence_sha256": "5ec611bcb0279fe144d2e6c9aa7889956c8ca20977642bb2a9bbfa96957f90a0"
+      "evidence_sha256": "60569c1a8a3c177b2fc6b24d0bb0106e8f22d92420164beb736fe028bde37c92"
     },
     {
-      "id": "crates/sanikey-core/src/dicom.rs#9c576489bbb8498db42947099c26dda0ec83f40d20e23a9863f7f78dc574f019:35",
-      "source_sha256": "9c576489bbb8498db42947099c26dda0ec83f40d20e23a9863f7f78dc574f019",
+      "id": "crates/sanikey-core/src/dicom.rs#e3e526588540abbf838a6c361c94a5d848a80b790856abd4b983b28a883d7474:35",
+      "source_sha256": "e3e526588540abbf838a6c361c94a5d848a80b790856abd4b983b28a883d7474",
       "status": "covered",
       "evidence": "dicom::tests::synthetic_trace_records_complete_dicom_helper_calls confronta argomenti e risultati rappresentabili di normalize_date, call_id e durata.",
       "evidence_file": "crates/sanikey-core/src/dicom/tests.rs",
-      "evidence_sha256": "5ec611bcb0279fe144d2e6c9aa7889956c8ca20977642bb2a9bbfa96957f90a0"
+      "evidence_sha256": "60569c1a8a3c177b2fc6b24d0bb0106e8f22d92420164beb736fe028bde37c92"
     },
     {
-      "id": "crates/sanikey-core/src/dicom.rs#9c576489bbb8498db42947099c26dda0ec83f40d20e23a9863f7f78dc574f019:37",
-      "source_sha256": "9c576489bbb8498db42947099c26dda0ec83f40d20e23a9863f7f78dc574f019",
+      "id": "crates/sanikey-core/src/dicom.rs#e3e526588540abbf838a6c361c94a5d848a80b790856abd4b983b28a883d7474:37",
+      "source_sha256": "e3e526588540abbf838a6c361c94a5d848a80b790856abd4b983b28a883d7474",
       "status": "covered",
       "evidence": "dicom::tests::synthetic_trace_records_complete_dicom_helper_calls confronta argomenti e risultati rappresentabili di study_id, call_id e durata.",
       "evidence_file": "crates/sanikey-core/src/dicom/tests.rs",
-      "evidence_sha256": "5ec611bcb0279fe144d2e6c9aa7889956c8ca20977642bb2a9bbfa96957f90a0"
+      "evidence_sha256": "60569c1a8a3c177b2fc6b24d0bb0106e8f22d92420164beb736fe028bde37c92"
     },
     {
-      "id": "crates/sanikey-core/src/dicom.rs#9c576489bbb8498db42947099c26dda0ec83f40d20e23a9863f7f78dc574f019:39",
-      "source_sha256": "9c576489bbb8498db42947099c26dda0ec83f40d20e23a9863f7f78dc574f019",
+      "id": "crates/sanikey-core/src/dicom.rs#e3e526588540abbf838a6c361c94a5d848a80b790856abd4b983b28a883d7474:39",
+      "source_sha256": "e3e526588540abbf838a6c361c94a5d848a80b790856abd4b983b28a883d7474",
       "status": "covered",
       "evidence": "dicom::tests::synthetic_trace_records_complete_dicom_helper_calls confronta argomenti e risultati rappresentabili di staging_root, call_id e durata.",
       "evidence_file": "crates/sanikey-core/src/dicom/tests.rs",
-      "evidence_sha256": "5ec611bcb0279fe144d2e6c9aa7889956c8ca20977642bb2a9bbfa96957f90a0"
+      "evidence_sha256": "60569c1a8a3c177b2fc6b24d0bb0106e8f22d92420164beb736fe028bde37c92"
     },
     {
-      "id": "crates/sanikey-core/src/dicom.rs#9c576489bbb8498db42947099c26dda0ec83f40d20e23a9863f7f78dc574f019:61",
-      "source_sha256": "9c576489bbb8498db42947099c26dda0ec83f40d20e23a9863f7f78dc574f019",
+      "id": "crates/sanikey-core/src/dicom.rs#e3e526588540abbf838a6c361c94a5d848a80b790856abd4b983b28a883d7474:61",
+      "source_sha256": "e3e526588540abbf838a6c361c94a5d848a80b790856abd4b983b28a883d7474",
       "status": "covered",
       "evidence": "dicom::tests::synthetic_trace_records_complete_dicom_helper_calls confronta argomenti e risultati rappresentabili di is_dicom_instance_path, call_id e durata.",
       "evidence_file": "crates/sanikey-core/src/dicom/tests.rs",
-      "evidence_sha256": "5ec611bcb0279fe144d2e6c9aa7889956c8ca20977642bb2a9bbfa96957f90a0"
+      "evidence_sha256": "60569c1a8a3c177b2fc6b24d0bb0106e8f22d92420164beb736fe028bde37c92"
     },
     {
-      "id": "crates/sanikey-core/src/dicom.rs#9c576489bbb8498db42947099c26dda0ec83f40d20e23a9863f7f78dc574f019:68",
-      "source_sha256": "9c576489bbb8498db42947099c26dda0ec83f40d20e23a9863f7f78dc574f019",
+      "id": "crates/sanikey-core/src/dicom.rs#e3e526588540abbf838a6c361c94a5d848a80b790856abd4b983b28a883d7474:68",
+      "source_sha256": "e3e526588540abbf838a6c361c94a5d848a80b790856abd4b983b28a883d7474",
       "status": "covered",
       "evidence": "dicom::tests::synthetic_trace_records_complete_dicom_helper_calls confronta argomenti e risultati rappresentabili di viewer_priority, call_id e durata.",
       "evidence_file": "crates/sanikey-core/src/dicom/tests.rs",
-      "evidence_sha256": "5ec611bcb0279fe144d2e6c9aa7889956c8ca20977642bb2a9bbfa96957f90a0"
+      "evidence_sha256": "60569c1a8a3c177b2fc6b24d0bb0106e8f22d92420164beb736fe028bde37c92"
     },
     {
-      "id": "crates/sanikey-core/src/dicom.rs#9c576489bbb8498db42947099c26dda0ec83f40d20e23a9863f7f78dc574f019:70",
-      "source_sha256": "9c576489bbb8498db42947099c26dda0ec83f40d20e23a9863f7f78dc574f019",
+      "id": "crates/sanikey-core/src/dicom.rs#e3e526588540abbf838a6c361c94a5d848a80b790856abd4b983b28a883d7474:70",
+      "source_sha256": "e3e526588540abbf838a6c361c94a5d848a80b790856abd4b983b28a883d7474",
       "status": "covered",
       "evidence": "dicom::tests::synthetic_trace_records_complete_dicom_helper_calls confronta argomenti e risultati rappresentabili di viewer_root, call_id e durata.",
       "evidence_file": "crates/sanikey-core/src/dicom/tests.rs",
-      "evidence_sha256": "5ec611bcb0279fe144d2e6c9aa7889956c8ca20977642bb2a9bbfa96957f90a0"
+      "evidence_sha256": "60569c1a8a3c177b2fc6b24d0bb0106e8f22d92420164beb736fe028bde37c92"
     },
     {
-      "id": "crates/sanikey-core/src/dicom.rs#9c576489bbb8498db42947099c26dda0ec83f40d20e23a9863f7f78dc574f019:72",
-      "source_sha256": "9c576489bbb8498db42947099c26dda0ec83f40d20e23a9863f7f78dc574f019",
+      "id": "crates/sanikey-core/src/dicom.rs#e3e526588540abbf838a6c361c94a5d848a80b790856abd4b983b28a883d7474:72",
+      "source_sha256": "e3e526588540abbf838a6c361c94a5d848a80b790856abd4b983b28a883d7474",
       "status": "covered",
       "evidence": "dicom::tests::synthetic_trace_records_complete_dicom_helper_calls confronta argomenti e risultati rappresentabili di is_executable_or_installer, call_id e durata.",
       "evidence_file": "crates/sanikey-core/src/dicom/tests.rs",
-      "evidence_sha256": "5ec611bcb0279fe144d2e6c9aa7889956c8ca20977642bb2a9bbfa96957f90a0"
+      "evidence_sha256": "60569c1a8a3c177b2fc6b24d0bb0106e8f22d92420164beb736fe028bde37c92"
     },
     {
       "id": "crates/sanikey-core/src/inventory.rs#e4106b178f7059041d59ad81a5310a07289cd5bb0a8280ae78c88131cb6034c7:26",
@@ -1021,14 +1021,6 @@
       "evidence_sha256": "417911d965b99702d6407a33fdd16a1207df215989aa50723d73230fcd35e534"
     },
     {
-      "id": "crates/sanikey-desktop/src/main.rs#8d50699885617b4d0ad8b606274ddea69910f159ab001d6a2abb9bc5c0fc28b7:82",
-      "source_sha256": "8d50699885617b4d0ad8b606274ddea69910f159ab001d6a2abb9bc5c0fc28b7",
-      "status": "covered",
-      "evidence": "tests::person_selection_trace_records_inputs_output_duration_and_redacts_secret_paths verifica input e output rappresentabili, call_id, durata e redazione del percorso segreto.",
-      "evidence_file": "crates/sanikey-desktop/src/main.rs",
-      "evidence_sha256": "8d50699885617b4d0ad8b606274ddea69910f159ab001d6a2abb9bc5c0fc28b7"
-    },
-    {
       "id": "crates/sanikey-core/src/lib.rs#916f0189297589f4fbcede27f051481023d25f087438844c2569abccbee4d926:0",
       "source_sha256": "916f0189297589f4fbcede27f051481023d25f087438844c2569abccbee4d926",
       "status": "exception",
@@ -1062,86 +1054,102 @@
       "evidence_sha256": "6861bce283fa954e35e38ec314523c03ab6daf43fe34dfb72a9395eb74e55640"
     },
     {
-      "id": "crates/sanikey-core/src/operation.rs#22678c15bc30f6233f617bfce5fb56a25b6e17057f9aa0dd45952d9d83dcf93d:0",
-      "source_sha256": "22678c15bc30f6233f617bfce5fb56a25b6e17057f9aa0dd45952d9d83dcf93d",
+      "id": "crates/sanikey-core/src/operation.rs#9ead94eaf97e98dd3cb1b461c94c806a6d234631d6a49dc3e8872dc27f75f59a:0",
+      "source_sha256": "9ead94eaf97e98dd3cb1b461c94c806a6d234631d6a49dc3e8872dc27f75f59a",
       "status": "exception",
       "evidence": "ErrorCode::as_str è dichiarata const e restituisce un identificatore statico.",
       "rationale": "Una chiamata di tracing con effetti runtime non può essere inserita nel corpo const senza modificarne il contratto.",
       "evidence_file": "crates/sanikey-core/src/operation.rs",
-      "evidence_sha256": "22678c15bc30f6233f617bfce5fb56a25b6e17057f9aa0dd45952d9d83dcf93d"
+      "evidence_sha256": "9ead94eaf97e98dd3cb1b461c94c806a6d234631d6a49dc3e8872dc27f75f59a"
     },
     {
-      "id": "crates/sanikey-core/src/operation.rs#22678c15bc30f6233f617bfce5fb56a25b6e17057f9aa0dd45952d9d83dcf93d:5",
-      "source_sha256": "22678c15bc30f6233f617bfce5fb56a25b6e17057f9aa0dd45952d9d83dcf93d",
+      "id": "crates/sanikey-core/src/operation.rs#9ead94eaf97e98dd3cb1b461c94c806a6d234631d6a49dc3e8872dc27f75f59a:5",
+      "source_sha256": "9ead94eaf97e98dd3cb1b461c94c806a6d234631d6a49dc3e8872dc27f75f59a",
       "status": "exception",
       "evidence": "OperationError::code è dichiarata const e restituisce la categoria dell'errore.",
       "rationale": "Una chiamata di tracing con effetti runtime non può essere inserita nel corpo const senza modificarne il contratto.",
       "evidence_file": "crates/sanikey-core/src/operation.rs",
-      "evidence_sha256": "22678c15bc30f6233f617bfce5fb56a25b6e17057f9aa0dd45952d9d83dcf93d"
+      "evidence_sha256": "9ead94eaf97e98dd3cb1b461c94c806a6d234631d6a49dc3e8872dc27f75f59a"
     },
     {
-      "id": "crates/sanikey-core/src/operation.rs#22678c15bc30f6233f617bfce5fb56a25b6e17057f9aa0dd45952d9d83dcf93d:1",
-      "source_sha256": "22678c15bc30f6233f617bfce5fb56a25b6e17057f9aa0dd45952d9d83dcf93d",
+      "id": "crates/sanikey-core/src/operation.rs#9ead94eaf97e98dd3cb1b461c94c806a6d234631d6a49dc3e8872dc27f75f59a:1",
+      "source_sha256": "9ead94eaf97e98dd3cb1b461c94c806a6d234631d6a49dc3e8872dc27f75f59a",
       "status": "covered",
       "evidence": "operation::tests::operation_error_spans_record_arguments_results_and_formatter_omission confronta argomenti e risultato JSON, correla call_id e verifica esito, durata e omissione del formatter.",
       "evidence_file": "crates/sanikey-core/src/operation.rs",
-      "evidence_sha256": "22678c15bc30f6233f617bfce5fb56a25b6e17057f9aa0dd45952d9d83dcf93d"
+      "evidence_sha256": "9ead94eaf97e98dd3cb1b461c94c806a6d234631d6a49dc3e8872dc27f75f59a"
     },
     {
-      "id": "crates/sanikey-core/src/operation.rs#22678c15bc30f6233f617bfce5fb56a25b6e17057f9aa0dd45952d9d83dcf93d:6",
-      "source_sha256": "22678c15bc30f6233f617bfce5fb56a25b6e17057f9aa0dd45952d9d83dcf93d",
+      "id": "crates/sanikey-core/src/operation.rs#9ead94eaf97e98dd3cb1b461c94c806a6d234631d6a49dc3e8872dc27f75f59a:6",
+      "source_sha256": "9ead94eaf97e98dd3cb1b461c94c806a6d234631d6a49dc3e8872dc27f75f59a",
       "status": "covered",
       "evidence": "operation::tests::operation_error_spans_record_arguments_results_and_formatter_omission confronta argomenti e risultato JSON, correla call_id e verifica esito e durata per OperationError::message.",
       "evidence_file": "crates/sanikey-core/src/operation.rs",
-      "evidence_sha256": "22678c15bc30f6233f617bfce5fb56a25b6e17057f9aa0dd45952d9d83dcf93d"
+      "evidence_sha256": "9ead94eaf97e98dd3cb1b461c94c806a6d234631d6a49dc3e8872dc27f75f59a"
     },
     {
-      "id": "crates/sanikey-core/src/operation.rs#22678c15bc30f6233f617bfce5fb56a25b6e17057f9aa0dd45952d9d83dcf93d:9",
-      "source_sha256": "22678c15bc30f6233f617bfce5fb56a25b6e17057f9aa0dd45952d9d83dcf93d",
+      "id": "crates/sanikey-core/src/operation.rs#9ead94eaf97e98dd3cb1b461c94c806a6d234631d6a49dc3e8872dc27f75f59a:9",
+      "source_sha256": "9ead94eaf97e98dd3cb1b461c94c806a6d234631d6a49dc3e8872dc27f75f59a",
       "status": "covered",
       "evidence": "operation::tests::operation_error_spans_record_arguments_results_and_formatter_omission confronta argomenti e risultato JSON, correla call_id e verifica esito, durata e omissione del formatter.",
       "evidence_file": "crates/sanikey-core/src/operation.rs",
-      "evidence_sha256": "22678c15bc30f6233f617bfce5fb56a25b6e17057f9aa0dd45952d9d83dcf93d"
+      "evidence_sha256": "9ead94eaf97e98dd3cb1b461c94c806a6d234631d6a49dc3e8872dc27f75f59a"
     },
     {
-      "id": "crates/sanikey-core/src/operation.rs#22678c15bc30f6233f617bfce5fb56a25b6e17057f9aa0dd45952d9d83dcf93d:20",
-      "source_sha256": "22678c15bc30f6233f617bfce5fb56a25b6e17057f9aa0dd45952d9d83dcf93d",
+      "id": "crates/sanikey-core/src/operation.rs#9ead94eaf97e98dd3cb1b461c94c806a6d234631d6a49dc3e8872dc27f75f59a:20",
+      "source_sha256": "9ead94eaf97e98dd3cb1b461c94c806a6d234631d6a49dc3e8872dc27f75f59a",
       "status": "covered",
       "evidence": "operation::tests::cancellation_token_spans_record_transitions_and_results confronta argomenti e risultato JSON, correla call_id e verifica esito e durata.",
       "evidence_file": "crates/sanikey-core/src/operation.rs",
-      "evidence_sha256": "22678c15bc30f6233f617bfce5fb56a25b6e17057f9aa0dd45952d9d83dcf93d"
+      "evidence_sha256": "9ead94eaf97e98dd3cb1b461c94c806a6d234631d6a49dc3e8872dc27f75f59a"
     },
     {
-      "id": "crates/sanikey-core/src/operation.rs#22678c15bc30f6233f617bfce5fb56a25b6e17057f9aa0dd45952d9d83dcf93d:24",
-      "source_sha256": "22678c15bc30f6233f617bfce5fb56a25b6e17057f9aa0dd45952d9d83dcf93d",
+      "id": "crates/sanikey-core/src/operation.rs#9ead94eaf97e98dd3cb1b461c94c806a6d234631d6a49dc3e8872dc27f75f59a:24",
+      "source_sha256": "9ead94eaf97e98dd3cb1b461c94c806a6d234631d6a49dc3e8872dc27f75f59a",
       "status": "covered",
       "evidence": "operation::tests::cancellation_token_spans_record_transitions_and_results confronta argomenti e risultato JSON, correla call_id e verifica esito e durata.",
       "evidence_file": "crates/sanikey-core/src/operation.rs",
-      "evidence_sha256": "22678c15bc30f6233f617bfce5fb56a25b6e17057f9aa0dd45952d9d83dcf93d"
+      "evidence_sha256": "9ead94eaf97e98dd3cb1b461c94c806a6d234631d6a49dc3e8872dc27f75f59a"
     },
     {
-      "id": "crates/sanikey-core/src/operation.rs#22678c15bc30f6233f617bfce5fb56a25b6e17057f9aa0dd45952d9d83dcf93d:28",
-      "source_sha256": "22678c15bc30f6233f617bfce5fb56a25b6e17057f9aa0dd45952d9d83dcf93d",
+      "id": "crates/sanikey-core/src/operation.rs#9ead94eaf97e98dd3cb1b461c94c806a6d234631d6a49dc3e8872dc27f75f59a:28",
+      "source_sha256": "9ead94eaf97e98dd3cb1b461c94c806a6d234631d6a49dc3e8872dc27f75f59a",
       "status": "covered",
       "evidence": "operation::tests::operation_context_and_run_spans_record_arguments_results_and_omissions confronta argomenti e risultati dei metodi context, correla call_id e verifica esito e durata.",
       "evidence_file": "crates/sanikey-core/src/operation.rs",
-      "evidence_sha256": "22678c15bc30f6233f617bfce5fb56a25b6e17057f9aa0dd45952d9d83dcf93d"
+      "evidence_sha256": "9ead94eaf97e98dd3cb1b461c94c806a6d234631d6a49dc3e8872dc27f75f59a"
     },
     {
-      "id": "crates/sanikey-core/src/operation.rs#22678c15bc30f6233f617bfce5fb56a25b6e17057f9aa0dd45952d9d83dcf93d:32",
-      "source_sha256": "22678c15bc30f6233f617bfce5fb56a25b6e17057f9aa0dd45952d9d83dcf93d",
+      "id": "crates/sanikey-core/src/operation.rs#9ead94eaf97e98dd3cb1b461c94c806a6d234631d6a49dc3e8872dc27f75f59a:32",
+      "source_sha256": "9ead94eaf97e98dd3cb1b461c94c806a6d234631d6a49dc3e8872dc27f75f59a",
       "status": "covered",
       "evidence": "operation::tests::operation_context_and_run_spans_record_arguments_results_and_omissions confronta argomenti e risultati dei metodi context, correla call_id e verifica esito e durata.",
       "evidence_file": "crates/sanikey-core/src/operation.rs",
-      "evidence_sha256": "22678c15bc30f6233f617bfce5fb56a25b6e17057f9aa0dd45952d9d83dcf93d"
+      "evidence_sha256": "9ead94eaf97e98dd3cb1b461c94c806a6d234631d6a49dc3e8872dc27f75f59a"
     },
     {
-      "id": "crates/sanikey-core/src/operation.rs#22678c15bc30f6233f617bfce5fb56a25b6e17057f9aa0dd45952d9d83dcf93d:36",
-      "source_sha256": "22678c15bc30f6233f617bfce5fb56a25b6e17057f9aa0dd45952d9d83dcf93d",
+      "id": "crates/sanikey-core/src/operation.rs#9ead94eaf97e98dd3cb1b461c94c806a6d234631d6a49dc3e8872dc27f75f59a:36",
+      "source_sha256": "9ead94eaf97e98dd3cb1b461c94c806a6d234631d6a49dc3e8872dc27f75f59a",
       "status": "covered",
       "evidence": "operation::tests::operation_context_and_run_spans_record_arguments_results_and_omissions confronta argomenti e risultati dei metodi context, correla call_id e verifica esito e durata.",
       "evidence_file": "crates/sanikey-core/src/operation.rs",
-      "evidence_sha256": "22678c15bc30f6233f617bfce5fb56a25b6e17057f9aa0dd45952d9d83dcf93d"
+      "evidence_sha256": "9ead94eaf97e98dd3cb1b461c94c806a6d234631d6a49dc3e8872dc27f75f59a"
+    },
+    {
+      "id": "crates/sanikey-core/src/operation.rs#9ead94eaf97e98dd3cb1b461c94c806a6d234631d6a49dc3e8872dc27f75f59a:44",
+      "source_sha256": "9ead94eaf97e98dd3cb1b461c94c806a6d234631d6a49dc3e8872dc27f75f59a",
+      "status": "covered",
+      "evidence": "operation::tests::operation_context_and_run_spans_record_arguments_results_and_omissions e trace_redacts_known_secrets_in_operation_errors_without_changing_them e trace_records_cancelled_operation_event_history verificano i tre esiti con tutti gli argomenti, function_exit.result completo, call_id correlato, durata e redazione del segreto nel fallimento.",
+      "evidence_file": "crates/sanikey-core/src/operation.rs",
+      "evidence_sha256": "9ead94eaf97e98dd3cb1b461c94c806a6d234631d6a49dc3e8872dc27f75f59a"
+    },
+    {
+      "id": "crates/sanikey-desktop/src/main.rs#a63848adab258c16fe3eb1037ab52349f0fbdad6011af6493b8e48a33aa091c0:86",
+      "source_sha256": "a63848adab258c16fe3eb1037ab52349f0fbdad6011af6493b8e48a33aa091c0",
+      "status": "covered",
+      "evidence": "tests::person_selection_trace_records_inputs_output_duration_and_redacts_secret_paths verifica input e output rappresentabili, call_id, durata e redazione del percorso segreto.",
+      "evidence_file": "crates/sanikey-desktop/src/main.rs",
+      "evidence_sha256": "a63848adab258c16fe3eb1037ab52349f0fbdad6011af6493b8e48a33aa091c0"
     }
   ]
 }

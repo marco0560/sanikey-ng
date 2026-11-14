@@ -392,6 +392,10 @@ struct DesktopApp {
     pending_log_action: Option<PendingLogAction>,
     log_action_error: Option<String>,
     worker_handle: Option<JoinHandle<()>>,
+    shutdown_requested_at: Option<std::time::Instant>,
+    shutdown_timed_out: bool,
+    shutdown_incomplete: bool,
+    shutdown_marker_write_failed: bool,
     profile_path: String,
     profile: Option<AccountsProfile>,
     selections: Vec<PersonSelection>,
@@ -439,6 +443,10 @@ impl Default for DesktopApp {
             pending_log_action: None,
             log_action_error,
             worker_handle: None,
+            shutdown_requested_at: None,
+            shutdown_timed_out: false,
+            shutdown_incomplete: false,
+            shutdown_marker_write_failed: false,
             profile_path: String::new(),
             profile: None,
             selections: Vec::new(),
@@ -1207,6 +1215,51 @@ impl DesktopApp {
                 Some("Il worker desktop si è interrotto in modo inatteso.".to_owned());
         }
         })
+    }
+
+    fn begin_shutdown(&mut self) {
+        if self.shutdown_requested_at.is_some() {
+            return;
+        }
+        self.shutdown_requested_at = Some(std::time::Instant::now());
+        if let Some(cancellation) = &self.cancellation {
+            cancellation.cancel();
+        }
+        if let Some(session) = &self.log_session
+            && session.shutdown_pending(Component::Desktop).is_err()
+        {
+            self.log_failure = true;
+        }
+        self.status =
+            "Chiusura in attesa: annullamento richiesto al worker; attendo il completamento."
+                .to_owned();
+    }
+
+    fn force_incomplete_shutdown(&mut self, context: &egui::Context) {
+        if self.shutdown_marker_write_failed {
+            self.shutdown_incomplete = true;
+            self.status = "Chiusura autorizzata senza aggiornamento completo del log.".to_owned();
+            context.send_viewport_cmd(egui::ViewportCommand::Close);
+            return;
+        }
+        if self
+            .log_session
+            .as_ref()
+            .is_some_and(|session| session.shutdown_incomplete(Component::Desktop).is_err())
+        {
+            self.log_failure = true;
+            self.shutdown_marker_write_failed = true;
+            self.log_action_error = Some(
+                "Impossibile scrivere nel log l'esito di chiusura. La registrazione resta incompleta; conferma di nuovo per chiudere senza aggiornare il file.".into(),
+            );
+            return;
+        }
+        self.shutdown_incomplete = true;
+        self.log_action_error = self.log_session.as_ref().map(|_| {
+            "Chiusura forzata con worker attivo: la sessione di registrazione è incompleta.".into()
+        });
+        self.status = "Chiusura forzata; l'operazione attiva potrebbe non aver completato i propri artefatti.".to_owned();
+        context.send_viewport_cmd(egui::ViewportCommand::Close);
     }
 }
 
@@ -2139,6 +2192,13 @@ impl eframe::App for DesktopApp {
                 "presentation_values" => TraceValue::data("captured by PresentedText"),
             ], || {
             let capture_session = self.log_session.clone();
+            if ui.ctx().input(|input| input.viewport().close_requested())
+                && self.worker_handle.is_some()
+                && !self.shutdown_incomplete
+            {
+                self.begin_shutdown();
+                ui.ctx().send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            }
             if let Some(session) = &capture_session {
                 if session.has_failed() {
                     self.log_failure = true;
@@ -2196,25 +2256,33 @@ impl eframe::App for DesktopApp {
                         .as_ref()
                         .is_some_and(|worker| !worker.is_finished())
                     {
-                        if let Some(session) = &self.log_session
-                            && session.shutdown_pending(Component::Desktop).is_err()
-                        {
-                            self.log_failure = true;
+                        if !self.shutdown_incomplete {
+                            if let Some(session) = &self.log_session
+                                && session.shutdown_pending(Component::Desktop).is_err()
+                            {
+                                self.log_failure = true;
+                            }
+                            if let Some(session) = &self.log_session
+                                && session.shutdown_incomplete(Component::Desktop).is_err()
+                            {
+                                self.log_failure = true;
+                            }
                         }
-                        let worker = self
-                            .worker_handle
-                            .take()
-                            .expect("worker verificato presente");
-                        if let Some(session) = self.log_session.take() {
-                            thread::spawn(move || {
-                                let _ = worker.join();
-                                let _ = session.finish(Component::Desktop);
-                            });
-                        }
+                        self.shutdown_incomplete = true;
+                        self.log_action_error = Some(
+                            "Chiusura con worker attivo: la sessione di registrazione è incompleta.".into(),
+                        );
+                        self.worker_handle.take();
+                        self.log_session.take();
                         false
                     } else {
                         self.join_worker();
-                        true
+                        if self.shutdown_incomplete {
+                            self.log_session.take();
+                            false
+                        } else {
+                            true
+                        }
                     }
                 }
             );
@@ -2241,6 +2309,14 @@ impl DesktopApp {
             "presentation_values" => TraceValue::data("captured by PresentedText"),
         ], || {
         self.receive_worker_events();
+        if let Some(requested_at) = self.shutdown_requested_at {
+            if self.worker_handle.is_none() {
+                self.shutdown_requested_at = None;
+                ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+            } else if requested_at.elapsed() >= std::time::Duration::from_secs(10) {
+                self.shutdown_timed_out = true;
+            }
+        }
         let busy = self.receiver.is_some() || self.worker_handle.is_some();
         if self.worker_handle.is_some() {
             ui.ctx()
@@ -3180,6 +3256,74 @@ impl DesktopApp {
                 format!("Build completate: {}", self.completed_people.join(", "))
             ));
         }
+        if self.shutdown_timed_out {
+            ui.group(|ui| {
+                ui.colored_label(
+                    warning_text_color(ui.visuals().dark_mode),
+                    presented!(
+                        self,
+                        DisplayControl::new("shutdown_timeout_title"),
+                        Classification::Public,
+                        "Worker ancora attivo"
+                    ),
+                );
+                let shutdown_message = if self.log_session.is_some() {
+                    "Il worker non ha terminato entro 10 secondi. Se chiudi ora, la sessione di log sarà marcata come incompleta."
+                } else {
+                    "Il worker non ha terminato entro 10 secondi. La registrazione log non è attiva; puoi attendere o chiudere comunque."
+                };
+                ui.label(presented!(
+                    self,
+                    DisplayControl::new("shutdown_timeout_message"),
+                    Classification::Public,
+                    shutdown_message
+                ));
+                if self.shutdown_marker_write_failed {
+                    ui.colored_label(
+                        warning_text_color(ui.visuals().dark_mode),
+                        presented!(
+                            self,
+                            DisplayControl::new("shutdown_log_write_error"),
+                            Classification::Unclassified,
+                            self.log_action_error.as_deref().unwrap_or(
+                                "Scrittura del log fallita; conferma per chiudere senza aggiornare il file."
+                            )
+                        ),
+                    );
+                }
+                ui.horizontal(|ui| {
+                    if ui
+                        .button(presented!(
+                            self,
+                            DisplayControl::new("shutdown_force_close"),
+                            Classification::Public,
+                            if self.shutdown_marker_write_failed {
+                                "Chiudi senza aggiornare il log"
+                            } else {
+                                "Chiudi comunque"
+                            }
+                        ))
+                        .clicked()
+                    {
+                        let context = ui.ctx().clone();
+                        self.force_incomplete_shutdown(&context);
+                    }
+                    if ui
+                        .button(presented!(
+                            self,
+                            DisplayControl::new("shutdown_keep_waiting"),
+                            Classification::Public,
+                            "Continua ad attendere"
+                        ))
+                        .clicked()
+                    {
+                        self.shutdown_timed_out = false;
+                        self.shutdown_requested_at = Some(std::time::Instant::now());
+                    }
+                });
+            });
+            ui.scroll_to_cursor(Some(egui::Align::Center));
+        }
         if self.receiver.is_some() || self.cancellation.is_some() {
             if let Some(progress) = self.progress {
                 let percentage = format!("{}%", (progress.clamp(0.0, 1.0) * 100.0) as usize);
@@ -3523,7 +3667,7 @@ mod tests {
     }
 
     #[test]
-    fn desktop_exit_defers_finished_until_worker_terminates() {
+    fn desktop_exit_with_active_worker_marks_log_incomplete_without_waiting() {
         use sanikey_core::logging::{Component, DisplayControl, Level, Session};
 
         let directory = TestDirectory::new();
@@ -3535,6 +3679,7 @@ mod tests {
         .expect("sessione sintetica");
         let worker_session = session.clone();
         let (release_sender, release_receiver) = std::sync::mpsc::channel();
+        let (worker_done_sender, worker_done_receiver) = std::sync::mpsc::channel();
         let worker_handle = thread::spawn(move || {
             let _ = release_receiver.recv_timeout(std::time::Duration::from_millis(150));
             worker_session
@@ -3543,6 +3688,7 @@ mod tests {
                     Some("valore sintetico dopo attesa"),
                 )
                 .expect("scrittura worker prima della chiusura");
+            worker_done_sender.send(()).expect("worker terminato");
         });
         let mut app = DesktopApp {
             log_session: Some(session),
@@ -3555,26 +3701,240 @@ mod tests {
         let before_release = fs::read_to_string(&path).expect("log sintetico aperto");
         assert!(!before_release.contains("\"event\":\"finished\""));
         assert!(before_release.contains("\"event\":\"shutdown_pending\""));
+        assert!(before_release.contains("\"event\":\"shutdown_incomplete\""));
         release_sender.send(()).expect("rilascio worker sintetico");
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
-        let log = loop {
-            let contents = fs::read_to_string(&path).expect("log sintetico");
-            if contents.contains("\"event\":\"finished\"") {
-                break contents;
-            }
-            assert!(
-                std::time::Instant::now() < deadline,
-                "chiusura differita assente"
-            );
-            thread::sleep(std::time::Duration::from_millis(10));
-        };
+        worker_done_receiver
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .expect("worker sintetico terminato");
+        let log = fs::read_to_string(&path).expect("log sintetico");
         let worker_record = log
             .find("worker_finishing_text")
             .expect("record worker presente");
-        let finished_event = log
-            .find("\"event\":\"finished\"")
-            .expect("evento di fine sessione");
-        assert!(worker_record < finished_event);
+        let incomplete_event = log
+            .find("\"event\":\"shutdown_incomplete\"")
+            .expect("evento sessione incompleta");
+        assert!(worker_record > incomplete_event);
+        assert!(!log.contains("\"event\":\"finished\""));
+    }
+
+    #[test]
+    fn close_request_cancels_worker_and_force_close_records_incomplete_session() {
+        use sanikey_core::logging::{Component, Level, Session};
+
+        let directory = TestDirectory::new();
+        let (session, path) = Session::create_in_directory_with_level(
+            &directory.0,
+            Component::Desktop,
+            Level::Events,
+        )
+        .expect("sessione sintetica");
+        let (release_sender, release_receiver) = std::sync::mpsc::channel();
+        let worker = thread::spawn(move || {
+            let _ = release_receiver.recv();
+        });
+        let cancellation = CancellationToken::default();
+        let mut app = DesktopApp {
+            log_session: Some(session),
+            worker_handle: Some(worker),
+            cancellation: Some(cancellation.clone()),
+            ..DesktopApp::default()
+        };
+
+        let context = egui::Context::default();
+        let mut frame = eframe::Frame::_new_kittest();
+        let mut input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(800.0, 600.0),
+            )),
+            ..Default::default()
+        };
+        input
+            .viewports
+            .get_mut(&egui::ViewportId::ROOT)
+            .expect("viewport principale")
+            .events
+            .push(egui::ViewportEvent::Close);
+        let output = context.run_ui(input, |ui| eframe::App::ui(&mut app, ui, &mut frame));
+        assert!(
+            output.viewport_output[&egui::ViewportId::ROOT]
+                .commands
+                .contains(&egui::ViewportCommand::CancelClose)
+        );
+        output.drop_without_applying_deltas();
+        assert!(cancellation.is_cancelled());
+        assert!(app.status.contains("Chiusura in attesa"));
+        app.force_incomplete_shutdown(&context);
+        let log = fs::read_to_string(path).expect("log sintetico");
+        assert!(log.contains("\"event\":\"shutdown_pending\""));
+        assert!(log.contains("\"event\":\"shutdown_incomplete\""));
+        assert!(!log.contains("\"event\":\"finished\""));
+        assert!(
+            app.log_action_error
+                .as_deref()
+                .is_some_and(|error| error.contains("incompleta"))
+        );
+        release_sender.send(()).expect("rilascio worker sintetico");
+    }
+
+    #[test]
+    fn shutdown_timeout_shows_accessible_choice_without_blocking_ui() {
+        let (release_sender, release_receiver) = std::sync::mpsc::channel();
+        let worker = thread::spawn(move || {
+            let _ = release_receiver.recv();
+        });
+        let mut app = DesktopApp {
+            worker_handle: Some(worker),
+            shutdown_requested_at: Some(
+                std::time::Instant::now() - std::time::Duration::from_secs(11),
+            ),
+            ..DesktopApp::default()
+        };
+        let context = egui::Context::default();
+        context.enable_accesskit();
+        let mut frame = eframe::Frame::_new_kittest();
+
+        let output = run_app_frame(&mut app, &context, &mut frame, Vec::new());
+        let visible_text = output
+            .shapes
+            .iter()
+            .filter_map(|clipped| match &clipped.shape {
+                egui::epaint::Shape::Text(text) => Some(text.galley.text().to_owned()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        output.drop_without_applying_deltas();
+        app.force_incomplete_shutdown(&context);
+        assert!(app.shutdown_incomplete);
+        let mut close_input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(800.0, 600.0),
+            )),
+            ..Default::default()
+        };
+        close_input
+            .viewports
+            .get_mut(&egui::ViewportId::ROOT)
+            .expect("viewport principale")
+            .events
+            .push(egui::ViewportEvent::Close);
+        let close_output =
+            context.run_ui(close_input, |ui| eframe::App::ui(&mut app, ui, &mut frame));
+        let commands = &close_output.viewport_output[&egui::ViewportId::ROOT].commands;
+        assert!(commands.contains(&egui::ViewportCommand::Close));
+        assert!(!commands.contains(&egui::ViewportCommand::CancelClose));
+        close_output.drop_without_applying_deltas();
+        release_sender.send(()).expect("rilascio worker sintetico");
+        app.worker_handle
+            .take()
+            .expect("worker sintetico")
+            .join()
+            .expect("worker sintetico terminato");
+        assert!(app.shutdown_timed_out);
+        assert!(
+            visible_text
+                .iter()
+                .any(|text| text.contains("Worker ancora attivo")),
+            "visible: {visible_text:?}"
+        );
+        assert!(
+            visible_text
+                .iter()
+                .any(|text| text.contains("Chiudi comunque")),
+            "visible: {visible_text:?}"
+        );
+        assert!(
+            visible_text
+                .iter()
+                .any(|text| text.contains("Continua ad attendere")),
+            "visible: {visible_text:?}"
+        );
+        assert!(
+            visible_text
+                .iter()
+                .any(|text| text.contains("registrazione log non è attiva"))
+        );
+        assert!(
+            !visible_text
+                .iter()
+                .any(|text| text.contains("marcata come incompleta"))
+        );
+    }
+
+    #[test]
+    fn failed_incomplete_marker_is_shown_before_operator_can_confirm_close() {
+        use sanikey_core::logging::{Component, Level, Session};
+
+        let directory = TestDirectory::new();
+        let (session, _path) = Session::create_in_directory_with_level(
+            &directory.0,
+            Component::Desktop,
+            Level::Events,
+        )
+        .expect("sessione sintetica");
+        session
+            .finish(Component::Desktop)
+            .expect("chiusura log sintetico");
+        let (release_sender, release_receiver) = std::sync::mpsc::channel();
+        let worker = thread::spawn(move || {
+            let _ = release_receiver.recv();
+        });
+        let mut app = DesktopApp {
+            log_session: Some(session),
+            worker_handle: Some(worker),
+            shutdown_requested_at: Some(std::time::Instant::now()),
+            shutdown_timed_out: true,
+            ..DesktopApp::default()
+        };
+        let context = egui::Context::default();
+        let mut frame = eframe::Frame::_new_kittest();
+
+        app.force_incomplete_shutdown(&context);
+        assert!(app.shutdown_marker_write_failed);
+        assert!(!app.shutdown_incomplete);
+        assert!(app.shutdown_requested_at.is_some());
+        let output = run_app_frame(&mut app, &context, &mut frame, Vec::new());
+        let visible_text = output
+            .shapes
+            .iter()
+            .filter_map(|clipped| match &clipped.shape {
+                egui::epaint::Shape::Text(text) => Some(text.galley.text().to_owned()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        output.drop_without_applying_deltas();
+        release_sender.send(()).expect("rilascio worker sintetico");
+        app.worker_handle
+            .take()
+            .expect("worker sintetico")
+            .join()
+            .expect("worker sintetico terminato");
+        assert!(
+            visible_text
+                .iter()
+                .any(|text| text.contains("Impossibile scrivere nel log"))
+        );
+        assert!(
+            visible_text
+                .iter()
+                .any(|text| text.contains("sessione di log sarà marcata come incompleta"))
+        );
+        assert!(
+            visible_text
+                .iter()
+                .any(|text| text.contains("Chiudi senza aggiornare il log"))
+        );
+        app.force_incomplete_shutdown(&context);
+        assert!(app.shutdown_incomplete);
+        let close_output = context.run_ui(egui::RawInput::default(), |_| {});
+        assert!(
+            close_output.viewport_output[&egui::ViewportId::ROOT]
+                .commands
+                .contains(&egui::ViewportCommand::Close)
+        );
+        close_output.drop_without_applying_deltas();
+        assert!(app.shutdown_incomplete);
     }
 
     #[test]

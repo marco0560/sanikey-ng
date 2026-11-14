@@ -242,6 +242,8 @@ pub enum EventKind {
     Unfinished,
     /// The frontend is closing while work remains active.
     ShutdownPending,
+    /// The frontend closed before active work terminated.
+    ShutdownIncomplete,
 }
 
 /// Non-sensitive category for a failed operation.
@@ -398,6 +400,7 @@ impl EventKind {
             Self::Finished => "finished",
             Self::Unfinished => "unfinished",
             Self::ShutdownPending => "shutdown_pending",
+            Self::ShutdownIncomplete => "shutdown_incomplete",
         }
     }
 }
@@ -737,6 +740,29 @@ impl Session {
             kind: EventKind::ShutdownPending,
             activity: Activity::Session,
             failure_category: None,
+            operation_id: None,
+            parent_operation_id: None,
+            target: None,
+            duration_ms: Some(
+                u64::try_from(self.state.started.elapsed().as_millis()).unwrap_or(u64::MAX),
+            ),
+        })
+    }
+
+    /// Records that the frontend closed before its workers terminated.
+    ///
+    /// This intentionally does not finish the session: worker threads may
+    /// still hold a session handle and the log must remain visibly incomplete.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the event cannot be written or flushed.
+    pub fn shutdown_incomplete(&self, component: Component) -> io::Result<()> {
+        self.record(Event {
+            component,
+            kind: EventKind::ShutdownIncomplete,
+            activity: Activity::Session,
+            failure_category: Some(FailureCategory::Other),
             operation_id: None,
             parent_operation_id: None,
             target: None,
@@ -1406,6 +1432,28 @@ mod tests {
         assert_eq!(log.matches("\"event\":\"unfinished\"").count(), 1);
         assert_eq!(log.matches("\"event\":\"shutdown_pending\"").count(), 1);
         assert_eq!(log.matches("\"event\":\"finished\"").count(), 1);
+        fs::remove_file(path).unwrap();
+        fs::remove_dir(directory).unwrap();
+    }
+
+    #[test]
+    fn shutdown_incomplete_is_a_typed_terminal_warning_without_finishing_session() {
+        let directory = std::env::temp_dir().join(format!(
+            "sanikey-shutdown-incomplete-test-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let (session, path) = Session::create_in_directory(&directory, Component::Desktop).unwrap();
+        session.shutdown_pending(Component::Desktop).unwrap();
+        session.shutdown_incomplete(Component::Desktop).unwrap();
+        assert!(!session.has_failed());
+        drop(session);
+
+        let log = fs::read_to_string(&path).unwrap();
+        assert!(log.contains("\"event\":\"shutdown_pending\""));
+        assert!(log.contains("\"event\":\"shutdown_incomplete\""));
+        assert!(log.contains("\"failure_category\":\"other\""));
+        assert!(!log.contains("\"event\":\"finished\""));
         fs::remove_file(path).unwrap();
         fs::remove_dir(directory).unwrap();
     }

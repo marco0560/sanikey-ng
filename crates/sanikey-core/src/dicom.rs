@@ -135,7 +135,7 @@ fn trace_media(media: &[DicomMedia]) -> TraceValue {
 }
 
 fn trace_previews(previews: &[DicomPreview]) -> TraceValue {
-    TraceValue::Data(Value::Array(
+    trace_json_value(&json!(
         previews
             .iter()
             .map(|entry| {
@@ -145,7 +145,7 @@ fn trace_previews(previews: &[DicomPreview]) -> TraceValue {
                     "warnings": entry.warnings,
                 })
             })
-            .collect(),
+            .collect::<Vec<_>>()
     ))
 }
 

@@ -924,6 +924,45 @@ mod tests {
                 .to_string()
                 .contains("synthetic-secret-value")
         );
+        assert_trace_spans(
+            &records,
+            "operation::run_operation",
+            &[(
+                expected_arguments(vec![
+                    trace_data("operation", json!("synthetic.error")),
+                    trace_data("cancellation_requested", json!(false)),
+                    trace_omission("action", "unsupported_type"),
+                ]),
+                json!({
+                    "kind": "data",
+                    "value": {
+                        "outcome": "failed",
+                        "code": "configuration",
+                        "message": {
+                            "kind": "data",
+                            "value": {
+                                "format": "text_redacted_known_secret_assignments",
+                                "value": "password = [secret_omitted]",
+                            },
+                        },
+                        "events": [
+                            {"kind": "started", "operation": "synthetic.error"},
+                            {
+                                "kind": "failed",
+                                "code": "configuration",
+                                "message": {
+                                    "kind": "data",
+                                    "value": {
+                                        "format": "text_redacted_known_secret_assignments",
+                                        "value": "password = [secret_omitted]",
+                                    },
+                                },
+                            },
+                        ],
+                    },
+                }),
+            )],
+        );
         fs::remove_file(path).unwrap();
         fs::remove_dir(directory).unwrap();
     }
@@ -1099,6 +1138,33 @@ mod tests {
         assert_eq!(run.outcome, OperationOutcome::Cancelled);
         drop(session);
         let records = trace_records(&path);
+        assert_trace_spans(
+            &records,
+            "operation::run_operation",
+            &[(
+                expected_arguments(vec![
+                    trace_data("operation", json!("synthetic.cancelled")),
+                    trace_data("cancellation_requested", json!(false)),
+                    trace_omission("action", "unsupported_type"),
+                ]),
+                json!({
+                    "kind": "data",
+                    "value": {
+                        "outcome": "cancelled",
+                        "events": [
+                            {"kind": "started", "operation": "synthetic.cancelled"},
+                            {
+                                "kind": "progress",
+                                "phase": "finalizing",
+                                "completed": 1,
+                                "total": 2,
+                            },
+                            {"kind": "cancelled"},
+                        ],
+                    },
+                }),
+            )],
+        );
         let operation_result = records
             .iter()
             .find(|record| {

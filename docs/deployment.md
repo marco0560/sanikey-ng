@@ -105,9 +105,13 @@ prevista cancellazione automatica: conservare, condividere ed eliminare i log
 come dati privati. Errori di creazione e scrittura sono segnalati; un log
 interrotto non deve essere considerato completo. Le prove su Windows e macOS
 restano da eseguire.
-Se si chiude la GUI con un worker ancora attivo, il log riceve un evento
-`shutdown_pending`; il supervisore tenta la chiusura dopo il termine del
-worker. Se il processo termina prima, il record `finished` può mancare.
+Se si chiude la GUI con un worker ancora attivo, viene richiesto l'annullamento
+e il log riceve `shutdown_pending`. Dopo dieci secondi si può continuare ad
+attendere oppure chiudere comunque: in quest'ultimo caso il log riceve
+`shutdown_incomplete` e non riceve `finished`. Se la scrittura del marker
+fallisce, la GUI mostra l'errore e richiede una seconda conferma per uscire
+senza aggiornare il file. La chiusura forzata non garantisce che il worker
+abbia completato i propri artefatti.
 
 Le directory temporanee della sessione sono quelle previste dalle istruzioni
 globali del manutentore. Non usarle per baseline, report o evidenze da conservare.
