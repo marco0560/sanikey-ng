@@ -151,10 +151,11 @@ ignorati, 54 desktop e 20 CLI passati, oltre ai test degli adattatori. Codira
 ha indicizzato 246 file supportati senza errori e l'audit Rustdoc, ripetuto
 dopo la documentazione dei simboli rilevati, non ha prodotto ulteriori rilievi;
 12 asset senza analyzer restano fuori dalla copertura. L'implementazione e le
-modifiche preesistenti sono nel commit `ed96e00`; la verifica successiva delle
-span e delle eccezioni prosegue nella
-[ricevuta inventario](verification/2026-11-14-log-inventory.md). Restano da
-dimostrare la copertura funzione per funzione e le qualifiche native separate.
+modifiche preesistenti sono nel commit `ed96e00`; `e86b8dc` aggiunge la
+[ricognizione delle span e delle eccezioni](verification/2026-11-14-log-inventory.md)
+e `c892a05` protegge anche le sequenze non UTF-8 con segreti riconoscibili.
+Il gate completo è stato ripetuto dopo questi interventi. Restano da dimostrare
+la copertura funzione per funzione e le qualifiche native separate.
 
 Decisione G2 del 2026-11-10: applicare `--repo-root` al preflight privacy
 dei comandi CLI `build-patient` e `build-all`, come descritto nella
