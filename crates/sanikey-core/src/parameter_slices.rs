@@ -132,7 +132,14 @@ fn trace_optional_text(value: Option<&str>) -> TraceValue {
 fn trace_bytes(bytes: &[u8]) -> TraceValue {
     match std::str::from_utf8(bytes) {
         Ok(text) => trace_sensitive_text(text),
-        Err(_) => TraceValue::Data(json!({"encoding":"bytes","value":bytes})),
+        Err(_) => {
+            let text = String::from_utf8_lossy(bytes);
+            if redact_secret_assignments(&text) != text {
+                TraceValue::Secret
+            } else {
+                TraceValue::Data(json!({"encoding":"bytes","value":bytes}))
+            }
+        }
     }
 }
 
@@ -1207,7 +1214,9 @@ fn trailing_separator() -> &'static Regex {
 
 #[cfg(test)]
 mod tests {
-    use super::{DiscoverySettings, discover_candidates, discover_configured_candidates};
+    use super::{
+        DiscoverySettings, discover_candidates, discover_configured_candidates, trace_bytes,
+    };
     use crate::logging::{Component, Level, Session};
     use crate::metadata::DocumentRecord;
     use crate::pdf::{ExtractedText, TextPageSpan};
@@ -1215,6 +1224,15 @@ mod tests {
     use std::fs;
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[test]
+    fn non_utf8_trace_bytes_omit_identified_secrets_and_keep_other_data() {
+        let sensitive = trace_bytes(b"\xff password=synthetic-secret").to_json();
+        assert_eq!(sensitive["kind"], "secret_omitted");
+        let ordinary = trace_bytes(b"\xff ordinary private data").to_json();
+        assert_eq!(ordinary["kind"], "data");
+        assert_eq!(ordinary["value"]["encoding"], "bytes");
+    }
 
     fn trace_directory() -> PathBuf {
         static NEXT_ID: AtomicUsize = AtomicUsize::new(0);
