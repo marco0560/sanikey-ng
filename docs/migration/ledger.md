@@ -157,7 +157,7 @@ e `c892a05` protegge anche le sequenze non UTF-8 con segreti riconoscibili.
 Il gate completo è stato ripetuto dopo questi interventi. Restano da dimostrare
 la copertura funzione per funzione e le qualifiche native separate. Il registro
 di revisione associa le prove agli hash del sorgente: nello snapshot corrente
-due voci sono segnate coperte, una è un'eccezione motivata e 3.220 elementi,
+sei voci sono segnate coperte, sei sono eccezioni motivate e 3.211 elementi,
 incluse macro e closure, restano da revisionare. I picker nativi ora registrano in Diagnostica e Traccia
 un'omissione esplicita del testo di sistema non osservabile.
 

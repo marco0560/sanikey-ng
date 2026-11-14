@@ -2,6 +2,65 @@
   "schema": 1,
   "reviews": [
     {
+      "id": "crates/sanikey-desktop/src/presentation.rs#b8238ab2059e631c3a6d942534b5050f3df132712a57a93eaf8e682b837f4398:13",
+      "source_sha256": "b8238ab2059e631c3a6d942534b5050f3df132712a57a93eaf8e682b837f4398",
+      "status": "exception",
+      "evidence": "PresentedText::trace_text è chiamata nella preparazione dei campi delle span della presentazione.",
+      "rationale": "Tracciare il proiettore mentre prepara i campi della propria traccia introdurrebbe ricorsione nel logger."
+    },
+    {
+      "id": "crates/sanikey-desktop/src/presentation.rs#b8238ab2059e631c3a6d942534b5050f3df132712a57a93eaf8e682b837f4398:14",
+      "source_sha256": "b8238ab2059e631c3a6d942534b5050f3df132712a57a93eaf8e682b837f4398",
+      "status": "exception",
+      "evidence": "trace_classified_text costruisce il valore classificato usato dai campi delle span della presentazione.",
+      "rationale": "La proiezione avviene durante la costruzione delle span: una span del proiettore introdurrebbe ricorsione."
+    },
+    {
+      "id": "crates/sanikey-desktop/src/presentation.rs#b8238ab2059e631c3a6d942534b5050f3df132712a57a93eaf8e682b837f4398:0",
+      "source_sha256": "b8238ab2059e631c3a6d942534b5050f3df132712a57a93eaf8e682b837f4398",
+      "status": "covered",
+      "evidence": "presentation::tests::capture_keeps_changed_non_secret_text_and_redacts_secret_from_log verifica ingresso, risultato, durata e classificazioni unclassified e secret di PresentedText::new."
+    },
+    {
+      "id": "crates/sanikey-desktop/src/presentation.rs#b8238ab2059e631c3a6d942534b5050f3df132712a57a93eaf8e682b837f4398:3",
+      "source_sha256": "b8238ab2059e631c3a6d942534b5050f3df132712a57a93eaf8e682b837f4398",
+      "status": "covered",
+      "evidence": "presentation::tests::capture_keeps_changed_non_secret_text_and_redacts_secret_from_log verifica ingresso, risultato, durata e classificazioni unclassified e secret di PresentedText::displayed."
+    },
+    {
+      "id": "crates/sanikey-desktop/src/presentation.rs#b8238ab2059e631c3a6d942534b5050f3df132712a57a93eaf8e682b837f4398:6",
+      "source_sha256": "b8238ab2059e631c3a6d942534b5050f3df132712a57a93eaf8e682b837f4398",
+      "status": "covered",
+      "evidence": "presentation::tests::capture_keeps_changed_non_secret_text_and_redacts_secret_from_log verifica ingresso, risultato, durata e classificazioni unclassified e secret di PresentedText::diagnostic."
+    },
+    {
+      "id": "crates/sanikey-desktop/src/presentation.rs#b8238ab2059e631c3a6d942534b5050f3df132712a57a93eaf8e682b837f4398:9",
+      "source_sha256": "b8238ab2059e631c3a6d942534b5050f3df132712a57a93eaf8e682b837f4398",
+      "status": "covered",
+      "evidence": "presentation::tests::capture_keeps_changed_non_secret_text_and_redacts_secret_from_log verifica ingresso, controllo, risultato, durata e classificazioni unclassified e secret di PresentedText::capture."
+    },
+    {
+      "id": "crates/sanikey-desktop/src/presentation.rs#b8238ab2059e631c3a6d942534b5050f3df132712a57a93eaf8e682b837f4398:15",
+      "source_sha256": "b8238ab2059e631c3a6d942534b5050f3df132712a57a93eaf8e682b837f4398",
+      "status": "exception",
+      "evidence": "Classification::name è dichiarata const e converte un enum in un identificatore statico.",
+      "rationale": "Una chiamata di tracing con effetti runtime non può essere inserita nel corpo const senza modificarne il contratto."
+    },
+    {
+      "id": "crates/sanikey-core/src/operation.rs#300d946d4a0b7d20547b3194ceb41f0cf4a47d294c19285332094124448c29ab:0",
+      "source_sha256": "300d946d4a0b7d20547b3194ceb41f0cf4a47d294c19285332094124448c29ab",
+      "status": "exception",
+      "evidence": "ErrorCode::as_str è dichiarata const e restituisce un identificatore statico.",
+      "rationale": "Una chiamata di tracing con effetti runtime non può essere inserita nel corpo const senza modificarne il contratto."
+    },
+    {
+      "id": "crates/sanikey-core/src/operation.rs#300d946d4a0b7d20547b3194ceb41f0cf4a47d294c19285332094124448c29ab:5",
+      "source_sha256": "300d946d4a0b7d20547b3194ceb41f0cf4a47d294c19285332094124448c29ab",
+      "status": "exception",
+      "evidence": "OperationError::code è dichiarata const e restituisce la categoria dell'errore.",
+      "rationale": "Una chiamata di tracing con effetti runtime non può essere inserita nel corpo const senza modificarne il contratto."
+    },
+    {
       "id": "crates/sanikey-core/src/aifa.rs#b663de73332bd93687e7157ddaa45374ab050e744ef679ccc2cd48c89952c56c:85",
       "source_sha256": "b663de73332bd93687e7157ddaa45374ab050e744ef679ccc2cd48c89952c56c",
       "status": "covered",

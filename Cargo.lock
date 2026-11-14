@@ -3968,6 +3968,7 @@ dependencies = [
  "eframe",
  "rfd",
  "sanikey-core",
+ "serde_json",
 ]
 
 [[package]]

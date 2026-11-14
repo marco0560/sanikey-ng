@@ -9,3 +9,6 @@ license.workspace = true
 eframe = "=0.37.0"
 rfd = "=0.17.2"
 sanikey-core = { path = "../sanikey-core" }
+
+[dev-dependencies]
+serde_json = "1.0.154"

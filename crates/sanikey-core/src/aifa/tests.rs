@@ -109,7 +109,11 @@ fn aifa_client_constructors_have_nested_trace_spans_and_representable_results() 
             .unwrap_or_else(|| panic!("span di uscita assente: {function}"));
         assert_eq!(exit["outcome"], "returned");
         assert!(exit["duration_ms"].is_number());
-        assert!(entry.to_string().contains("api.aifa.gov.it") || function.ends_with("default"));
+        if function.ends_with("default") {
+            assert!(entry["arguments"].to_string().contains("AifaClient::new"));
+        } else {
+            assert!(entry["arguments"].to_string().contains("api.aifa.gov.it"));
+        }
         assert!(exit["result"].to_string().contains("api.aifa.gov.it"));
         assert!(exit["result"].to_string().contains("unsupported_type"));
     }

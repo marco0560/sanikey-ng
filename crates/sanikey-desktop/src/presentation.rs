@@ -296,6 +296,50 @@ mod tests {
         assert!(contents.contains("desktop::presentation::PresentedText::new"));
         assert!(contents.contains("desktop::presentation::PresentedText::displayed"));
         assert!(contents.contains("secret_omitted"));
+        let records: Vec<serde_json::Value> = contents
+            .lines()
+            .map(|line| serde_json::from_str(line).expect("record JSON sintetico"))
+            .collect();
+        for method in ["new", "displayed", "diagnostic", "capture"] {
+            let function = format!("desktop::presentation::PresentedText::{method}");
+            for classification in ["unclassified", "secret"] {
+                let entry = records
+                    .iter()
+                    .find(|record| {
+                        record["type"] == "function_enter"
+                            && record["function"] == function
+                            && record["arguments"].as_array().is_some_and(|arguments| {
+                                arguments.iter().any(|field| {
+                                    field["name"] == "classification"
+                                        && field["content"]["value"] == classification
+                                })
+                            })
+                    })
+                    .unwrap_or_else(|| panic!("ingresso {function} {classification} mancante"));
+                let exit = records
+                    .iter()
+                    .find(|record| {
+                        record["type"] == "function_exit" && record["call_id"] == entry["call_id"]
+                    })
+                    .unwrap_or_else(|| panic!("uscita {function} {classification} mancante"));
+                assert!(exit["duration_ms"].is_number());
+                assert_eq!(exit["outcome"], "returned");
+                if method == "capture" {
+                    let args = entry["arguments"].to_string();
+                    assert!(args.contains("session_available"));
+                    assert!(args.contains("capture_failed_before_call"));
+                    assert!(args.contains("synthetic_"));
+                    assert!(exit["result"].to_string().contains("capture_failed"));
+                }
+                if classification == "secret" {
+                    assert!(entry["arguments"].to_string().contains("secret_omitted"));
+                    assert!(exit["result"].to_string().contains("secret_omitted"));
+                } else {
+                    assert!(entry["arguments"].to_string().contains("Titolo"));
+                    assert!(exit["result"].to_string().contains("Titolo"));
+                }
+            }
+        }
         fs::remove_dir_all(directory).expect("rimozione directory sintetica");
     }
 }
