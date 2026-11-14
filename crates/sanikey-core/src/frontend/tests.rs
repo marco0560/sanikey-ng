@@ -3,7 +3,8 @@
 use super::{
     APP_JS, CHART_JS, CHART_LICENSE, CHART_NAVIGATION_JS, EXTENDED_CHART_TEMPLATE, INDEX_TEMPLATE,
     MATERIAL_WEB_CSS, MATERIAL_WEB_JS, PARAMETER_CHART_JS, SANKEY_LOGO, STYLE_CSS, UI_HELPER_JS,
-    build_frontend, write_bytes,
+    build_frontend, copy_file, create_directory, escape_html, filesystem_error, render_template,
+    write_bytes, write_text,
 };
 use crate::config::{IngestionConfig, PersonConfig, SearchConfig, UiConfig};
 use serde_json::Value;
@@ -55,6 +56,58 @@ fn person(root: &Path) -> PersonConfig {
         search: SearchConfig::default(),
         ingestion: IngestionConfig::default(),
     }
+}
+
+fn traced<R>(directory: &TestDirectory, operation: impl FnOnce() -> R) -> (R, String, Vec<Value>) {
+    use crate::logging::{Component, Level, Session};
+
+    static NEXT_TRACE_ID: AtomicUsize = AtomicUsize::new(0);
+    let log_directory = directory.path().join(format!(
+        "logs-{}",
+        NEXT_TRACE_ID.fetch_add(1, Ordering::Relaxed)
+    ));
+    let (session, log_path) =
+        Session::create_in_directory_with_level(&log_directory, Component::Core, Level::Trace)
+            .expect("sessione Trace sintetica");
+    let result = session.scoped(operation);
+    session.finish(Component::Core).expect("chiusura Trace");
+    let contents = fs::read_to_string(log_path).expect("log Trace sintetico");
+    let entries = contents
+        .lines()
+        .map(|line| serde_json::from_str(line).expect("record JSON sintetico"))
+        .collect();
+    (result, contents, entries)
+}
+
+fn function_span<'a>(entries: &'a [Value], function: &str) -> (&'a Value, &'a Value) {
+    let enters: Vec<_> = entries
+        .iter()
+        .filter(|entry| entry["type"] == "function_enter" && entry["function"] == function)
+        .collect();
+    assert_eq!(enters.len(), 1, "ingresso univoco di {function}");
+    let enter = enters[0];
+    let exits: Vec<_> = entries
+        .iter()
+        .filter(|entry| {
+            entry["type"] == "function_exit"
+                && entry["function"] == function
+                && entry["call_id"] == enter["call_id"]
+        })
+        .collect();
+    assert_eq!(exits.len(), 1, "uscita correlata di {function}");
+    let exit = exits[0];
+    assert_eq!(exit["outcome"], "returned");
+    assert!(exit["duration_ms"].as_u64().is_some());
+    (enter, exit)
+}
+
+fn assert_path_content(content: &Value, path: &Path) {
+    assert_eq!(content["kind"], "data");
+    assert_eq!(content["value"]["encoding"], "utf8");
+    assert_eq!(
+        content["value"]["value"],
+        path.to_str().expect("percorso sintetico UTF-8")
+    );
 }
 
 #[test]
@@ -194,7 +247,8 @@ fn synthetic_trace_captures_frontend_inputs_outputs_and_native_paths_while_event
         config.ui.subtitle =
             "Synthetic private subtitle\npassword = synthetic-frontend-secret; dettaglio conservato"
                 .to_owned();
-        config.usb_uuid = "synthetic-volume-uuid".to_owned();
+        config.usb_uuid = "00000000-0000-4000-8000-000000000001".to_owned();
+        config.search.dictionary = Some(directory.path().join("api_key=synthetic-person-secret"));
         config.ui.background_image = Some(background.clone());
 
         let result = session
@@ -224,7 +278,7 @@ fn synthetic_trace_captures_frontend_inputs_outputs_and_native_paths_while_event
             assert!(contents.contains("Synthetic private subtitle"));
             assert!(contents.contains("secret_omitted"));
             assert!(!contents.contains("synthetic-frontend-secret"));
-            assert!(contents.contains("synthetic-volume-uuid"));
+            assert!(contents.contains("00000000-0000-4000-8000-000000000001"));
             assert!(contents.contains("Synthetic <private> & name"));
             assert!(contents.contains("synthetic-background.bin"));
             assert!(contents.contains("transferred_contents"));
@@ -234,13 +288,234 @@ fn synthetic_trace_captures_frontend_inputs_outputs_and_native_paths_while_event
             assert!(contents.contains("private asset"));
             assert!(contents.contains("secret_omitted"));
             assert!(!contents.contains("synthetic-asset-secret"));
+            assert!(!contents.contains("synthetic-person-secret"));
+
+            let entries: Vec<Value> = contents
+                .lines()
+                .map(|line| serde_json::from_str(line).expect("record Trace sintetico"))
+                .collect();
+            let build_entry = entries
+                .iter()
+                .find(|entry| {
+                    entry["type"] == "function_enter"
+                        && entry["function"] == "frontend::build_frontend"
+                })
+                .expect("ingresso build_frontend");
+            let arguments = build_entry["arguments"]
+                .as_array()
+                .expect("argomenti build");
+            assert_eq!(arguments.len(), 1);
+            assert_eq!(arguments[0]["name"], "person");
+            let traced_person = &arguments[0]["content"]["value"];
+            assert_eq!(
+                traced_person["usb_uuid"],
+                "00000000-0000-4000-8000-000000000001"
+            );
+            assert_eq!(
+                traced_person["search"]["dictionary"]["kind"],
+                "secret_omitted"
+            );
+            assert_eq!(traced_person["local_build"]["value"]["encoding"], "utf8");
+            assert_eq!(
+                traced_person["local_build"]["value"]["value"],
+                config.local_build.to_str().expect("percorso UTF-8")
+            );
         } else {
             assert!(!contents.contains("function_enter"));
             assert!(!contents.contains("Synthetic private subtitle"));
-            assert!(!contents.contains("synthetic-volume-uuid"));
+            assert!(!contents.contains("00000000-0000-4000-8000-000000000001"));
+            assert!(!contents.contains("synthetic-person-secret"));
             assert!(!contents.contains("synthetic-background.bin"));
         }
     }
+}
+
+#[test]
+fn synthetic_trace_records_complete_render_and_escape_calls() {
+    use crate::logging::{trace_json_value, trace_sensitive_text};
+
+    let directory = TestDirectory::new();
+    let template = "<p>__PERSON__</p><span>__NOTE__</span>";
+    let note = "api_key = render-secret";
+    let replacements = [
+        ("__PERSON__", "Persona sintetica privata"),
+        ("__NOTE__", note),
+    ];
+    let expected_rendered = "<p>Persona sintetica privata</p><span>api_key = render-secret</span>";
+    let (rendered, render_log, render_entries) =
+        traced(&directory, || render_template(template, &replacements));
+    assert_eq!(rendered, expected_rendered);
+    assert!(!render_log.contains(note));
+    let (enter, exit) = function_span(&render_entries, "frontend::render_template");
+    let arguments = enter["arguments"].as_array().expect("argomenti render");
+    assert_eq!(arguments.len(), 2);
+    assert_eq!(arguments[0]["name"], "template");
+    assert_eq!(
+        arguments[0]["content"],
+        serde_json::json!({"kind":"data", "value":template})
+    );
+    assert_eq!(arguments[1]["name"], "replacements");
+    assert_eq!(
+        arguments[1]["content"],
+        trace_json_value(&serde_json::json!(replacements)).to_json()
+    );
+    assert_eq!(
+        exit["result"]["value"]["output"],
+        trace_sensitive_text(&rendered).to_json()
+    );
+
+    let value = "<Paziente> & \"sintetico\" 'privato'; api_key=escape-secret";
+    let expected_escaped =
+        "&lt;Paziente&gt; &amp; &quot;sintetico&quot; &#x27;privato&#x27;; api_key=escape-secret";
+    let (escaped, escape_log, escape_entries) = traced(&directory, || escape_html(value));
+    assert_eq!(escaped, expected_escaped);
+    assert!(!escape_log.contains("escape-secret"));
+    let (enter, exit) = function_span(&escape_entries, "frontend::escape_html");
+    let arguments = enter["arguments"].as_array().expect("argomenti escape");
+    assert_eq!(arguments.len(), 1);
+    assert_eq!(arguments[0]["name"], "value");
+    assert_eq!(
+        arguments[0]["content"],
+        trace_sensitive_text(value).to_json()
+    );
+    assert_eq!(
+        exit["result"]["value"]["output"],
+        trace_sensitive_text(&escaped).to_json()
+    );
+}
+
+#[test]
+fn synthetic_trace_records_complete_frontend_file_operation_calls() {
+    use crate::logging::trace_sensitive_text;
+
+    let directory = TestDirectory::new();
+
+    let created = directory.path().join("created/private-directory");
+    let (create_result, create_log, create_entries) =
+        traced(&directory, || create_directory(&created));
+    assert!(create_result.is_ok());
+    assert!(created.is_dir());
+    let (enter, exit) = function_span(&create_entries, "frontend::create_directory");
+    let arguments = enter["arguments"].as_array().expect("argomenti directory");
+    assert_eq!(arguments.len(), 1);
+    assert_eq!(arguments[0]["name"], "path");
+    assert_path_content(&arguments[0]["content"], &created);
+    assert_eq!(
+        exit["result"]["value"]["output"],
+        serde_json::json!({"kind":"data", "value":{"state":"succeeded"}})
+    );
+    assert!(create_log.contains("private-directory"));
+
+    let text_path = directory.path().join("text-output/private.txt");
+    let text = "Nota privata sintetica\napi_key = write-secret";
+    let (write_result, text_log, text_entries) =
+        traced(&directory, || write_text(&text_path, text));
+    assert!(write_result.is_ok());
+    assert_eq!(fs::read_to_string(&text_path).expect("testo scritto"), text);
+    assert!(!text_log.contains("write-secret"));
+    let (enter, exit) = function_span(&text_entries, "frontend::write_text");
+    let arguments = enter["arguments"].as_array().expect("argomenti write_text");
+    assert_eq!(arguments.len(), 2);
+    assert_eq!(arguments[0]["name"], "path");
+    assert_path_content(&arguments[0]["content"], &text_path);
+    assert_eq!(arguments[1]["name"], "contents");
+    assert_eq!(
+        arguments[1]["content"],
+        trace_sensitive_text(text).to_json()
+    );
+    assert_eq!(
+        exit["result"]["value"]["output"],
+        serde_json::json!({"kind":"data", "value":{"state":"succeeded"}})
+    );
+
+    let bytes_path = directory.path().join("binary-output/asset.bin");
+    let bytes = [0, 0xff, 1];
+    let (bytes_result, _bytes_log, bytes_entries) =
+        traced(&directory, || write_bytes(&bytes_path, &bytes));
+    assert!(bytes_result.is_ok());
+    assert_eq!(fs::read(&bytes_path).expect("byte scritti"), bytes);
+    let (enter, exit) = function_span(&bytes_entries, "frontend::write_bytes");
+    let arguments = enter["arguments"]
+        .as_array()
+        .expect("argomenti write_bytes");
+    assert_eq!(arguments.len(), 2);
+    assert_eq!(arguments[0]["name"], "path");
+    assert_path_content(&arguments[0]["content"], &bytes_path);
+    assert_eq!(arguments[1]["name"], "contents");
+    assert_eq!(
+        arguments[1]["content"],
+        serde_json::json!({"kind":"omitted", "reason":"unsupported_type"})
+    );
+    assert_eq!(
+        exit["result"]["value"]["output"],
+        serde_json::json!({"kind":"data", "value":{"state":"succeeded"}})
+    );
+
+    let source = directory.path().join("copy-source.txt");
+    let destination = directory.path().join("copy-output/copied.txt");
+    let copied_contents = b"private source fixture";
+    fs::write(&source, copied_contents).expect("sorgente sintetica");
+    fs::create_dir_all(destination.parent().expect("directory destinazione"))
+        .expect("directory destinazione sintetica");
+    let (copy_result, _copy_log, copy_entries) =
+        traced(&directory, || copy_file(&source, &destination));
+    assert!(copy_result.is_ok());
+    assert_eq!(
+        fs::read(&destination).expect("copia sintetica"),
+        copied_contents
+    );
+    let (enter, exit) = function_span(&copy_entries, "frontend::copy_file");
+    let arguments = enter["arguments"].as_array().expect("argomenti copy_file");
+    assert_eq!(arguments.len(), 3);
+    assert_eq!(arguments[0]["name"], "source");
+    assert_path_content(&arguments[0]["content"], &source);
+    assert_eq!(arguments[1]["name"], "destination");
+    assert_path_content(&arguments[1]["content"], &destination);
+    assert_eq!(arguments[2]["name"], "transferred_contents");
+    assert_eq!(
+        arguments[2]["content"],
+        serde_json::json!({"kind":"omitted", "reason":"external_component"})
+    );
+    assert_eq!(
+        exit["result"]["value"]["output"],
+        serde_json::json!({
+            "kind":"data",
+            "value":{
+                "copy_result":{"state":"succeeded"},
+                "bytes_copied":copied_contents.len(),
+                "transferred_contents":{"kind":"omitted", "reason":"external_component"}
+            }
+        })
+    );
+
+    let error_path = directory.path().join("api_key=filesystem-error-secret");
+    let cause = std::io::Error::new(std::io::ErrorKind::NotFound, "fixture I/O error");
+    let cause_message = trace_sensitive_text(&cause.to_string()).to_json();
+    let (error, error_log, error_entries) = traced(&directory, || {
+        filesystem_error("fixture frontend operation", &error_path, cause)
+    });
+    assert_eq!(error.code().as_str(), "configuration");
+    assert!(!error_log.contains("filesystem-error-secret"));
+    let (enter, exit) = function_span(&error_entries, "frontend::filesystem_error");
+    let arguments = enter["arguments"]
+        .as_array()
+        .expect("argomenti filesystem_error");
+    assert_eq!(arguments.len(), 3);
+    assert_eq!(arguments[0]["name"], "context");
+    assert_eq!(
+        arguments[0]["content"]["value"],
+        "fixture frontend operation"
+    );
+    assert_eq!(arguments[1]["name"], "path");
+    assert_eq!(arguments[1]["content"]["kind"], "secret_omitted");
+    assert_eq!(arguments[2]["name"], "io_error");
+    assert_eq!(arguments[2]["content"]["value"]["kind"], "NotFound");
+    assert!(arguments[2]["content"]["value"]["raw_os_error"].is_null());
+    assert_eq!(arguments[2]["content"]["value"]["message"], cause_message);
+    assert_eq!(
+        exit["result"]["value"]["output"],
+        trace_sensitive_text(error.message()).to_json()
+    );
 }
 
 #[cfg(unix)]

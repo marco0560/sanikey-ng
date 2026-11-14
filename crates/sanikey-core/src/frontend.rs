@@ -59,6 +59,7 @@ fn person_trace(person: &PersonConfig) -> TraceValue {
         "source_documents": TraceValue::path(&person.source_documents).to_json(),
         "metadata_directory": TraceValue::path(&person.metadata_directory).to_json(),
         "local_build": TraceValue::path(&person.local_build).to_json(),
+        "usb_uuid": person.usb_uuid,
         "enabled": person.enabled,
         "ui": {
             "accent_color": person.ui.accent_color,

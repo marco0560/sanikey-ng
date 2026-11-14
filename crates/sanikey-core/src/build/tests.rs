@@ -5,7 +5,9 @@ use super::{
 use crate::config::{
     AccountsConfig, IngestionConfig, PersonConfig, SearchConfig, UiConfig, UsbConfig,
 };
-use crate::logging::{Component, Level, Session};
+use crate::logging::{Component, Level, Session, TraceValue};
+use crate::metadata::DocumentRecord;
+use crate::pdf::{ExtractedText, TextPageSpan};
 use serde_json::Value;
 use std::fs;
 use std::io::{Cursor, Write};
@@ -54,6 +56,84 @@ fn build_options(mode: BuildMode) -> BuildOptions {
         force_pdf_ocr: false,
         parameter_debug: false,
     }
+}
+
+fn trace_document_record(path: PathBuf, document_id: &str) -> DocumentRecord {
+    DocumentRecord {
+        document_id: document_id.to_owned(),
+        patient_id: "patient-synthetic".into(),
+        path,
+        title: format!("Titolo {document_id}"),
+        category: "laboratorio".into(),
+        kind: "text".into(),
+        sha256: format!("sha256-{document_id}"),
+        date: Some("2026-10-12".into()),
+        series: Some("serie sintetica".into()),
+        tags: vec!["sintetico".into(), "build".into()],
+        origin: "source".into(),
+        container_id: None,
+        internal_path: None,
+    }
+}
+
+fn trace_debug_argument<T: std::fmt::Debug>(value: &T) -> Value {
+    serde_json::json!({
+        "kind": "data",
+        "value": {
+            "format": "rust_debug",
+            "value": format!("{value:#?}"),
+        }
+    })
+}
+
+fn trace_debug_result<T: std::fmt::Debug>(value: &T, native_paths: Value) -> Value {
+    serde_json::json!({
+        "kind": "data",
+        "value": {
+            "format": "rust_debug",
+            "value": format!("{value:#?}"),
+            "native_paths": native_paths,
+        }
+    })
+}
+
+fn trace_document_paths_expected(documents: &[DocumentRecord]) -> Value {
+    serde_json::json!({
+        "kind": "data",
+        "value": documents.iter().enumerate().map(|(index, document)| {
+            serde_json::json!({
+                "index": index,
+                "document_id": document.document_id,
+                "path": TraceValue::path(&document.path).to_json(),
+            })
+        }).collect::<Vec<_>>(),
+    })
+}
+
+fn assert_complete_trace_call(records: &[Value], function: &str, arguments: Value, result: Value) {
+    let entry = records
+        .iter()
+        .find(|record| {
+            record["type"] == "function_enter"
+                && record["function"] == function
+                && record["arguments"] == arguments
+        })
+        .unwrap_or_else(|| panic!("ingresso completo assente: {function}"));
+    assert!(
+        entry["call_id"].is_u64(),
+        "call_id non numerico: {function}"
+    );
+    let exit = records
+        .iter()
+        .find(|record| {
+            record["type"] == "function_exit"
+                && record["function"] == function
+                && record["call_id"] == entry["call_id"]
+        })
+        .unwrap_or_else(|| panic!("uscita non correlata: {function}"));
+    assert_eq!(exit["outcome"], "returned", "esito inatteso: {function}");
+    assert!(exit["duration_ms"].is_u64(), "durata assente: {function}");
+    assert_eq!(exit["result"], result, "risultato diverso: {function}");
 }
 
 fn write_zip(path: &Path, entries: &[(&str, &[u8])]) {
@@ -338,6 +418,211 @@ fn invalid_parameter_rules_fail_before_creating_build_output() {
 
     assert!(build_patient(&person, BuildOptions::default()).is_err());
     assert!(!person.local_build.exists());
+}
+
+#[test]
+fn traced_build_document_helpers_capture_complete_inputs_and_results() {
+    let temp = TestDirectory::new();
+    let first = trace_document_record(temp.0.join("documents/first.txt"), "document-a");
+    let duplicate = trace_document_record(temp.0.join("documents/repeated.txt"), "document-a");
+    let second = trace_document_record(temp.0.join("documents/second.txt"), "document-b");
+    let documents = vec![first.clone(), duplicate, second];
+    let deduplicated = vec![first.clone(), documents[2].clone()];
+    let warnings = vec!["avviso sintetico".to_owned()];
+    let empty = ExtractedText {
+        document_id: first.document_id.clone(),
+        text: String::new(),
+        warnings: warnings.clone(),
+        page_spans: Vec::new(),
+    };
+    let extracted = ExtractedText {
+        document_id: first.document_id.clone(),
+        text: "testo sintetico pagina uno\nseconda pagina".into(),
+        warnings: vec!["estrazione sintetica parziale".into()],
+        page_spans: vec![
+            TextPageSpan {
+                page_number: 1,
+                character_start: 0,
+                character_end: 27,
+            },
+            TextPageSpan {
+                page_number: 2,
+                character_start: 28,
+                character_end: 42,
+            },
+        ],
+    };
+    let expected_cache_entry = serde_json::json!({
+        "document_id": "document-a",
+        "path": first.path.to_string_lossy(),
+        "kind": "text",
+        "sha256": "sha256-document-a",
+        "origin": "source",
+        "container_id": null,
+        "internal_path": null,
+        "text": extracted.text,
+        "warnings": extracted.warnings,
+        "page_spans": [
+            {"page_number": 1, "character_start": 0, "character_end": 27},
+            {"page_number": 2, "character_start": 28, "character_end": 42}
+        ]
+    });
+    let cache_path = temp.0.join("cache/extracted_text.json");
+    fs::create_dir_all(cache_path.parent().expect("directory cache"))
+        .expect("creazione cache sintetica");
+    fs::write(
+        &cache_path,
+        serde_json::to_vec(&serde_json::json!({
+            "schema_version": super::CACHE_SCHEMA_VERSION,
+            "documents": {"document-a": expected_cache_entry},
+        }))
+        .expect("serializzazione cache sintetica"),
+    )
+    .expect("scrittura cache sintetica");
+
+    let (
+        actual_deduplicated,
+        actual_empty,
+        actual_identity,
+        actual_cache_entry,
+        actual_cached,
+        actual_cache,
+    ) = {
+        let (session, log_path) = Session::create_in_directory_with_level(
+            &temp.0.join("logs"),
+            Component::Core,
+            Level::Trace,
+        )
+        .expect("sessione Trace sintetica");
+        let results = session.scoped(|| {
+            (
+                super::deduplicate_documents(&documents),
+                super::empty_extraction(&first, warnings.clone()),
+                super::cache_identity(&first),
+                super::extraction_cache_entry(&first, &extracted),
+                super::cached_extracted_text(&expected_cache_entry, &first),
+                super::read_extraction_cache(&cache_path),
+            )
+        });
+        drop(session);
+
+        let records = fs::read_to_string(log_path)
+            .expect("lettura log sintetico")
+            .lines()
+            .map(|line| serde_json::from_str::<Value>(line).expect("record JSON valido"))
+            .collect::<Vec<_>>();
+
+        let deduplicate_arguments = serde_json::json!([
+            {"name": "documents", "content": trace_debug_argument(&documents)},
+            {"name": "document_native_paths", "content": trace_document_paths_expected(&documents)},
+        ]);
+        let deduplicate_native_paths = serde_json::json!([
+            {
+                "name": "document_native_paths",
+                "value": trace_document_paths_expected(&deduplicated)
+            }
+        ]);
+        assert_complete_trace_call(
+            &records,
+            "build::deduplicate_documents",
+            deduplicate_arguments,
+            trace_debug_result(&deduplicated, deduplicate_native_paths),
+        );
+
+        let empty_arguments = serde_json::json!([
+            {"name": "document", "content": trace_debug_argument(&first)},
+            {"name": "warnings", "content": trace_debug_argument(&warnings)},
+            {"name": "document_native_path", "content": TraceValue::path(&first.path).to_json()},
+        ]);
+        assert_complete_trace_call(
+            &records,
+            "build::empty_extraction",
+            empty_arguments,
+            trace_debug_result(&empty, serde_json::json!([])),
+        );
+
+        let expected_identity = vec![
+            (
+                "document_id".to_owned(),
+                serde_json::json!(first.document_id),
+            ),
+            (
+                "path".to_owned(),
+                serde_json::json!(first.path.to_string_lossy()),
+            ),
+            ("kind".to_owned(), serde_json::json!(first.kind)),
+            ("sha256".to_owned(), serde_json::json!(first.sha256)),
+            ("origin".to_owned(), serde_json::json!(first.origin)),
+            (
+                "container_id".to_owned(),
+                serde_json::json!(first.container_id),
+            ),
+            (
+                "internal_path".to_owned(),
+                serde_json::json!(first.internal_path),
+            ),
+        ];
+        let identity_arguments = serde_json::json!([
+            {"name": "document", "content": trace_debug_argument(&first)},
+            {"name": "document_native_path", "content": TraceValue::path(&first.path).to_json()},
+        ]);
+        assert_complete_trace_call(
+            &records,
+            "build::cache_identity",
+            identity_arguments,
+            trace_debug_result(&expected_identity, serde_json::json!([])),
+        );
+
+        let cache_entry_arguments = serde_json::json!([
+            {"name": "document", "content": trace_debug_argument(&first)},
+            {"name": "extracted", "content": trace_debug_argument(&extracted)},
+            {"name": "document_native_path", "content": TraceValue::path(&first.path).to_json()},
+        ]);
+        assert_complete_trace_call(
+            &records,
+            "build::extraction_cache_entry",
+            cache_entry_arguments,
+            trace_debug_result(&expected_cache_entry, serde_json::json!([])),
+        );
+
+        let cached_arguments = serde_json::json!([
+            {"name": "entry", "content": trace_debug_argument(&expected_cache_entry)},
+            {"name": "document", "content": trace_debug_argument(&first)},
+            {"name": "document_native_path", "content": TraceValue::path(&first.path).to_json()},
+        ]);
+        let cached_result = Some(extracted.clone());
+        assert_complete_trace_call(
+            &records,
+            "build::cached_extracted_text",
+            cached_arguments,
+            trace_debug_result(&cached_result, serde_json::json!([])),
+        );
+
+        let cache_arguments = serde_json::json!([
+            {"name": "path", "content": TraceValue::path(&cache_path).to_json()},
+        ]);
+        let expected_cache = std::collections::BTreeMap::from([(
+            "document-a".to_owned(),
+            expected_cache_entry.clone(),
+        )]);
+        assert_complete_trace_call(
+            &records,
+            "build::read_extraction_cache",
+            cache_arguments,
+            trace_debug_result(&expected_cache, serde_json::json!([])),
+        );
+
+        (
+            results.0, results.1, results.2, results.3, results.4, results.5,
+        )
+    };
+
+    assert_eq!(actual_deduplicated, deduplicated);
+    assert_eq!(actual_empty, empty);
+    assert_eq!(actual_identity[0].0, "document_id");
+    assert_eq!(actual_cache_entry, expected_cache_entry);
+    assert_eq!(actual_cached, Some(extracted));
+    assert_eq!(actual_cache.get("document-a"), Some(&expected_cache_entry));
 }
 
 #[test]

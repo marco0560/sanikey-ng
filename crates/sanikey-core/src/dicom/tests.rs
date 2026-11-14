@@ -2,7 +2,9 @@
 
 use super::{DicomStudy, catalog_dicom_studies, generate_dicom_previews, prepare_dicom_media};
 use crate::config::{IngestionConfig, PersonConfig, SearchConfig, UiConfig};
+use crate::logging::{Component, Level, Session, TraceValue};
 use crate::metadata::DocumentRecord;
+use serde_json::Value;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -206,6 +208,56 @@ fn element(output: &mut Vec<u8>, tag: (u16, u16), vr: &str, value: &[u8]) {
 
 fn studies(root: &Path, documents: &[DocumentRecord]) -> Vec<DicomStudy> {
     catalog_dicom_studies(&person(root), documents)
+}
+
+fn traced<R>(directory: &TempDir, operation: impl FnOnce() -> R) -> (R, String, Vec<Value>) {
+    static NEXT_TRACE: AtomicU64 = AtomicU64::new(0);
+    let logs = directory.path().join(format!(
+        "logs-{}",
+        NEXT_TRACE.fetch_add(1, Ordering::Relaxed)
+    ));
+    let (session, path) =
+        Session::create_in_directory_with_level(&logs, Component::Core, Level::Trace)
+            .expect("sessione Trace sintetica");
+    let result = session.scoped(operation);
+    session.finish(Component::Core).expect("chiusura Trace");
+    let contents = fs::read_to_string(path).expect("log Trace sintetico");
+    let records = contents
+        .lines()
+        .map(|line| serde_json::from_str(line).expect("record JSON sintetico"))
+        .collect();
+    (result, contents, records)
+}
+
+fn function_span<'a>(records: &'a [Value], function: &str) -> (&'a Value, &'a Value) {
+    let enters: Vec<_> = records
+        .iter()
+        .filter(|record| record["type"] == "function_enter" && record["function"] == function)
+        .collect();
+    assert_eq!(enters.len(), 1, "ingresso univoco di {function}");
+    let enter = enters[0];
+    let exits: Vec<_> = records
+        .iter()
+        .filter(|record| {
+            record["type"] == "function_exit"
+                && record["function"] == function
+                && record["call_id"] == enter["call_id"]
+        })
+        .collect();
+    assert_eq!(exits.len(), 1, "uscita correlata di {function}");
+    let exit = exits[0];
+    assert_eq!(exit["outcome"], "returned");
+    assert!(exit["duration_ms"].as_u64().is_some());
+    (enter, exit)
+}
+
+fn assert_path_content(content: &Value, path: &Path) {
+    assert_eq!(content["kind"], "data");
+    assert_eq!(content["value"]["encoding"], "utf8");
+    assert_eq!(
+        content["value"]["value"],
+        path.to_str().expect("percorso sintetico UTF-8")
+    );
 }
 
 #[test]
@@ -610,6 +662,202 @@ fn previews_report_unsupported_pixels_without_losing_the_instance() {
     assert_eq!(
         fs::read(&studies[0].support_paths[0]).unwrap(),
         original_bytes
+    );
+}
+
+#[test]
+fn synthetic_trace_records_complete_dicom_helper_calls() {
+    use crate::logging::trace_sensitive_text;
+    use sha2::{Digest, Sha256};
+
+    let temp = TempDir::new();
+
+    let invalid_date = "api_key=synthetic-date-secret";
+    let (normalized, date_log, date_records) =
+        traced(&temp, || super::normalize_date(invalid_date.to_owned()));
+    assert_eq!(normalized, invalid_date);
+    assert!(!date_log.contains("synthetic-date-secret"));
+    let (enter, exit) = function_span(&date_records, "dicom::normalize_date");
+    let arguments = enter["arguments"].as_array().expect("argomenti data");
+    assert_eq!(arguments.len(), 1);
+    assert_eq!(arguments[0]["name"], "value");
+    assert_eq!(
+        arguments[0]["content"],
+        trace_sensitive_text(invalid_date).to_json()
+    );
+    assert_eq!(
+        exit["result"]["value"]["output"],
+        trace_sensitive_text(&normalized).to_json()
+    );
+
+    let patient_id = "persona-sintetica";
+    let uid = "1.2.826.0.1.3680043.10.999.21";
+    let expected_id = format!(
+        "{:x}",
+        Sha256::digest(format!("dicom-study\0{patient_id}\0{uid}").as_bytes())
+    );
+    let (id, _id_log, id_records) = traced(&temp, || super::study_id(patient_id, uid));
+    assert_eq!(id, expected_id);
+    let (enter, exit) = function_span(&id_records, "dicom::study_id");
+    let arguments = enter["arguments"].as_array().expect("argomenti study_id");
+    assert_eq!(arguments.len(), 2);
+    assert_eq!(arguments[0]["name"], "patient_id");
+    assert_eq!(
+        arguments[0]["content"],
+        TraceValue::data(patient_id).to_json()
+    );
+    assert_eq!(arguments[1]["name"], "study_instance_uid");
+    assert_eq!(arguments[1]["content"], TraceValue::data(uid).to_json());
+    assert_eq!(
+        exit["result"]["value"]["output"],
+        TraceValue::data(expected_id.as_str()).to_json()
+    );
+
+    let container_id = "container-synthetic-7";
+    let staging = temp
+        .path()
+        .join("build/staging/containers")
+        .join(container_id);
+    let instance_path = staging.join("instance.dcm");
+    let (root, _root_log, root_records) =
+        traced(&temp, || super::staging_root(&instance_path, container_id));
+    assert_eq!(root.as_deref(), Some(staging.as_path()));
+    let (enter, exit) = function_span(&root_records, "dicom::staging_root");
+    let arguments = enter["arguments"]
+        .as_array()
+        .expect("argomenti staging_root");
+    assert_eq!(arguments.len(), 2);
+    assert_eq!(arguments[0]["name"], "path");
+    assert_path_content(&arguments[0]["content"], &instance_path);
+    assert_eq!(arguments[1]["name"], "container_id");
+    assert_eq!(
+        arguments[1]["content"],
+        TraceValue::data(container_id).to_json()
+    );
+    assert_eq!(
+        exit["result"]["value"]["output"],
+        serde_json::json!({"kind":"data", "value":TraceValue::path(&staging).to_json()})
+    );
+
+    let extracted = temp
+        .path()
+        .join("api_key=synthetic-viewer-secret/staging/extracted");
+    let html = extracted.join("IHE_PDI/PAGES/STUDIES/STUDY1.HTM");
+    let expected_viewer_root = extracted.join("IHE_PDI");
+    let (viewer_root, viewer_log, viewer_records) =
+        traced(&temp, || super::viewer_root(&extracted, &html));
+    assert_eq!(viewer_root, expected_viewer_root);
+    assert!(!viewer_log.contains("synthetic-viewer-secret"));
+    let (enter, exit) = function_span(&viewer_records, "dicom::viewer_root");
+    let arguments = enter["arguments"]
+        .as_array()
+        .expect("argomenti viewer_root");
+    assert_eq!(arguments.len(), 2);
+    assert_eq!(arguments[0]["name"], "extracted");
+    assert_eq!(arguments[0]["content"]["kind"], "secret_omitted");
+    assert_eq!(arguments[1]["name"], "html");
+    assert_eq!(arguments[1]["content"]["kind"], "secret_omitted");
+    assert_eq!(
+        exit["result"]["value"]["output"],
+        serde_json::json!({"kind":"secret_omitted"})
+    );
+
+    let root = temp.path().join("extracted");
+    let preferred = root.join("IHE_PDI/PAGES/STUDIES/STUDY1.HTM");
+    let (priority, _priority_log, priority_records) =
+        traced(&temp, || super::viewer_priority(&root, &preferred));
+    assert_eq!(priority, 0);
+    let (enter, exit) = function_span(&priority_records, "dicom::viewer_priority");
+    let arguments = enter["arguments"]
+        .as_array()
+        .expect("argomenti viewer_priority");
+    assert_eq!(arguments.len(), 2);
+    assert_eq!(arguments[0]["name"], "root");
+    assert_path_content(&arguments[0]["content"], &root);
+    assert_eq!(arguments[1]["name"], "path");
+    assert_path_content(&arguments[1]["content"], &preferred);
+    assert_eq!(
+        exit["result"]["value"]["output"],
+        TraceValue::data(0_u8).to_json()
+    );
+
+    let executable = temp.path().join("private/viewer.EXE");
+    let (is_executable, _executable_log, executable_records) =
+        traced(&temp, || super::is_executable_or_installer(&executable));
+    assert!(is_executable);
+    let (enter, exit) = function_span(&executable_records, "dicom::is_executable_or_installer");
+    let arguments = enter["arguments"].as_array().expect("argomenti executable");
+    assert_eq!(arguments.len(), 1);
+    assert_eq!(arguments[0]["name"], "path");
+    assert_path_content(&arguments[0]["content"], &executable);
+    assert_eq!(
+        exit["result"]["value"]["output"],
+        TraceValue::data(true).to_json()
+    );
+
+    let dicom_path = temp.path().join("metadata.dcm");
+    dicom_file(
+        &dicom_path,
+        Some(uid),
+        Some("20260203"),
+        Some("Studio sintetico"),
+    );
+    let (metadata, _metadata_log, metadata_records) =
+        traced(&temp, || super::read_dicom_metadata(&dicom_path));
+    assert_eq!(
+        metadata,
+        Some(super::DicomMetadata {
+            study_instance_uid: Some(uid.to_owned()),
+            study_date: Some("2026-02-03".to_owned()),
+            study_description: Some("Studio sintetico".to_owned()),
+        })
+    );
+    let (enter, exit) = function_span(&metadata_records, "dicom::read_dicom_metadata");
+    let arguments = enter["arguments"].as_array().expect("argomenti metadata");
+    assert_eq!(arguments.len(), 3);
+    assert_eq!(arguments[0]["name"], "path");
+    assert_path_content(&arguments[0]["content"], &dicom_path);
+    assert_eq!(arguments[1]["name"], "dicom_dataset_bytes");
+    assert_eq!(
+        arguments[1]["content"],
+        serde_json::json!({"kind":"omitted", "reason":"external_component"})
+    );
+    assert_eq!(arguments[2]["name"], "read_until_tag");
+    assert_eq!(
+        arguments[2]["content"],
+        TraceValue::data(format!("{:?}", dicom_core::Tag(0x7fe0, 0x0010))).to_json()
+    );
+    assert_eq!(
+        exit["result"]["value"]["output"],
+        serde_json::json!({
+            "kind":"data",
+            "value":{
+                "metadata":{
+                    "study_instance_uid":uid,
+                    "study_date":"2026-02-03",
+                    "study_description":"Studio sintetico"
+                },
+                "parser_error":null
+            }
+        })
+    );
+
+    let (is_instance, _instance_log, instance_records) =
+        traced(&temp, || super::is_dicom_instance_path(&dicom_path));
+    assert!(is_instance);
+    let (enter, exit) = function_span(&instance_records, "dicom::is_dicom_instance_path");
+    let arguments = enter["arguments"]
+        .as_array()
+        .expect("argomenti is_instance");
+    assert_eq!(arguments.len(), 1);
+    assert_eq!(arguments[0]["name"], "path");
+    assert_path_content(&arguments[0]["content"], &dicom_path);
+    assert_eq!(
+        exit["result"]["value"],
+        serde_json::json!({
+            "return":true,
+            "output":{"preamble_marker":[68,73,67,77], "is_dicom":true}
+        })
     );
 }
 

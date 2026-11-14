@@ -3,7 +3,10 @@
 #[cfg(target_os = "linux")]
 use super::mirror_validated_txt_image_on_linux_volume;
 
-use super::{mirror_directory, mirror_validated_txt_image, resolve_path, trace_error};
+use super::{
+    empty_result, mirror_directory, mirror_validated_txt_image, normalize, resolve_path,
+    trace_error, usb_error,
+};
 use crate::config::{
     AccountsConfig, IngestionConfig, PersonConfig, SearchConfig, UiConfig, UsbConfig,
 };
@@ -11,6 +14,7 @@ use crate::operation::{
     CancellationToken, ErrorCode, OperationError, OperationEvent, OperationOutcome, OperationPhase,
 };
 use crate::simulated_export::{export_txt_simulation, validate_txt_simulation};
+use serde_json::{Value, json};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -95,6 +99,159 @@ fn read_tree(root: &Path) -> Vec<(PathBuf, Vec<u8>)> {
     }
     files.sort_by(|left, right| left.0.cmp(&right.0));
     files
+}
+
+fn trace_path(path: &Path) -> Value {
+    if let Some(text) = path.to_str() {
+        return json!({
+            "kind": "data",
+            "value": {"encoding": "utf8", "value": text},
+        });
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        json!({
+            "kind": "data",
+            "value": {
+                "encoding": "unix_bytes",
+                "value": path.as_os_str().as_bytes(),
+            },
+        })
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt;
+        json!({
+            "kind": "data",
+            "value": {
+                "encoding": "windows_utf16",
+                "value": path.as_os_str().encode_wide().collect::<Vec<_>>(),
+            },
+        })
+    }
+}
+
+fn trace_argument(name: &str, content: Value) -> Value {
+    json!({"name": name, "content": content})
+}
+
+fn assert_usb_trace(records: &[Value], function: &str, arguments: Value, result: Value) {
+    let entries: Vec<_> = records
+        .iter()
+        .filter(|record| record["type"] == "function_enter" && record["function"] == function)
+        .collect();
+    assert_eq!(entries.len(), 1, "una sola entrata per {function}");
+    assert_eq!(
+        entries[0]["arguments"], arguments,
+        "argomenti di {function}"
+    );
+    let call_id = entries[0]["call_id"].as_u64().expect("call_id numerico");
+    let exits: Vec<_> = records
+        .iter()
+        .filter(|record| {
+            record["type"] == "function_exit"
+                && record["function"] == function
+                && record["call_id"] == call_id
+        })
+        .collect();
+    assert_eq!(exits.len(), 1, "una sola uscita per {function}#{call_id}");
+    assert_eq!(exits[0]["outcome"], "returned");
+    assert_eq!(exits[0]["result"], result, "risultato di {function}");
+    assert!(
+        exits[0]["duration_ms"].as_u64().is_some(),
+        "durata mancante per {function}#{call_id}"
+    );
+}
+
+#[test]
+fn synthetic_trace_checks_usb_normalization_empty_result_and_secret_error() {
+    use crate::logging::{Component, Level, Session};
+
+    let temp = TestDirectory::new();
+    let (session, log_path) = Session::create_in_directory_with_level(
+        &temp.0.join("logs"),
+        Component::Core,
+        Level::Trace,
+    )
+    .expect("sessione trace sintetica");
+    let normalize_input = temp.0.join("source/../target");
+    let normalized = temp.0.join("target");
+    let empty_root = temp.0.join("empty-image");
+    let secret_message = "password = synthetic-usb-secret; dettaglio sintetico";
+    let (normalized_result, empty, error) = session.scoped(|| {
+        (
+            normalize(&normalize_input),
+            empty_result(empty_root.clone()),
+            usb_error(secret_message),
+        )
+    });
+    assert_eq!(normalized_result, normalized);
+    assert_eq!(empty.root, empty_root);
+    assert_eq!(empty.copied_files, 0);
+    assert_eq!(empty.reused_files, 0);
+    assert_eq!(empty.removed_files, 0);
+    assert_eq!(empty.bytes_copied, 0);
+    assert_eq!(error.code(), ErrorCode::Usb);
+    assert_eq!(error.message(), secret_message);
+    drop(session);
+
+    let records: Vec<Value> = fs::read_to_string(&log_path)
+        .expect("log USB sintetico")
+        .lines()
+        .map(|line| serde_json::from_str(line).expect("record JSON valido"))
+        .collect();
+    assert_usb_trace(
+        &records,
+        "usb_copy::normalize",
+        json!([trace_argument("path", trace_path(&normalize_input))]),
+        json!({"kind": "data", "value": {"output": trace_path(&normalized)}}),
+    );
+    assert_usb_trace(
+        &records,
+        "usb_copy::empty_result",
+        json!([trace_argument("root", trace_path(&empty_root))]),
+        json!({
+            "kind": "data",
+            "value": {
+                "output": {
+                    "kind": "data",
+                    "value": {
+                        "root": trace_path(&empty_root),
+                        "copied_files": 0,
+                        "reused_files": 0,
+                        "removed_files": 0,
+                        "bytes_copied": 0,
+                    },
+                },
+            },
+        }),
+    );
+    let redacted_message = "password = [secret_omitted]; dettaglio sintetico";
+    let trace_message = json!({
+        "kind": "data",
+        "value": {
+            "format": "text_redacted_known_secret_assignments",
+            "value": redacted_message,
+        },
+    });
+    let traced_error = json!({
+        "kind": "data",
+        "value": {
+            "state": "error",
+            "code": "usb",
+            "message": trace_message,
+        },
+    });
+    assert_usb_trace(
+        &records,
+        "usb_copy::usb_error",
+        json!([trace_argument("message", trace_message)]),
+        json!({"kind": "data", "value": {"output": traced_error}}),
+    );
+    let serialized = serde_json::to_string(&records).expect("serializzazione record");
+    assert!(serialized.contains("secret_omitted"));
+    assert!(!serialized.contains("synthetic-usb-secret"));
 }
 
 #[test]

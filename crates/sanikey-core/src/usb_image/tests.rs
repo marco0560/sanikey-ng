@@ -1,13 +1,17 @@
 //! Fixture sintetiche per assemblaggio e validazione dell'immagine USB.
 
-use super::{assemble_usb_image, validate_usb_image};
+use super::{
+    assemble_usb_image, collect_files, escape_html, frontend_hrefs, normalize_relative, overlaps,
+    percent_decode, quoted_attribute_values, safe_relative_path, validate_usb_image,
+};
 use crate::build::{BuildOptions, build_patient};
 use crate::config::AccountsProfile;
 use crate::logging::{Component, Level, Session};
-use crate::operation::{CancellationToken, OperationOutcome};
+use crate::operation::{CancellationToken, OperationError, OperationOutcome};
 use crate::usb_copy::mirror_validated_usb_image;
 #[cfg(target_os = "linux")]
 use crate::usb_copy::mirror_validated_usb_image_on_linux_volume;
+use serde_json::{Value, json};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -74,6 +78,283 @@ fn build_people(profile: &AccountsProfile) -> Vec<crate::build::PatientBuildResu
         .enabled_people()
         .map(|person| build_patient(person, BuildOptions::default()).expect("build sintetica"))
         .collect()
+}
+
+fn traced_path(path: &Path) -> Value {
+    if let Some(text) = path.to_str() {
+        return json!({
+            "kind": "data",
+            "value": {"encoding": "utf8", "value": text},
+        });
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        json!({
+            "kind": "data",
+            "value": {
+                "encoding": "unix_bytes",
+                "value": path.as_os_str().as_bytes(),
+            },
+        })
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt;
+        json!({
+            "kind": "data",
+            "value": {
+                "encoding": "windows_utf16",
+                "value": path.as_os_str().encode_wide().collect::<Vec<_>>(),
+            },
+        })
+    }
+}
+
+fn traced_debug<T: std::fmt::Debug + ?Sized>(value: &T) -> Value {
+    json!({
+        "kind": "data",
+        "value": {
+            "format": "rust_debug",
+            "value": crate::logging::redact_secret_assignments(&format!("{value:#?}")),
+        },
+    })
+}
+
+fn traced_argument(name: &str, content: Value) -> Value {
+    json!({"name": name, "content": content})
+}
+
+fn traced_exit(debug_value: &str, native_paths: Value) -> Value {
+    json!({
+        "kind": "data",
+        "value": {
+            "format": "rust_debug",
+            "value": crate::logging::redact_secret_assignments(debug_value),
+            "native_paths": native_paths,
+        },
+    })
+}
+
+fn assert_usb_image_trace(records: &[Value], function: &str, arguments: Value, result: Value) {
+    assert_usb_image_traces(records, function, vec![(arguments, result)]);
+}
+
+fn assert_usb_image_traces(records: &[Value], function: &str, mut expected: Vec<(Value, Value)>) {
+    let entries: Vec<_> = records
+        .iter()
+        .filter(|record| record["type"] == "function_enter" && record["function"] == function)
+        .collect();
+    assert_eq!(entries.len(), expected.len(), "entrate di {function}");
+    let mut unmatched = entries;
+    for (arguments, result) in expected.drain(..) {
+        let entry_index = unmatched
+            .iter()
+            .position(|entry| entry["arguments"] == arguments)
+            .unwrap_or_else(|| panic!("argomenti attesi assenti per {function}: {arguments}"));
+        let entry = unmatched.remove(entry_index);
+        let call_id = entry["call_id"].as_u64().expect("call_id numerico");
+        let exits: Vec<_> = records
+            .iter()
+            .filter(|record| {
+                record["type"] == "function_exit"
+                    && record["function"] == function
+                    && record["call_id"] == call_id
+            })
+            .collect();
+        assert_eq!(exits.len(), 1, "una sola uscita per {function}#{call_id}");
+        assert_eq!(exits[0]["outcome"], "returned");
+        assert_eq!(exits[0]["result"], result, "risultato di {function}");
+        assert!(
+            exits[0]["duration_ms"].as_u64().is_some(),
+            "durata mancante per {function}#{call_id}"
+        );
+    }
+    assert!(unmatched.is_empty());
+}
+
+#[test]
+fn synthetic_usb_image_helpers_trace_all_arguments_results_and_durations() {
+    let directory = TestDirectory::new();
+    let (session, log_path) = Session::create_in_directory_with_level(
+        &directory.path().join("logs"),
+        Component::Core,
+        Level::Trace,
+    )
+    .expect("sessione trace sintetica");
+
+    let percent_input = "patients/patient-a/report%20one.pdf";
+    let percent_result = "patients/patient-a/report one.pdf".to_owned();
+    let relative_input = "patients/patient-a/report.txt";
+    let relative_path = PathBuf::from(relative_input);
+    let normalized_input = PathBuf::from("patients/patient-a/./report.txt");
+    let normalized_result = "patients/patient-a/report.txt".to_owned();
+    let overlap_left = directory.path().join("patients/patient-a");
+    let overlap_right = directory.path().join("patients");
+    let secret_html = "api_key = synthetic-usb-image-secret";
+    let html_output = secret_html.to_owned();
+    let attribute_html = "<a href=\"index.html\"><img href=\"viewer.html\">";
+    let attribute_prefix = "href=\"";
+    let frontend_input = json!({
+        "href": "index.html",
+        "nested": [{"viewer_href": "viewer.html"}],
+    });
+    let direct_href = frontend_input["href"].clone();
+    let nested_value = frontend_input["nested"].clone();
+    let nested_object = nested_value[0].clone();
+    let nested_href = nested_object["viewer_href"].clone();
+    let files_root = directory.path().join("manifest-files");
+    fs::create_dir_all(files_root.join("nested")).expect("directory sintetica");
+    fs::write(files_root.join("top.txt"), "contenuto A").expect("file sintetico A");
+    fs::write(files_root.join("nested/leaf.txt"), "contenuto B").expect("file sintetico B");
+    let expected_files = vec![
+        files_root.join("nested/leaf.txt"),
+        files_root.join("top.txt"),
+    ];
+
+    let results = session.scoped(|| {
+        (
+            percent_decode(percent_input).expect("percent decode valido"),
+            safe_relative_path(relative_input).expect("percorso relativo valido"),
+            normalize_relative(&normalized_input),
+            overlaps(&overlap_left, &overlap_right),
+            escape_html(secret_html),
+            quoted_attribute_values(attribute_html, attribute_prefix),
+            frontend_hrefs(&frontend_input),
+            collect_files(&files_root).expect("raccolta file sintetici"),
+        )
+    });
+    assert_eq!(results.0, percent_result);
+    assert_eq!(results.1, relative_path);
+    assert_eq!(results.2, normalized_result);
+    assert!(results.3);
+    assert_eq!(results.4, html_output);
+    assert_eq!(results.5, ["index.html", "viewer.html"]);
+    assert_eq!(results.6, ["index.html", "viewer.html"]);
+    assert_eq!(results.7, expected_files);
+    drop(session);
+
+    let records: Vec<Value> = fs::read_to_string(&log_path)
+        .expect("log sintetico leggibile")
+        .lines()
+        .map(|line| serde_json::from_str(line).expect("record JSON valido"))
+        .collect();
+    let no_paths = json!({"kind": "data", "value": []});
+    assert_usb_image_trace(
+        &records,
+        "usb_image::percent_decode",
+        json!([traced_argument("value", traced_debug(&percent_input))]),
+        traced_exit(
+            &format!(
+                "{:#?}",
+                Ok::<String, OperationError>(percent_result.clone())
+            ),
+            no_paths.clone(),
+        ),
+    );
+
+    let relative_result = Ok::<PathBuf, OperationError>(relative_path.clone());
+    assert_usb_image_trace(
+        &records,
+        "usb_image::safe_relative_path",
+        json!([
+            traced_argument("value", traced_debug(&relative_input)),
+            traced_argument("input_native_path", traced_path(Path::new(relative_input)),),
+        ]),
+        traced_exit(
+            &format!("{relative_result:#?}"),
+            json!({
+                "kind": "data",
+                "value": {
+                    "state": "complete",
+                    "path": traced_path(&relative_path),
+                },
+            }),
+        ),
+    );
+    assert_usb_image_trace(
+        &records,
+        "usb_image::normalize_relative",
+        json!([traced_argument("path", traced_path(&normalized_input),)]),
+        traced_exit(&format!("{normalized_result:#?}"), no_paths.clone()),
+    );
+    assert_usb_image_trace(
+        &records,
+        "usb_image::overlaps",
+        json!([
+            traced_argument("left", traced_path(&overlap_left)),
+            traced_argument("right", traced_path(&overlap_right)),
+        ]),
+        traced_exit(&format!("{:#?}", true), no_paths.clone()),
+    );
+
+    assert_usb_image_trace(
+        &records,
+        "usb_image::escape_html",
+        json!([traced_argument("value", traced_debug(&secret_html))]),
+        traced_exit("\"api_key = [secret_omitted]\"", no_paths.clone()),
+    );
+    assert_usb_image_trace(
+        &records,
+        "usb_image::quoted_attribute_values",
+        json!([
+            traced_argument("html", traced_debug(&attribute_html)),
+            traced_argument("prefix", traced_debug(&attribute_prefix)),
+        ]),
+        traced_debug(&results.5),
+    );
+    assert_usb_image_traces(
+        &records,
+        "usb_image::frontend_hrefs",
+        vec![
+            (
+                json!([traced_argument("value", traced_debug(&frontend_input))]),
+                traced_debug(&results.6),
+            ),
+            (
+                json!([traced_argument("value", traced_debug(&direct_href))]),
+                traced_debug(&Vec::<&str>::new()),
+            ),
+            (
+                json!([traced_argument("value", traced_debug(&nested_value))]),
+                traced_debug(&vec!["viewer.html"]),
+            ),
+            (
+                json!([traced_argument("value", traced_debug(&nested_object))]),
+                traced_debug(&vec!["viewer.html"]),
+            ),
+            (
+                json!([traced_argument("value", traced_debug(&nested_href))]),
+                traced_debug(&Vec::<&str>::new()),
+            ),
+        ],
+    );
+
+    let files_result = Ok::<Vec<PathBuf>, OperationError>(expected_files.clone());
+    let file_paths = json!({
+        "kind": "data",
+        "value": {
+            "state": "complete",
+            "paths": {
+                "kind": "data",
+                "value": expected_files
+                    .iter()
+                    .enumerate()
+                    .map(|(index, path)| json!({"index": index, "path": traced_path(path)}))
+                    .collect::<Vec<_>>(),
+            },
+        },
+    });
+    assert_usb_image_trace(
+        &records,
+        "usb_image::collect_files",
+        json!([traced_argument("root", traced_path(&files_root))]),
+        traced_exit(&format!("{files_result:#?}"), file_paths),
+    );
+
+    let serialized = serde_json::to_string(&records).expect("serializzazione log");
+    assert!(serialized.contains("secret_omitted"));
+    assert!(!serialized.contains("synthetic-usb-image-secret"));
 }
 
 #[test]

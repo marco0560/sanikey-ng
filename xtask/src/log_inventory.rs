@@ -68,13 +68,13 @@ pub(crate) fn run() -> Result<(), String> {
     let review_path = root.join("docs/process/log-inventory-review.json");
     let review_source = fs::read_to_string(&review_path)
         .map_err(|error| format!("{}: {error}", review_path.display()))?;
-    let reviews = parse_review_manifest(&review_source, &functions)
+    let reviews = parse_review_manifest(&review_source, &functions, &root)
         .map_err(|error| format!("{}: {error}", review_path.display()))?;
     annotate_reviews(&mut functions, &reviews);
     let report = json!({
         "schema": 2,
         "review_manifest": "docs/process/log-inventory-review.json",
-        "review_schema": 1,
+        "review_schema": 2,
         "entries": functions,
         "opaque_macros": opaque_macros,
         "trace_current_call_sites": trace_hints,
@@ -108,6 +108,8 @@ pub(crate) fn run() -> Result<(), String> {
 struct ReviewRecord {
     status: String,
     evidence: String,
+    evidence_file: String,
+    evidence_sha256: String,
     rationale: Option<String>,
 }
 
@@ -119,6 +121,8 @@ fn annotate_reviews(entries: &mut [serde_json::Value], reviews: &HashMap<String,
                 let mut outcome = json!({
                     "status": review.status,
                     "evidence": review.evidence,
+                    "evidence_file": review.evidence_file,
+                    "evidence_sha256": review.evidence_sha256,
                 });
                 if let Some(rationale) = &review.rationale {
                     outcome["rationale"] = json!(rationale);
@@ -140,15 +144,16 @@ fn annotate_reviews(entries: &mut [serde_json::Value], reviews: &HashMap<String,
     }
 }
 
-/// Parse reviewed IDs and reject duplicate, stale, or hash-inconsistent records.
+/// Parse review records and reject stale IDs or source/evidence hash mismatches.
 fn parse_review_manifest(
     source: &str,
     current_entries: &[serde_json::Value],
+    repository_root: &Path,
 ) -> Result<HashMap<String, ReviewRecord>, String> {
     let manifest: serde_json::Value =
         serde_json::from_str(source).map_err(|error| format!("JSON non valido: {error}"))?;
-    if manifest["schema"].as_u64() != Some(1) {
-        return Err("schema del registro revisioni non supportato (atteso 1)".into());
+    if manifest["schema"].as_u64() != Some(2) {
+        return Err("schema del registro revisioni non supportato (atteso 2)".into());
     }
     let records = manifest["reviews"]
         .as_array()
@@ -197,6 +202,16 @@ fn parse_review_manifest(
             .map(str::trim)
             .filter(|evidence| !evidence.is_empty())
             .ok_or_else(|| format!("{prefix}.evidence deve descrivere una prova non vuota"))?;
+        let evidence_file = record["evidence_file"]
+            .as_str()
+            .filter(|path| !path.is_empty())
+            .ok_or_else(|| format!("{prefix}.evidence_file deve indicare un path relativo"))?;
+        let evidence_sha256 = record["evidence_sha256"]
+            .as_str()
+            .filter(|hash| hash.len() == 64 && hash.bytes().all(|byte| byte.is_ascii_hexdigit()))
+            .ok_or_else(|| format!("{prefix}.evidence_sha256 deve essere SHA-256 esadecimale"))?;
+        verify_evidence_file(repository_root, evidence_file, evidence_sha256)
+            .map_err(|error| format!("{prefix}: {error}"))?;
         let rationale = match status {
             "exception" => Some(
                 record["rationale"]
@@ -219,11 +234,61 @@ fn parse_review_manifest(
             ReviewRecord {
                 status: status.to_string(),
                 evidence: evidence.to_string(),
+                evidence_file: evidence_file.to_string(),
+                evidence_sha256: evidence_sha256.to_ascii_lowercase(),
                 rationale,
             },
         );
     }
     Ok(reviews)
+}
+
+fn verify_evidence_file(
+    repository_root: &Path,
+    relative_path: &str,
+    expected_sha256: &str,
+) -> Result<(), String> {
+    if relative_path.starts_with('/')
+        || relative_path.contains('\\')
+        || relative_path.contains(':')
+        || relative_path
+            .split('/')
+            .any(|part| part.is_empty() || part == "." || part == "..")
+    {
+        return Err(format!(
+            "evidence_file deve essere relativo, normalizzato e senza componenti parent: {relative_path}"
+        ));
+    }
+    let root = fs::canonicalize(repository_root)
+        .map_err(|error| format!("impossibile risolvere la root del repository: {error}"))?;
+    let candidate = root.join(relative_path);
+    let evidence = fs::canonicalize(&candidate).map_err(|error| {
+        format!("file di evidenza mancante o non leggibile ({relative_path}): {error}")
+    })?;
+    if !evidence.starts_with(&root) {
+        return Err(format!(
+            "il file di evidenza esce dal repository: {relative_path}"
+        ));
+    }
+    if !evidence.is_file() {
+        return Err(format!(
+            "il file di evidenza non è un file regolare: {relative_path}"
+        ));
+    }
+    let contents = fs::read(&evidence).map_err(|error| {
+        format!("impossibile leggere il file di evidenza {relative_path}: {error}")
+    })?;
+    let actual_sha256 = sha256_hex(&contents);
+    if actual_sha256 != expected_sha256.to_ascii_lowercase() {
+        return Err(format!(
+            "SHA-256 dell'evidenza cambiato per {relative_path}: atteso {expected_sha256}, rilevato {actual_sha256}"
+        ));
+    }
+    Ok(())
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    format!("{:x}", Sha256::digest(bytes))
 }
 
 /// Suggest a mechanical exception reason without deciding its review outcome.
@@ -601,9 +666,68 @@ impl<'ast> Visit<'ast> for Inventory {
 mod tests {
     use super::{
         Inventory, Visit, annotate_reviews, is_trace_function_hint, is_trace_macro_hint,
-        mechanical_exception_hint, parse_review_manifest,
+        mechanical_exception_hint, parse_review_manifest, sha256_hex,
     };
     use serde_json::{Value, json};
+    use std::fs;
+    use std::path::{Path, PathBuf};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    static NEXT_EVIDENCE_REPO: AtomicUsize = AtomicUsize::new(0);
+
+    struct EvidenceRepo(PathBuf);
+
+    /// Creates and inspects a synthetic repository for evidence validation.
+    impl EvidenceRepo {
+        fn new() -> Self {
+            let id = NEXT_EVIDENCE_REPO.fetch_add(1, Ordering::Relaxed);
+            let path = std::env::temp_dir().join(format!(
+                "sanikey-log-inventory-review-{}-{id}",
+                std::process::id()
+            ));
+            fs::create_dir_all(path.join("tests")).expect("directory prova evidenza");
+            fs::write(path.join("tests/evidence.rs"), b"evidence fixture v1\n")
+                .expect("fixture evidenza sintetica");
+            Self(path)
+        }
+
+        fn path(&self) -> &Path {
+            &self.0
+        }
+
+        fn evidence_sha256(&self) -> String {
+            sha256_hex(&fs::read(self.0.join("tests/evidence.rs")).expect("lettura evidenza"))
+        }
+    }
+
+    /// Removes the synthetic repository after each evidence-validation test.
+    impl Drop for EvidenceRepo {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn review_record(
+        id: &str,
+        source_sha256: &str,
+        status: &str,
+        evidence: &str,
+        evidence_sha256: &str,
+        rationale: Option<&str>,
+    ) -> Value {
+        let mut record = json!({
+            "id": id,
+            "source_sha256": source_sha256,
+            "status": status,
+            "evidence": evidence,
+            "evidence_file": "tests/evidence.rs",
+            "evidence_sha256": evidence_sha256,
+        });
+        if let Some(rationale) = rationale {
+            record["rationale"] = json!(rationale);
+        }
+        record
+    }
 
     #[test]
     fn recognizes_only_trace_macro_name_hints() {
@@ -709,6 +833,8 @@ mod tests {
 
     #[test]
     fn explicit_covered_outcome_is_hash_bound_and_changes_coverage_status() {
+        let evidence_root = EvidenceRepo::new();
+        let evidence_sha256 = evidence_root.evidence_sha256();
         let id = format!("crates/sanikey-core/src/a.rs#{}:0", "a".repeat(64));
         let source_hash = "a".repeat(64);
         let mut entry = json!({
@@ -719,16 +845,19 @@ mod tests {
         });
         let records = parse_review_manifest(
             &serde_json::to_string(&json!({
-                "schema": 1,
-                "reviews": [{
-                    "id": id,
-                    "source_sha256": source_hash,
-                    "status": "covered",
-                    "evidence": "test sintetico: file e riga di asserzione"
-                }]
+                "schema": 2,
+                "reviews": [review_record(
+                    &id,
+                    &source_hash,
+                    "covered",
+                    "test sintetico: file e riga di asserzione",
+                    &evidence_sha256,
+                    None,
+                )]
             }))
             .unwrap(),
             std::slice::from_ref(&entry),
+            evidence_root.path(),
         )
         .unwrap();
 
@@ -738,10 +867,14 @@ mod tests {
             entry["coverage"]["evidence"],
             "test sintetico: file e riga di asserzione"
         );
+        assert_eq!(entry["coverage"]["evidence_file"], "tests/evidence.rs");
+        assert_eq!(entry["coverage"]["evidence_sha256"], evidence_sha256);
     }
 
     #[test]
     fn explicit_exception_requires_rationale_and_special_cases_cannot_be_covered() {
+        let evidence_root = EvidenceRepo::new();
+        let evidence_sha256 = evidence_root.evidence_sha256();
         let hash = "d".repeat(64);
         let special_id = format!("crates/sanikey-core/src/c.rs#{hash}:2");
         let trait_id = format!("crates/sanikey-core/src/c.rs#{hash}:3");
@@ -759,16 +892,18 @@ mod tests {
                 "coverage": {"status": "unreviewed"}
             }),
         ];
-        let record = json!({
-            "id": special_id,
-            "source_sha256": hash,
-            "status": "exception",
-            "evidence": "firma const verificata nel sorgente",
-            "rationale": "non può invocare API di tracing runtime"
-        });
+        let record = review_record(
+            &special_id,
+            &hash,
+            "exception",
+            "firma const verificata nel sorgente",
+            &evidence_sha256,
+            Some("non può invocare API di tracing runtime"),
+        );
         let records = parse_review_manifest(
-            &json!({"schema": 1, "reviews": [record]}).to_string(),
+            &json!({"schema": 2, "reviews": [record]}).to_string(),
             &entries,
+            evidence_root.path(),
         )
         .unwrap();
         let mut annotated = entries.clone();
@@ -779,46 +914,49 @@ mod tests {
             "non può invocare API di tracing runtime"
         );
 
-        let covered_special = json!({
-            "id": special_id,
-            "source_sha256": hash,
-            "status": "covered",
-            "evidence": "prova"
-        });
+        let covered_special = review_record(
+            &special_id,
+            &hash,
+            "covered",
+            "prova",
+            &evidence_sha256,
+            None,
+        );
         assert!(
             parse_review_manifest(
-                &json!({"schema": 1, "reviews": [covered_special]}).to_string(),
-                &entries
+                &json!({"schema": 2, "reviews": [covered_special]}).to_string(),
+                &entries,
+                evidence_root.path(),
             )
             .unwrap_err()
             .contains("richiede esito exception")
         );
 
-        let covered_trait = json!({
-            "id": trait_id,
-            "source_sha256": hash,
-            "status": "covered",
-            "evidence": "prova"
-        });
+        let covered_trait =
+            review_record(&trait_id, &hash, "covered", "prova", &evidence_sha256, None);
         assert!(
             parse_review_manifest(
-                &json!({"schema": 1, "reviews": [covered_trait]}).to_string(),
-                &entries
+                &json!({"schema": 2, "reviews": [covered_trait]}).to_string(),
+                &entries,
+                evidence_root.path(),
             )
             .unwrap_err()
             .contains("richiede esito exception")
         );
 
-        let missing_rationale = json!({
-            "id": special_id,
-            "source_sha256": hash,
-            "status": "exception",
-            "evidence": "prova"
-        });
+        let missing_rationale = review_record(
+            &special_id,
+            &hash,
+            "exception",
+            "prova",
+            &evidence_sha256,
+            None,
+        );
         assert!(
             parse_review_manifest(
-                &json!({"schema": 1, "reviews": [missing_rationale]}).to_string(),
-                &entries
+                &json!({"schema": 2, "reviews": [missing_rationale]}).to_string(),
+                &entries,
+                evidence_root.path(),
             )
             .unwrap_err()
             .contains("rationale")
@@ -827,22 +965,27 @@ mod tests {
 
     #[test]
     fn rejects_duplicate_stale_hash_mismatched_invalid_status_and_missing_evidence() {
+        let evidence_root = EvidenceRepo::new();
+        let evidence_sha256 = evidence_root.evidence_sha256();
         let hash = "b".repeat(64);
         let id = format!("crates/sanikey-core/src/b.rs#{hash}:4");
         let entry = json!({"id": id, "source_sha256": hash});
         let entries = [entry];
-        let valid = json!({
-            "id": id,
-            "source_sha256": hash,
-            "status": "covered",
-            "evidence": "fixture sintetica e asserzione test"
-        });
-        let manifest = |reviews: Vec<Value>| json!({"schema": 1, "reviews": reviews});
+        let valid = review_record(
+            &id,
+            &hash,
+            "covered",
+            "fixture sintetica e asserzione test",
+            &evidence_sha256,
+            None,
+        );
+        let manifest = |reviews: Vec<Value>| json!({"schema": 2, "reviews": reviews});
 
         assert!(
             parse_review_manifest(
                 &manifest(vec![valid.clone(), valid.clone()]).to_string(),
-                &entries
+                &entries,
+                evidence_root.path(),
             )
             .unwrap_err()
             .contains("duplicato")
@@ -850,6 +993,7 @@ mod tests {
         assert!(parse_review_manifest(
             &manifest(vec![json!({"id":"stale.rs#dead:0","source_sha256":"dead","status":"covered","evidence":"x"})]).to_string(),
             &entries,
+            evidence_root.path(),
         )
         .unwrap_err()
         .contains("obsoleto"));
@@ -857,25 +1001,115 @@ mod tests {
         let mut bad_hash = valid.clone();
         bad_hash["source_sha256"] = json!("c".repeat(64));
         assert!(
-            parse_review_manifest(&manifest(vec![bad_hash]).to_string(), &entries)
-                .unwrap_err()
-                .contains("hash sorgente")
+            parse_review_manifest(
+                &manifest(vec![bad_hash]).to_string(),
+                &entries,
+                evidence_root.path(),
+            )
+            .unwrap_err()
+            .contains("hash sorgente")
         );
 
         let mut invalid_status = valid.clone();
         invalid_status["status"] = json!("reviewed");
         assert!(
-            parse_review_manifest(&manifest(vec![invalid_status]).to_string(), &entries)
-                .unwrap_err()
-                .contains("covered oppure exception")
+            parse_review_manifest(
+                &manifest(vec![invalid_status]).to_string(),
+                &entries,
+                evidence_root.path(),
+            )
+            .unwrap_err()
+            .contains("covered oppure exception")
         );
 
         let mut no_evidence = valid;
         no_evidence["evidence"] = json!("  ");
         assert!(
-            parse_review_manifest(&manifest(vec![no_evidence]).to_string(), &entries)
+            parse_review_manifest(
+                &manifest(vec![no_evidence]).to_string(),
+                &entries,
+                evidence_root.path(),
+            )
+            .unwrap_err()
+            .contains("evidence")
+        );
+    }
+
+    #[test]
+    fn rejects_absolute_parent_missing_and_changed_evidence_files() {
+        let evidence_root = EvidenceRepo::new();
+        let evidence_sha256 = evidence_root.evidence_sha256();
+        let source_hash = "e".repeat(64);
+        let id = format!("crates/sanikey-core/src/e.rs#{source_hash}:1");
+        let entries = [json!({
+            "id": id,
+            "source_sha256": source_hash,
+            "kind": "function"
+        })];
+        let valid = review_record(
+            &id,
+            &source_hash,
+            "covered",
+            "fixture locale verificata",
+            &evidence_sha256,
+            None,
+        );
+        let manifest = |review: Value| json!({"schema": 2, "reviews": [review]});
+
+        assert!(
+            parse_review_manifest(
+                &manifest(valid.clone()).to_string(),
+                &entries,
+                evidence_root.path(),
+            )
+            .is_ok()
+        );
+
+        let mut absolute = valid.clone();
+        absolute["evidence_file"] = json!(evidence_root.0.join("tests/evidence.rs"));
+        assert!(
+            parse_review_manifest(
+                &manifest(absolute).to_string(),
+                &entries,
+                evidence_root.path(),
+            )
+            .unwrap_err()
+            .contains("relativo")
+        );
+
+        let mut parent = valid.clone();
+        parent["evidence_file"] = json!("../tests/evidence.rs");
+        assert!(
+            parse_review_manifest(
+                &manifest(parent).to_string(),
+                &entries,
+                evidence_root.path(),
+            )
+            .unwrap_err()
+            .contains("componenti parent")
+        );
+
+        let mut missing = valid.clone();
+        missing["evidence_file"] = json!("tests/missing.rs");
+        assert!(
+            parse_review_manifest(
+                &manifest(missing).to_string(),
+                &entries,
+                evidence_root.path(),
+            )
+            .unwrap_err()
+            .contains("mancante")
+        );
+
+        fs::write(
+            evidence_root.0.join("tests/evidence.rs"),
+            b"evidence fixture v2\n",
+        )
+        .expect("modifica evidenza sintetica");
+        assert!(
+            parse_review_manifest(&manifest(valid).to_string(), &entries, evidence_root.path(),)
                 .unwrap_err()
-                .contains("evidence")
+                .contains("SHA-256 dell'evidenza cambiato")
         );
     }
 
