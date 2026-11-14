@@ -31,7 +31,7 @@ pub mod usb_image;
 pub mod vital_signs;
 pub mod windows_volume;
 
-use operation::{CancellationToken, OperationRun, run_operation};
+use operation::{CancellationToken, OperationRun, run_operation_with_trace_result};
 
 /// Returns the version assigned to the SaniKey workspace packages.
 ///
@@ -49,12 +49,17 @@ pub const fn version() -> &'static str {
 #[must_use]
 pub fn project_info() -> OperationRun<String> {
     let trace = logging::trace_current(logging::Component::Core, "project_info", Vec::new);
-    let result = run_operation("cli.info", &CancellationToken::default(), |_| {
-        Ok(format!(
-            "progetto=sanikey\npackage=sanikey\ncli=sanikey\nversione={}\n",
-            version()
-        ))
-    });
+    let result = run_operation_with_trace_result(
+        "cli.info",
+        &CancellationToken::default(),
+        |_| {
+            Ok(format!(
+                "progetto=sanikey\npackage=sanikey\ncli=sanikey\nversione={}\n",
+                version()
+            ))
+        },
+        |value: &String| logging::trace_sensitive_text(value),
+    );
     if let Some(trace) = trace {
         let _ = trace.finish(logging::TraceValue::Data(serde_json::json!({
             "format": "rust_debug",
@@ -86,5 +91,51 @@ mod tests {
                 OperationEvent::Succeeded
             ]
         );
+    }
+
+    #[test]
+    fn project_info_trace_projects_its_successful_operation_result() {
+        use crate::logging::{Component, Level, Session};
+        use crate::operation::OperationOutcome;
+        use serde_json::Value;
+        use std::fs;
+
+        let directory = std::env::temp_dir().join(format!(
+            "sanikey-project-info-result-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let (session, path) =
+            Session::create_in_directory_with_level(&directory, Component::Core, Level::Trace)
+                .unwrap();
+        let result = session.scoped(project_info);
+
+        assert!(matches!(
+            &result.outcome,
+            OperationOutcome::Succeeded(value) if value.contains("package=sanikey")
+        ));
+        drop(session);
+        let records: Vec<Value> = fs::read_to_string(&path)
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        let operation_result = records
+            .iter()
+            .find(|record| {
+                record["type"] == "function_exit"
+                    && record["function"] == "operation::run_operation"
+            })
+            .expect("risultato span operazione info");
+        assert_eq!(operation_result["result"]["value"]["outcome"], "succeeded");
+        assert_eq!(operation_result["result"]["value"]["value"]["kind"], "data");
+        assert!(
+            operation_result["result"]["value"]["value"]["value"]["value"]
+                .as_str()
+                .unwrap()
+                .contains("package=sanikey")
+        );
+        fs::remove_file(path).unwrap();
+        fs::remove_dir(directory).unwrap();
     }
 }

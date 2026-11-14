@@ -4,7 +4,7 @@ use std::fmt;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use serde_json::json;
+use serde_json::{Value, json};
 
 use crate::logging::{
     Activity, Component, FailureCategory, Operation, Outcome, ProgressPhase, Session, TraceField,
@@ -146,6 +146,40 @@ pub enum OperationEvent {
     Failed(OperationError),
     /// The operation stopped at a cooperative cancellation point.
     Cancelled,
+}
+
+fn trace_operation_events(events: &[OperationEvent]) -> Value {
+    Value::Array(
+        events
+            .iter()
+            .map(|event| match event {
+                OperationEvent::Started { operation } => {
+                    json!({"kind": "started", "operation": operation})
+                }
+                OperationEvent::Progress {
+                    phase,
+                    completed,
+                    total,
+                } => json!({
+                    "kind": "progress",
+                    "phase": match phase {
+                        OperationPhase::Preparing => "preparing",
+                        OperationPhase::Processing => "processing",
+                        OperationPhase::Finalizing => "finalizing",
+                    },
+                    "completed": completed,
+                    "total": total,
+                }),
+                OperationEvent::Succeeded => json!({"kind": "succeeded"}),
+                OperationEvent::Failed(error) => json!({
+                    "kind": "failed",
+                    "code": error.code().as_str(),
+                    "message": trace_sensitive_text(error.message()).to_json(),
+                }),
+                OperationEvent::Cancelled => json!({"kind": "cancelled"}),
+            })
+            .collect(),
+    )
 }
 
 /// The terminal result of an operation.
@@ -339,10 +373,34 @@ fn logging_phase(phase: OperationPhase) -> ProgressPhase {
 }
 
 /// Runs an operation and records one terminal event after its progress events.
+///
+/// At the trace level, successful results are marked as omitted. Production
+/// callers with a safely representable result should use
+/// [`run_operation_with_trace_result`] and provide an explicit projection.
+/// Keeping this function preserves the existing API for callers without a
+/// safe projection; their successful trace value remains explicitly omitted.
 pub fn run_operation<T>(
     operation: &'static str,
     cancellation: &CancellationToken,
     action: impl FnOnce(&mut OperationContext<'_>) -> Result<T, OperationError>,
+) -> OperationRun<T> {
+    run_operation_with_trace_result(operation, cancellation, action, |_| {
+        TraceValue::Omitted(TraceOmission::UnsupportedType)
+    })
+}
+
+/// Runs an operation and projects successful results into the full trace.
+///
+/// The existing [`run_operation`] API remains available for callers that do
+/// not have a safe, lossless projection. Production call sites with a safely
+/// representable result should use this function and classify sensitive values
+/// in their projector. The projector runs only for an active trace session and
+/// a successful operation.
+pub fn run_operation_with_trace_result<T>(
+    operation: &'static str,
+    cancellation: &CancellationToken,
+    action: impl FnOnce(&mut OperationContext<'_>) -> Result<T, OperationError>,
+    project_result: impl FnOnce(&T) -> TraceValue,
 ) -> OperationRun<T> {
     let trace = trace_current(Component::Core, "operation::run_operation", || {
         vec![
@@ -404,14 +462,20 @@ pub fn run_operation<T>(
         let _ = operation.finish(outcome);
     }
     if let Some(trace) = trace {
+        let events = trace_operation_events(&result.events);
         let result_value = match &result.outcome {
-            OperationOutcome::Succeeded(_) => {
-                json!({"outcome": "succeeded", "value": {"kind": "omitted", "reason": "unsupported_type"}})
-            }
-            OperationOutcome::Failed(error) => {
-                json!({"outcome": "failed", "code": error.code().as_str(), "message": trace_sensitive_text(error.message()).to_json()})
-            }
-            OperationOutcome::Cancelled => json!({"outcome": "cancelled"}),
+            OperationOutcome::Succeeded(value) => json!({
+                "outcome": "succeeded",
+                "value": project_result(value).to_json(),
+                "events": events,
+            }),
+            OperationOutcome::Failed(error) => json!({
+                "outcome": "failed",
+                "code": error.code().as_str(),
+                "message": trace_sensitive_text(error.message()).to_json(),
+                "events": events,
+            }),
+            OperationOutcome::Cancelled => json!({"outcome": "cancelled", "events": events}),
         };
         let _ = trace.finish(TraceValue::Data(result_value));
     }
@@ -422,7 +486,7 @@ pub fn run_operation<T>(
 mod tests {
     use super::{
         CancellationToken, ErrorCode, OperationError, OperationEvent, OperationOutcome,
-        OperationPhase, run_operation,
+        OperationPhase, TraceField, TraceValue, run_operation, run_operation_with_trace_result,
     };
     use serde_json::{Value, json};
     use std::fs;
@@ -694,6 +758,11 @@ mod tests {
                     "value": {
                         "outcome": "succeeded",
                         "value": {"kind": "omitted", "reason": "unsupported_type"},
+                        "events": [
+                            {"kind": "started", "operation": "synthetic.operation"},
+                            {"kind": "progress", "phase": "processing", "completed": 2, "total": 5},
+                            {"kind": "succeeded"},
+                        ],
                     },
                 }),
             )],
@@ -732,6 +801,71 @@ mod tests {
     }
 
     #[test]
+    fn trace_records_projected_success_result_and_redacts_known_secret() {
+        use crate::logging::{Component, Level, Session, trace_sensitive_text};
+        use std::fs;
+
+        let directory = std::env::temp_dir().join(format!(
+            "sanikey-operation-projected-result-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let (session, path) =
+            Session::create_in_directory_with_level(&directory, Component::Core, Level::Trace)
+                .unwrap();
+        let result = session.scoped(|| {
+            run_operation_with_trace_result(
+                "synthetic.operation",
+                &CancellationToken::default(),
+                |context| {
+                    context.set_phase(OperationPhase::Processing);
+                    context.report_progress(2, Some(3));
+                    Ok("token = \"synthetic-result-secret\"".to_owned())
+                },
+                |value| {
+                    TraceValue::record(&[
+                        TraceField::new("kind", TraceValue::data("synthetic_result")),
+                        TraceField::new("value", trace_sensitive_text(value)),
+                    ])
+                },
+            )
+        });
+
+        assert!(matches!(result.outcome, OperationOutcome::Succeeded(_)));
+        drop(session);
+        let records = trace_records(&path);
+        let operation_result = records
+            .iter()
+            .find(|record| {
+                record["type"] == "function_exit"
+                    && record["function"] == "operation::run_operation"
+            })
+            .expect("risultato span operazione");
+        assert_eq!(operation_result["result"]["kind"], "data");
+        assert_eq!(operation_result["result"]["value"]["outcome"], "succeeded");
+        assert_eq!(operation_result["result"]["value"]["value"]["kind"], "data");
+        let events = operation_result["result"]["value"]["events"]
+            .as_array()
+            .expect("eventi sintetici serializzati");
+        assert_eq!(events.len(), 3);
+        assert_eq!(
+            events[0],
+            json!({"kind": "started", "operation": "synthetic.operation"})
+        );
+        assert_eq!(
+            events[1],
+            json!({"kind": "progress", "phase": "processing", "completed": 2, "total": 3})
+        );
+        assert_eq!(events[2], json!({"kind": "succeeded"}));
+        let contents = fs::read_to_string(&path).unwrap();
+        assert!(contents.contains("synthetic_result"));
+        assert!(contents.contains("secret_omitted"));
+        assert!(!contents.contains("synthetic-result-secret"));
+        fs::remove_file(path).unwrap();
+        fs::remove_dir(directory).unwrap();
+    }
+
+    #[test]
     fn trace_redacts_known_secrets_in_operation_errors_without_changing_them() {
         use crate::logging::{Component, Level, Session};
         use std::fs;
@@ -758,6 +892,38 @@ mod tests {
         let contents = fs::read_to_string(&path).unwrap();
         assert!(!contents.contains("synthetic-secret-value"));
         assert!(contents.contains("secret_omitted"));
+        let records = trace_records(&path);
+        let operation_result = records
+            .iter()
+            .find(|record| {
+                record["type"] == "function_exit"
+                    && record["function"] == "operation::run_operation"
+            })
+            .expect("risultato span errore");
+        let events = operation_result["result"]["value"]["events"]
+            .as_array()
+            .expect("eventi di errore serializzati");
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0]["kind"], "started");
+        assert_eq!(events[0]["operation"], "synthetic.error");
+        assert_eq!(events[1]["kind"], "failed");
+        assert_eq!(events[1]["code"], "configuration");
+        assert_eq!(events[1]["message"]["kind"], "data");
+        assert_eq!(
+            events[1]["message"]["value"]["format"],
+            "text_redacted_known_secret_assignments"
+        );
+        assert!(
+            events[1]["message"]["value"]["value"]
+                .as_str()
+                .unwrap()
+                .contains("[secret_omitted]")
+        );
+        assert!(
+            !events[1]["message"]
+                .to_string()
+                .contains("synthetic-secret-value")
+        );
         fs::remove_file(path).unwrap();
         fs::remove_dir(directory).unwrap();
     }
@@ -847,6 +1013,7 @@ mod tests {
         assert!(log.contains("\"completed\":2"));
         assert!(log.contains("\"failure_category\":\"privacy\""));
         assert!(!log.contains("dato sanitario sintetico"));
+        assert!(!log.contains("function_exit"));
         fs::remove_file(path).unwrap();
         fs::remove_dir(directory).unwrap();
     }
@@ -903,5 +1070,63 @@ mod tests {
         assert_eq!(run.outcome, OperationOutcome::Cancelled);
         assert_eq!(run.events.last(), Some(&OperationEvent::Cancelled));
         assert!(!run.events.contains(&OperationEvent::Succeeded));
+    }
+
+    #[test]
+    fn trace_records_cancelled_operation_event_history() {
+        use crate::logging::{Component, Level, Session};
+
+        let directory = std::env::temp_dir().join(format!(
+            "sanikey-operation-cancelled-trace-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let (session, path) =
+            Session::create_in_directory_with_level(&directory, Component::Core, Level::Trace)
+                .unwrap();
+        let cancellation = CancellationToken::default();
+        let action_cancellation = cancellation.clone();
+        let run = session.scoped(|| {
+            run_operation("synthetic.cancelled", &cancellation, |context| {
+                context.set_phase(OperationPhase::Finalizing);
+                context.report_progress(1, Some(2));
+                action_cancellation.cancel();
+                assert!(context.is_cancelled());
+                Ok(())
+            })
+        });
+
+        assert_eq!(run.outcome, OperationOutcome::Cancelled);
+        drop(session);
+        let records = trace_records(&path);
+        let operation_result = records
+            .iter()
+            .find(|record| {
+                record["type"] == "function_exit"
+                    && record["function"] == "operation::run_operation"
+            })
+            .expect("risultato span annullata");
+        assert_eq!(operation_result["result"]["value"]["outcome"], "cancelled");
+        assert!(
+            !operation_result["result"]["value"]
+                .as_object()
+                .unwrap()
+                .contains_key("value")
+        );
+        let events = operation_result["result"]["value"]["events"]
+            .as_array()
+            .expect("eventi di annullamento serializzati");
+        assert_eq!(events.len(), 3);
+        assert_eq!(
+            events[0],
+            json!({"kind": "started", "operation": "synthetic.cancelled"})
+        );
+        assert_eq!(
+            events[1],
+            json!({"kind": "progress", "phase": "finalizing", "completed": 1, "total": 2})
+        );
+        assert_eq!(events[2], json!({"kind": "cancelled"}));
+        fs::remove_file(path).unwrap();
+        fs::remove_dir(directory).unwrap();
     }
 }

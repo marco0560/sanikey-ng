@@ -9,7 +9,7 @@ use crate::logging::{
 };
 use crate::operation::{
     CancellationToken, ErrorCode, OperationContext, OperationError, OperationPhase, OperationRun,
-    run_operation,
+    run_operation_with_trace_result,
 };
 use crate::simulated_export::validate_txt_simulation;
 use crate::usb_image::validate_usb_image;
@@ -96,15 +96,19 @@ fn trace_tree_entry_state(
 
 fn trace_copy_result(result: &Result<UsbCopyResult, OperationError>) -> TraceValue {
     match result {
-        Ok(result) => TraceValue::Data(json!({
-            "root": TraceValue::path(&result.root).to_json(),
-            "copied_files": result.copied_files,
-            "reused_files": result.reused_files,
-            "removed_files": result.removed_files,
-            "bytes_copied": result.bytes_copied,
-        })),
+        Ok(result) => trace_usb_copy_value(result),
         Err(_) => TraceValue::Data(json!(null)),
     }
+}
+
+fn trace_usb_copy_value(result: &UsbCopyResult) -> TraceValue {
+    TraceValue::Data(json!({
+        "root": TraceValue::path(&result.root).to_json(),
+        "copied_files": result.copied_files,
+        "reused_files": result.reused_files,
+        "removed_files": result.removed_files,
+        "bytes_copied": result.bytes_copied,
+    }))
 }
 
 fn trace_debug<T: std::fmt::Debug + ?Sized>(value: &T) -> TraceValue {
@@ -239,9 +243,12 @@ pub fn mirror_directory(
                 TraceValue::Data(json!(cancellation.is_cancelled())),
             ),
         ],
-        run_operation("usb.copy", cancellation, |context| {
-            mirror_directory_inner(source.as_ref(), target.as_ref(), context)
-        }),
+        run_operation_with_trace_result(
+            "usb.copy",
+            cancellation,
+            |context| mirror_directory_inner(source.as_ref(), target.as_ref(), context),
+            trace_usb_copy_value,
+        ),
         trace_run_result
     )
 }
@@ -272,9 +279,12 @@ pub fn mirror_validated_txt_image(
                 TraceValue::Data(json!(cancellation.is_cancelled())),
             ),
         ],
-        run_operation("usb.copy.validate", cancellation, |context| {
-            mirror_validated_txt_image_inner(source.as_ref(), target.as_ref(), context)
-        }),
+        run_operation_with_trace_result(
+            "usb.copy.validate",
+            cancellation,
+            |context| mirror_validated_txt_image_inner(source.as_ref(), target.as_ref(), context),
+            trace_usb_copy_value,
+        ),
         trace_run_result
     )
 }
@@ -300,12 +310,17 @@ pub fn mirror_validated_usb_image(
                 TraceValue::Data(json!(cancellation.is_cancelled())),
             ),
         ],
-        run_operation("usb.copy.validate_image", cancellation, |context| {
-            if context.is_cancelled() {
-                return Ok(empty_result(target.as_ref().to_path_buf()));
-            }
-            mirror_validated_usb_image_inner(source.as_ref(), target.as_ref(), context)
-        }),
+        run_operation_with_trace_result(
+            "usb.copy.validate_image",
+            cancellation,
+            |context| {
+                if context.is_cancelled() {
+                    return Ok(empty_result(target.as_ref().to_path_buf()));
+                }
+                mirror_validated_usb_image_inner(source.as_ref(), target.as_ref(), context)
+            },
+            trace_usb_copy_value,
+        ),
         trace_run_result
     )
 }
@@ -339,53 +354,60 @@ pub fn mirror_validated_txt_image_on_linux_volume(
                 TraceValue::Data(json!(cancellation.is_cancelled())),
             ),
         ],
-        run_operation("usb.copy.validate_linux_volume", cancellation, |context| {
-            if context.is_cancelled() {
-                return Ok(empty_result(target.as_ref().to_path_buf()));
-            }
-            let source_input = source.as_ref();
-            reject_symlink_image_root(source_input)?;
-            let source = fs::canonicalize(source_input).map_err(|cause| {
-                filesystem_error("immagine sorgente non leggibile", source_input, cause)
-            })?;
-            validate_txt_simulation(&source).map_err(|cause| {
-                usb_error(format!(
-                    "immagine USB sorgente non valida: {}",
-                    cause.message()
-                ))
-            })?;
-            let image_bytes = source_directory_bytes(&source)?;
-            let target = target.as_ref();
-            let before = validate_linux_volume(config, target, image_bytes).map_err(|error| {
-                usb_error(format!(
-                    "preflight volume Linux fallito: {}",
-                    error.message()
-                ))
-            })?;
-            let result = mirror_directory_inner(&source, target, context)?;
-            if context.is_cancelled() {
-                return Ok(result);
-            }
-            context.set_phase(OperationPhase::Finalizing);
-            validate_txt_simulation(&result.root)
-                .map_err(|cause| usb_error(format!("copia USB non valida: {}", cause.message())))?;
-            let after = validate_linux_volume(config, target, 0).map_err(|error| {
-                usb_error(format!(
-                    "verifica finale volume Linux fallita: {}",
-                    error.message()
-                ))
-            })?;
-            if before.mount_target != after.mount_target
-                || before.filesystem != after.filesystem
-                || before.uuid != after.uuid
-            {
-                return Err(usb_error(
-                    "mount o identità del volume Linux cambiati durante la copia USB",
-                ));
-            }
-            context.report_progress(1, Some(1));
-            Ok(result)
-        }),
+        run_operation_with_trace_result(
+            "usb.copy.validate_linux_volume",
+            cancellation,
+            |context| {
+                if context.is_cancelled() {
+                    return Ok(empty_result(target.as_ref().to_path_buf()));
+                }
+                let source_input = source.as_ref();
+                reject_symlink_image_root(source_input)?;
+                let source = fs::canonicalize(source_input).map_err(|cause| {
+                    filesystem_error("immagine sorgente non leggibile", source_input, cause)
+                })?;
+                validate_txt_simulation(&source).map_err(|cause| {
+                    usb_error(format!(
+                        "immagine USB sorgente non valida: {}",
+                        cause.message()
+                    ))
+                })?;
+                let image_bytes = source_directory_bytes(&source)?;
+                let target = target.as_ref();
+                let before =
+                    validate_linux_volume(config, target, image_bytes).map_err(|error| {
+                        usb_error(format!(
+                            "preflight volume Linux fallito: {}",
+                            error.message()
+                        ))
+                    })?;
+                let result = mirror_directory_inner(&source, target, context)?;
+                if context.is_cancelled() {
+                    return Ok(result);
+                }
+                context.set_phase(OperationPhase::Finalizing);
+                validate_txt_simulation(&result.root).map_err(|cause| {
+                    usb_error(format!("copia USB non valida: {}", cause.message()))
+                })?;
+                let after = validate_linux_volume(config, target, 0).map_err(|error| {
+                    usb_error(format!(
+                        "verifica finale volume Linux fallita: {}",
+                        error.message()
+                    ))
+                })?;
+                if before.mount_target != after.mount_target
+                    || before.filesystem != after.filesystem
+                    || before.uuid != after.uuid
+                {
+                    return Err(usb_error(
+                        "mount o identità del volume Linux cambiati durante la copia USB",
+                    ));
+                }
+                context.report_progress(1, Some(1));
+                Ok(result)
+            },
+            trace_usb_copy_value,
+        ),
         trace_run_result
     )
 }
@@ -414,7 +436,7 @@ pub fn mirror_validated_usb_image_on_linux_volume(
                 TraceValue::Data(json!(cancellation.is_cancelled()))
             ),
         ],
-        run_operation(
+        run_operation_with_trace_result(
             "usb.copy.validate_image_linux_volume",
             cancellation,
             |context| {
@@ -467,6 +489,7 @@ pub fn mirror_validated_usb_image_on_linux_volume(
                 context.report_progress(1, Some(1));
                 Ok(result)
             },
+            trace_usb_copy_value,
         ),
         trace_run_result
     )

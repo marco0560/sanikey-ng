@@ -1,6 +1,7 @@
 # Piano approvato: log multilivello
 
-Stato: piano approvato; implementazione e qualificazione ancora da eseguire.
+Stato: piano approvato; implementazione avviata e qualificazione ancora in corso.
+Il [ledger](../migration/ledger.md) riporta le verifiche e le lacune correnti.
 Il perimetro comprende GUI desktop, core, CLI e adattatori di volume del
 progetto. Il generatore installato deve continuare a funzionare senza checkout,
 Git o Python. L'attivazione vale per la sola sessione e il log è disattivato

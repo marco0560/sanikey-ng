@@ -35,7 +35,9 @@ use sanikey_core::metadata::{
 use sanikey_core::observation_imports::import_observations;
 #[cfg(target_os = "linux")]
 use sanikey_core::operation::OperationOutcome;
-use sanikey_core::operation::{CancellationToken, OperationEvent, OperationPhase, run_operation};
+use sanikey_core::operation::{
+    CancellationToken, OperationEvent, OperationPhase, run_operation_with_trace_result,
+};
 #[cfg(target_os = "linux")]
 use sanikey_core::usb_copy::{UsbCopyResult, mirror_validated_usb_image_on_linux_volume};
 use sanikey_core::usb_image::UsbImageResult;
@@ -1520,30 +1522,35 @@ fn build_selected_people_with(
     let _ = sender.send(DesktopEvent::Progress(OperationEvent::Started {
         operation: "build.generate",
     }));
-    let run = run_operation("build.generate", &cancellation, |context| {
-        context.set_phase(OperationPhase::Processing);
-        for (index, person) in people.into_iter().enumerate() {
-            if context.is_cancelled() {
-                break;
+    let run = run_operation_with_trace_result(
+        "build.generate",
+        &cancellation,
+        |context| {
+            context.set_phase(OperationPhase::Processing);
+            for (index, person) in people.into_iter().enumerate() {
+                if context.is_cancelled() {
+                    break;
+                }
+                context.report_progress(index as u64, None);
+                let _ = sender.send(DesktopEvent::Progress(OperationEvent::Progress {
+                    phase: OperationPhase::Processing,
+                    completed: index as u64,
+                    total: None,
+                }));
+                let result = build(&person)?;
+                let _ = sender.send(DesktopEvent::PatientBuilt(result));
+                let completed = index as u64 + 1;
+                context.report_progress(completed, Some(total));
+                let _ = sender.send(DesktopEvent::Progress(OperationEvent::Progress {
+                    phase: OperationPhase::Processing,
+                    completed,
+                    total: Some(total),
+                }));
             }
-            context.report_progress(index as u64, None);
-            let _ = sender.send(DesktopEvent::Progress(OperationEvent::Progress {
-                phase: OperationPhase::Processing,
-                completed: index as u64,
-                total: None,
-            }));
-            let result = build(&person)?;
-            let _ = sender.send(DesktopEvent::PatientBuilt(result));
-            let completed = index as u64 + 1;
-            context.report_progress(completed, Some(total));
-            let _ = sender.send(DesktopEvent::Progress(OperationEvent::Progress {
-                phase: OperationPhase::Processing,
-                completed,
-                total: Some(total),
-            }));
-        }
-        Ok(())
-    });
+            Ok(())
+        },
+        |_: &()| TraceValue::data(()),
+    );
     if let Some(event) = run.events.last() {
         let _ = sender.send(DesktopEvent::Terminal(event.clone()));
     }
@@ -4699,6 +4706,57 @@ enabled = false
             resumed
                 .iter()
                 .any(|event| matches!(event, DesktopEvent::Terminal(OperationEvent::Succeeded)))
+        );
+    }
+
+    #[test]
+    fn trace_records_desktop_build_operation_unit_result() {
+        use sanikey_core::logging::{Component, Level, Session};
+        use serde_json::Value;
+
+        let directory = TestDirectory::new();
+        let profile = profile_with_document(&directory);
+        let person = profile.accounts().people[0].clone();
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let (session, log_path) = Session::create_in_directory_with_level(
+            &directory.0.join("logs"),
+            Component::Desktop,
+            Level::Trace,
+        )
+        .expect("sessione sintetica");
+
+        session.scoped(|| {
+            build_selected_people_with(
+                vec![person],
+                CancellationToken::default(),
+                sender,
+                |person| Ok(synthetic_result(&person.id)),
+            );
+        });
+        assert!(
+            collect_events(receiver)
+                .iter()
+                .any(|event| matches!(event, DesktopEvent::Terminal(OperationEvent::Succeeded)))
+        );
+        drop(session);
+
+        let records: Vec<Value> = fs::read_to_string(log_path)
+            .expect("log traccia sintetico")
+            .lines()
+            .map(|line| serde_json::from_str(line).expect("record JSON valido"))
+            .collect();
+        let operation_result = records
+            .iter()
+            .find(|record| {
+                record["type"] == "function_exit"
+                    && record["function"] == "operation::run_operation"
+            })
+            .expect("risultato span build.generate");
+        assert_eq!(operation_result["result"]["value"]["outcome"], "succeeded");
+        assert_eq!(operation_result["result"]["value"]["value"]["kind"], "data");
+        assert_eq!(
+            operation_result["result"]["value"]["value"]["value"],
+            Value::Null
         );
     }
 
