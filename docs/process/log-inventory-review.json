@@ -1,0 +1,24 @@
+{
+  "schema": 1,
+  "reviews": [
+    {
+      "id": "crates/sanikey-core/src/aifa.rs#b663de73332bd93687e7157ddaa45374ab050e744ef679ccc2cd48c89952c56c:85",
+      "source_sha256": "b663de73332bd93687e7157ddaa45374ab050e744ef679ccc2cd48c89952c56c",
+      "status": "covered",
+      "evidence": "aifa::tests::aifa_client_constructors_have_nested_trace_spans_and_representable_results verifica ingresso, uscita, durata e annidamento di Default::default."
+    },
+    {
+      "id": "crates/sanikey-core/src/aifa.rs#b663de73332bd93687e7157ddaa45374ab050e744ef679ccc2cd48c89952c56c:87",
+      "source_sha256": "b663de73332bd93687e7157ddaa45374ab050e744ef679ccc2cd48c89952c56c",
+      "status": "covered",
+      "evidence": "aifa::tests::aifa_client_constructors_have_nested_trace_spans_and_representable_results verifica ingresso, uscita, durata e risultato rappresentabile di AifaClient::new."
+    },
+    {
+      "id": "crates/sanikey-core/src/lib.rs#f3a2db3f7a6493afcbdb05658bfe25b24e533016bc0b1e7666daf44b5ea987d4:0",
+      "source_sha256": "f3a2db3f7a6493afcbdb05658bfe25b24e533016bc0b1e7666daf44b5ea987d4",
+      "status": "exception",
+      "evidence": "La firma e il corpo di version sono const; project_info ne registra il valore nel proprio risultato.",
+      "rationale": "Una chiamata di tracing con effetti runtime non può essere inserita nel corpo const senza modificarne il contratto."
+    }
+  ]
+}

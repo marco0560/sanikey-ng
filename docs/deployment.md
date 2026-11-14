@@ -66,6 +66,13 @@ contenuti privati. L'attivazione riguarda solo la sessione corrente; le azioni
 precedenti non possono essere ricostruite. Durante un'operazione in corso non
 è possibile cambiare o disattivare la registrazione.
 
+La diagnostica registra un record `content_omitted` per ogni apertura di un
+picker nativo del sistema (profilo, destinazione USB o campo cartella), perché
+il testo interno di queste finestre non è osservabile dalla GUI SaniKey. Il
+record indica solo la categoria del picker e il motivo tecnico, senza percorso
+selezionato o altri dati privati. Il livello `events` non registra questo
+dettaglio. Un errore di scrittura attiva l'avviso di registrazione incompleta.
+
 Le tracce e gli eventi sono **incompleti** durante l'implementazione. Ogni
 sessione scrive un record `coverage` con questo stato; l'inventario sintattico
 è ottenibile con `cargo xtask log-inventory` dal checkout di sviluppo. Le

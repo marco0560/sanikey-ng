@@ -24,8 +24,8 @@ use sanikey_core::inventory::{find_duplicate_documents, scan_document_inventory}
 #[cfg(target_os = "linux")]
 use sanikey_core::linux_volume::{LinuxVolumeInfo, inspect_linux_volume};
 use sanikey_core::logging::{
-    Activity, Component, DisplayControl, DisplayPart, FailureCategory, Level, Operation, Outcome,
-    ProgressPhase, Session, TraceField, TraceLink, TraceOmission, TraceValue,
+    Activity, Component, DisplayControl, DisplayPart, FailureCategory, Level, NativeDialog,
+    Operation, Outcome, ProgressPhase, Session, TraceField, TraceLink, TraceOmission, TraceValue,
     default_log_directory, trace_current, trace_sensitive_text,
 };
 use sanikey_core::metadata::{
@@ -570,6 +570,11 @@ impl DesktopApp {
 
     fn open_profile_dialog(&mut self) {
         trace_desktop_call!("desktop::DesktopApp::open_profile_dialog", fields ["file_dialog" => trace_egui_boundary()], || {
+        record_native_dialog_omission(
+            self.log_session.as_ref(),
+            &mut self.log_failure,
+            NativeDialog::ProfileFile,
+        );
         if let Some(path) = rfd::FileDialog::new()
             .add_filter("Profili account TOML", &["toml"])
             .pick_file()
@@ -890,6 +895,11 @@ impl DesktopApp {
         trace_desktop_call!("desktop::DesktopApp::choose_usb_target", fields [
             "file_dialog" => trace_egui_boundary(),
         ], || {
+        record_native_dialog_omission(
+            self.log_session.as_ref(),
+            &mut self.log_failure,
+            NativeDialog::UsbTargetFolder,
+        );
         let Some(target) = rfd::FileDialog::new().pick_folder() else {
             return;
         };
@@ -1648,6 +1658,19 @@ fn record_ui_action(
     })
 }
 
+fn record_native_dialog_omission(
+    session: Option<&Session>,
+    log_failure: &mut bool,
+    dialog: NativeDialog,
+) {
+    let Some(session) = session else {
+        return;
+    };
+    if session.record_native_dialog_omission(dialog).is_err() {
+        *log_failure = true;
+    }
+}
+
 fn choose_folder(
     ui: &mut egui::Ui,
     label_text: &str,
@@ -1676,15 +1699,17 @@ fn choose_folder(
         if ui
             .button(button.capture(session, log_failure, control.with_part(DisplayPart::Action)))
             .clicked()
-            && let Some(chosen) = rfd::FileDialog::new().pick_folder()
         {
-            *path = chosen;
-            record_ui_action(
+            record_native_dialog_omission(session, log_failure, NativeDialog::PathFolder);
+            if let Some(chosen) = rfd::FileDialog::new().pick_folder() {
+                *path = chosen;
+                record_ui_action(
                 session,
                 log_failure,
                 Activity::GuiFolderChosen,
                 control.with_part(DisplayPart::Action),
-            );
+                );
+            }
         }
     });
     PresentedText::new(&text, Classification::Private).capture(session, log_failure, control);
@@ -3244,8 +3269,9 @@ mod tests {
         LeafletDownloadFailure, ReviewSummary, STRAW_BACKGROUND, add_responsive_path_edit,
         build_selected_people, build_selected_people_with, configure_desktop_theme,
         desktop_visuals, import_selected_observations, indeterminate_progress_segment,
-        load_aifa_people, record_ui_action, review_profile, save_aifa_decision_with, show_path,
-        spawn_logged_worker, trace_desktop_path, warning_text_color,
+        load_aifa_people, record_native_dialog_omission, record_ui_action, review_profile,
+        save_aifa_decision_with, show_path, spawn_logged_worker, trace_desktop_path,
+        warning_text_color,
     };
     use eframe::egui;
     use sanikey_core::build::{BuildCounts, BuildOptions, PatientBuildResult, build_patient};
@@ -4046,6 +4072,47 @@ mod tests {
         let log = fs::read_to_string(log_path).expect("log sintetico");
         assert!(log.contains(warning));
         assert!(log.contains("\"control\":\"log_failure_warning\""));
+    }
+
+    #[test]
+    fn native_dialog_omission_write_failure_is_shown_to_operator() {
+        use sanikey_core::logging::{Component, Level, NativeDialog, Session};
+
+        let directory = TestDirectory::new();
+        let (session, _) = Session::create_in_directory_with_level(
+            &directory.0,
+            Component::Desktop,
+            Level::Diagnostic,
+        )
+        .expect("sessione diagnostica sintetica");
+        session
+            .finish(Component::Desktop)
+            .expect("chiusura sessione");
+
+        let mut log_failure = false;
+        record_native_dialog_omission(Some(&session), &mut log_failure, NativeDialog::ProfileFile);
+        assert!(log_failure);
+
+        let mut app = DesktopApp {
+            log_failure,
+            ..DesktopApp::default()
+        };
+        let context = egui::Context::default();
+        context.enable_accesskit();
+        let mut frame = eframe::Frame::_new_kittest();
+        let output = run_app_frame(&mut app, &context, &mut frame, Vec::new());
+        let tree = output
+            .platform_output
+            .accesskit_update
+            .as_ref()
+            .expect("albero AccessKit dell'avviso");
+        assert!(tree.nodes.iter().any(|(_, node)| {
+            [node.label(), node.value()]
+                .into_iter()
+                .flatten()
+                .any(|text| text.contains("Registrazione interrotta o incompleta"))
+        }));
+        output.drop_without_applying_deltas();
     }
 
     #[test]

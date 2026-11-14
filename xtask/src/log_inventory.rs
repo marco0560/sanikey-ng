@@ -1,5 +1,6 @@
 //! Source-level inventory for planning and auditing logging instrumentation.
 
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -54,6 +55,7 @@ pub(crate) fn run() -> Result<(), String> {
                 "conditions": item.conditions,
                 "instrument_attribute": item.instrument_attribute,
                 "abi": item.abi,
+                "coverage": {"status": "unreviewed"},
             }));
         }
         trace_macro_hints.extend(visitor.opaque_macros.iter()
@@ -63,8 +65,16 @@ pub(crate) fn run() -> Result<(), String> {
         trace_hints.extend(visitor.trace_current_sites.into_iter().map(|scope| json!({"file": file, "source_sha256": digest, "scope": scope, "hint": "trace_current call site; not proof of symbol coverage"})));
         trace_function_hints.extend(visitor.trace_function_sites.into_iter().map(|(scope, path)| json!({"file": file, "source_sha256": digest, "scope": scope, "path": path, "hint": "trace wrapper name; not proof of symbol coverage"})));
     }
+    let review_path = root.join("docs/process/log-inventory-review.json");
+    let review_source = fs::read_to_string(&review_path)
+        .map_err(|error| format!("{}: {error}", review_path.display()))?;
+    let reviews = parse_review_manifest(&review_source, &functions)
+        .map_err(|error| format!("{}: {error}", review_path.display()))?;
+    annotate_reviews(&mut functions, &reviews);
     let report = json!({
         "schema": 2,
+        "review_manifest": "docs/process/log-inventory-review.json",
+        "review_schema": 1,
         "entries": functions,
         "opaque_macros": opaque_macros,
         "trace_current_call_sites": trace_hints,
@@ -72,6 +82,8 @@ pub(crate) fn run() -> Result<(), String> {
         "trace_function_call_sites": trace_function_hints,
         "limitations": [
             "Inventario sintattico: gli attributi di strumentazione non dimostrano la copertura a runtime.",
+            "Gli esiti covered ed exception sono revisioni manuali con evidenza; non sono dedotti dagli indizi sintattici.",
+            "L'evidenza registrata è testo fornito dal revisore e la sua validità semantica non è verificata automaticamente.",
             "I token e gli attributi macro non sono espansi; funzioni generate richiedono un inventario separato.",
             "Le condizioni cfg sono riportate come sintassi ereditata, ma non valutate per piattaforma o feature.",
             "Gli elementi con cfg_attr sono conservati salvo esclusione indipendente: l'attributo condizionale potrebbe non applicarsi in produzione.",
@@ -90,6 +102,141 @@ pub(crate) fn run() -> Result<(), String> {
         serde_json::to_string_pretty(&report).map_err(|error| error.to_string())?
     );
     Ok(())
+}
+
+#[derive(Debug)]
+struct ReviewRecord {
+    status: String,
+    evidence: String,
+    rationale: Option<String>,
+}
+
+fn annotate_reviews(entries: &mut [serde_json::Value], reviews: &HashMap<String, ReviewRecord>) {
+    for entry in entries {
+        let id = entry["id"].as_str().expect("inventory entries have ids");
+        entry["coverage"] = match reviews.get(id) {
+            Some(review) => {
+                let mut outcome = json!({
+                    "status": review.status,
+                    "evidence": review.evidence,
+                });
+                if let Some(rationale) = &review.rationale {
+                    outcome["rationale"] = json!(rationale);
+                }
+                outcome
+            }
+            None => {
+                let mut outcome = json!({"status": "unreviewed"});
+                if let Some(hint) = mechanical_exception_hint(
+                    entry["kind"]
+                        .as_str()
+                        .expect("inventory entries have kinds"),
+                ) {
+                    outcome["suggested_exception_reason"] = json!(hint);
+                }
+                outcome
+            }
+        };
+    }
+}
+
+/// Parse reviewed IDs and reject duplicate, stale, or hash-inconsistent records.
+fn parse_review_manifest(
+    source: &str,
+    current_entries: &[serde_json::Value],
+) -> Result<HashMap<String, ReviewRecord>, String> {
+    let manifest: serde_json::Value =
+        serde_json::from_str(source).map_err(|error| format!("JSON non valido: {error}"))?;
+    if manifest["schema"].as_u64() != Some(1) {
+        return Err("schema del registro revisioni non supportato (atteso 1)".into());
+    }
+    let records = manifest["reviews"]
+        .as_array()
+        .ok_or_else(|| "il campo reviews deve essere un array".to_string())?;
+    let current: HashMap<&str, &serde_json::Value> = current_entries
+        .iter()
+        .filter_map(|entry| Some((entry["id"].as_str()?, entry)))
+        .collect();
+    let mut seen = HashSet::new();
+    let mut reviews = HashMap::new();
+    for (index, record) in records.iter().enumerate() {
+        let prefix = format!("reviews[{index}]");
+        let id = record["id"]
+            .as_str()
+            .filter(|id| !id.is_empty())
+            .ok_or_else(|| format!("{prefix}.id deve essere una stringa non vuota"))?;
+        if !seen.insert(id) {
+            return Err(format!("ID duplicato nel registro revisioni: {id}"));
+        }
+        let entry = current
+            .get(id)
+            .ok_or_else(|| format!("ID obsoleto o sconosciuto nel registro revisioni: {id}"))?;
+        let source_sha256 = entry["source_sha256"]
+            .as_str()
+            .ok_or_else(|| format!("hash sorgente mancante per l'ID corrente: {id}"))?;
+        let id_hash = id
+            .rsplit_once('#')
+            .and_then(|(_, suffix)| suffix.rsplit_once(':').map(|(hash, _)| hash))
+            .ok_or_else(|| format!("formato ID non valido: {id}"))?;
+        let recorded_hash = record["source_sha256"]
+            .as_str()
+            .ok_or_else(|| format!("{prefix}.source_sha256 deve essere una stringa"))?;
+        if id_hash != source_sha256 || recorded_hash != source_sha256 {
+            return Err(format!("hash sorgente non corrispondente per l'ID: {id}"));
+        }
+        let status = record["status"]
+            .as_str()
+            .ok_or_else(|| format!("{prefix}.status deve essere covered oppure exception"))?;
+        if !matches!(status, "covered" | "exception") {
+            return Err(format!(
+                "{prefix}.status deve essere covered oppure exception"
+            ));
+        }
+        let evidence = record["evidence"]
+            .as_str()
+            .map(str::trim)
+            .filter(|evidence| !evidence.is_empty())
+            .ok_or_else(|| format!("{prefix}.evidence deve descrivere una prova non vuota"))?;
+        let rationale = match status {
+            "exception" => Some(
+                record["rationale"]
+                    .as_str()
+                    .map(str::trim)
+                    .filter(|rationale| !rationale.is_empty())
+                    .ok_or_else(|| format!("{prefix}.rationale è obbligatoria per un'eccezione"))?
+                    .to_string(),
+            ),
+            _ => None,
+        };
+        let kind = entry["kind"].as_str().unwrap_or_default();
+        if status == "covered" && mechanical_exception_hint(kind).is_some() {
+            return Err(format!(
+                "{prefix}: {kind} richiede esito exception perché non ha una span runtime autonoma"
+            ));
+        }
+        reviews.insert(
+            id.to_string(),
+            ReviewRecord {
+                status: status.to_string(),
+                evidence: evidence.to_string(),
+                rationale,
+            },
+        );
+    }
+    Ok(reviews)
+}
+
+/// Suggest a mechanical exception reason without deciding its review outcome.
+fn mechanical_exception_hint(kind: &str) -> Option<&'static str> {
+    match kind {
+        "const_fn" | "const_method" => {
+            Some("una funzione const non può chiamare API di tracing runtime nel proprio corpo")
+        }
+        "trait_declaration" => {
+            Some("la dichiarazione del trait non ha un corpo; tracciare l'implementazione concreta")
+        }
+        _ => None,
+    }
 }
 
 fn is_trace_macro_hint(path: &str) -> bool {
@@ -452,7 +599,11 @@ impl<'ast> Visit<'ast> for Inventory {
 
 #[cfg(test)]
 mod tests {
-    use super::{Inventory, Visit, is_trace_function_hint, is_trace_macro_hint};
+    use super::{
+        Inventory, Visit, annotate_reviews, is_trace_function_hint, is_trace_macro_hint,
+        mechanical_exception_hint, parse_review_manifest,
+    };
+    use serde_json::{Value, json};
 
     #[test]
     fn recognizes_only_trace_macro_name_hints() {
@@ -488,6 +639,243 @@ mod tests {
                 ("method", "method"),
                 ("const_method", "constant")
             ]
+        );
+    }
+
+    #[test]
+    fn coverage_defaults_to_unreviewed_and_mechanical_cases_are_only_hints() {
+        let file = syn::parse_file(
+            r#"
+            #[tracing::instrument]
+            fn instrument_attribute_is_not_proof() {}
+            fn wrapper_hint_is_not_proof() { trace_core_call!("entry"); }
+            const fn compile_time_only() {}
+            impl Example {
+                const fn constant_method() {}
+                fn ordinary_method(&self) {}
+            }
+            trait Service { fn declaration(&self); }
+        "#,
+        )
+        .unwrap();
+        let mut inventory = Inventory::default();
+        inventory.visit_file(&file);
+
+        let instrumented = inventory
+            .entries
+            .iter()
+            .find(|entry| {
+                entry.name == "instrument_attribute_is_not_proof" && entry.kind == "function"
+            })
+            .unwrap();
+        assert!(instrumented.instrument_attribute);
+        assert_eq!(mechanical_exception_hint("function"), None);
+        assert!(mechanical_exception_hint("const_fn").is_some());
+        assert!(mechanical_exception_hint("const_method").is_some());
+        assert!(mechanical_exception_hint("trait_declaration").is_some());
+        assert_eq!(mechanical_exception_hint("trait_default"), None);
+
+        let entries: Vec<Value> = inventory
+            .entries
+            .iter()
+            .enumerate()
+            .map(|(ordinal, entry)| {
+                json!({
+                    "id": format!("fixture.rs#{}:{ordinal}", "a".repeat(64)),
+                    "kind": entry.kind,
+                    "instrument_attribute": entry.instrument_attribute,
+                    "coverage": {"status": "unreviewed"}
+                })
+            })
+            .collect();
+        let mut entries = entries;
+        annotate_reviews(&mut entries, &std::collections::HashMap::new());
+        assert!(
+            entries
+                .iter()
+                .all(|entry| entry["coverage"]["status"] == "unreviewed")
+        );
+        let const_entry = entries
+            .iter()
+            .find(|entry| entry["kind"] == "const_fn")
+            .unwrap();
+        assert!(const_entry["coverage"]["suggested_exception_reason"].is_string());
+        let instrumented_entry = entries
+            .iter()
+            .find(|entry| entry["instrument_attribute"] == true)
+            .unwrap();
+        assert_eq!(instrumented_entry["coverage"]["status"], "unreviewed");
+    }
+
+    #[test]
+    fn explicit_covered_outcome_is_hash_bound_and_changes_coverage_status() {
+        let id = format!("crates/sanikey-core/src/a.rs#{}:0", "a".repeat(64));
+        let source_hash = "a".repeat(64);
+        let mut entry = json!({
+            "id": id,
+            "source_sha256": source_hash,
+            "kind": "function",
+            "coverage": {"status": "unreviewed"}
+        });
+        let records = parse_review_manifest(
+            &serde_json::to_string(&json!({
+                "schema": 1,
+                "reviews": [{
+                    "id": id,
+                    "source_sha256": source_hash,
+                    "status": "covered",
+                    "evidence": "test sintetico: file e riga di asserzione"
+                }]
+            }))
+            .unwrap(),
+            std::slice::from_ref(&entry),
+        )
+        .unwrap();
+
+        annotate_reviews(std::slice::from_mut(&mut entry), &records);
+        assert_eq!(entry["coverage"]["status"], "covered");
+        assert_eq!(
+            entry["coverage"]["evidence"],
+            "test sintetico: file e riga di asserzione"
+        );
+    }
+
+    #[test]
+    fn explicit_exception_requires_rationale_and_special_cases_cannot_be_covered() {
+        let hash = "d".repeat(64);
+        let special_id = format!("crates/sanikey-core/src/c.rs#{hash}:2");
+        let trait_id = format!("crates/sanikey-core/src/c.rs#{hash}:3");
+        let entries = [
+            json!({
+                "id": special_id,
+                "source_sha256": hash,
+                "kind": "const_fn",
+                "coverage": {"status": "unreviewed"}
+            }),
+            json!({
+                "id": trait_id,
+                "source_sha256": hash,
+                "kind": "trait_declaration",
+                "coverage": {"status": "unreviewed"}
+            }),
+        ];
+        let record = json!({
+            "id": special_id,
+            "source_sha256": hash,
+            "status": "exception",
+            "evidence": "firma const verificata nel sorgente",
+            "rationale": "non può invocare API di tracing runtime"
+        });
+        let records = parse_review_manifest(
+            &json!({"schema": 1, "reviews": [record]}).to_string(),
+            &entries,
+        )
+        .unwrap();
+        let mut annotated = entries.clone();
+        annotate_reviews(&mut annotated, &records);
+        assert_eq!(annotated[0]["coverage"]["status"], "exception");
+        assert_eq!(
+            annotated[0]["coverage"]["rationale"],
+            "non può invocare API di tracing runtime"
+        );
+
+        let covered_special = json!({
+            "id": special_id,
+            "source_sha256": hash,
+            "status": "covered",
+            "evidence": "prova"
+        });
+        assert!(
+            parse_review_manifest(
+                &json!({"schema": 1, "reviews": [covered_special]}).to_string(),
+                &entries
+            )
+            .unwrap_err()
+            .contains("richiede esito exception")
+        );
+
+        let covered_trait = json!({
+            "id": trait_id,
+            "source_sha256": hash,
+            "status": "covered",
+            "evidence": "prova"
+        });
+        assert!(
+            parse_review_manifest(
+                &json!({"schema": 1, "reviews": [covered_trait]}).to_string(),
+                &entries
+            )
+            .unwrap_err()
+            .contains("richiede esito exception")
+        );
+
+        let missing_rationale = json!({
+            "id": special_id,
+            "source_sha256": hash,
+            "status": "exception",
+            "evidence": "prova"
+        });
+        assert!(
+            parse_review_manifest(
+                &json!({"schema": 1, "reviews": [missing_rationale]}).to_string(),
+                &entries
+            )
+            .unwrap_err()
+            .contains("rationale")
+        );
+    }
+
+    #[test]
+    fn rejects_duplicate_stale_hash_mismatched_invalid_status_and_missing_evidence() {
+        let hash = "b".repeat(64);
+        let id = format!("crates/sanikey-core/src/b.rs#{hash}:4");
+        let entry = json!({"id": id, "source_sha256": hash});
+        let entries = [entry];
+        let valid = json!({
+            "id": id,
+            "source_sha256": hash,
+            "status": "covered",
+            "evidence": "fixture sintetica e asserzione test"
+        });
+        let manifest = |reviews: Vec<Value>| json!({"schema": 1, "reviews": reviews});
+
+        assert!(
+            parse_review_manifest(
+                &manifest(vec![valid.clone(), valid.clone()]).to_string(),
+                &entries
+            )
+            .unwrap_err()
+            .contains("duplicato")
+        );
+        assert!(parse_review_manifest(
+            &manifest(vec![json!({"id":"stale.rs#dead:0","source_sha256":"dead","status":"covered","evidence":"x"})]).to_string(),
+            &entries,
+        )
+        .unwrap_err()
+        .contains("obsoleto"));
+
+        let mut bad_hash = valid.clone();
+        bad_hash["source_sha256"] = json!("c".repeat(64));
+        assert!(
+            parse_review_manifest(&manifest(vec![bad_hash]).to_string(), &entries)
+                .unwrap_err()
+                .contains("hash sorgente")
+        );
+
+        let mut invalid_status = valid.clone();
+        invalid_status["status"] = json!("reviewed");
+        assert!(
+            parse_review_manifest(&manifest(vec![invalid_status]).to_string(), &entries)
+                .unwrap_err()
+                .contains("covered oppure exception")
+        );
+
+        let mut no_evidence = valid;
+        no_evidence["evidence"] = json!("  ");
+        assert!(
+            parse_review_manifest(&manifest(vec![no_evidence]).to_string(), &entries)
+                .unwrap_err()
+                .contains("evidence")
         );
     }
 

@@ -7,6 +7,15 @@ closure, 97 siti `trace_current`, 482 invocazioni di macro e 149 chiamate a
 funzioni riconosciute dal nome come possibili wrapper di traccia. Questi numeri
 sono indizi, non una percentuale di funzioni effettivamente coperte.
 
+Il registro [`log-inventory-review.json`](../../process/log-inventory-review.json)
+associa alle voci revisionate l'ID, l'hash del file, l'esito `covered` oppure
+`exception` e un riferimento all'evidenza; le eccezioni richiedono anche una
+motivazione. Le altre voci restano `unreviewed`. L'inventario rifiuta ID
+duplicati, sconosciuti o riferiti a sorgenti cambiati: dopo un cambiamento al
+file, la revisione delle sue voci deve essere ripetuta. Gli esiti sono inseriti
+esplicitamente e l'evidenza va valutata dal revisore: il programma non ne
+dimostra automaticamente la validità né promuove gli indizi a copertura.
+
 Il confronto dei simboli senza indizi riconosciuti ha individuato le seguenti
 eccezioni e aree da verificare separatamente:
 

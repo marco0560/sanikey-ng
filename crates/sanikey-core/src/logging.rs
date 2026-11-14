@@ -44,6 +44,29 @@ pub enum Level {
     Trace,
 }
 
+/// Kind of native picker whose contents the SaniKey GUI cannot observe.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum NativeDialog {
+    /// Account-profile file picker.
+    ProfileFile,
+    /// USB target folder picker.
+    UsbTargetFolder,
+    /// Folder picker attached to a path field.
+    PathFolder,
+}
+
+/// Maps native picker kinds to stable, non-sensitive log identifiers.
+impl NativeDialog {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::ProfileFile => "profile_file",
+            Self::UsbTargetFolder => "usb_target_folder",
+            Self::PathFolder => "path_folder",
+        }
+    }
+}
+
+/// Maps the selected detail level to its stable log identifier.
 impl Level {
     const fn as_str(self) -> &'static str {
         match self {
@@ -583,6 +606,28 @@ impl Session {
         Ok(())
     }
 
+    /// Records that native picker contents are unavailable to GUI capture.
+    ///
+    /// The record is omitted at Events level because it describes a diagnostic
+    /// limitation rather than an operational event. The caller should invoke
+    /// this once each time it opens the corresponding native dialog.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error on a write or flush failure.
+    pub fn record_native_dialog_omission(&self, dialog: NativeDialog) -> io::Result<()> {
+        if self.state.level < Level::Diagnostic {
+            return Ok(());
+        }
+        self.write_record(&json!({
+            "type": "content_omitted",
+            "timestamp_unix_ms": timestamp_unix_ms(),
+            "source": "native_dialog",
+            "dialog": dialog.as_str(),
+            "reason": "external_component_unobservable",
+        }))
+    }
+
     /// Starts one GUI frame so later removals can be distinguished from unchanged text.
     ///
     /// # Errors
@@ -1094,11 +1139,12 @@ impl EventFile {
 #[cfg(test)]
 mod tests {
     use super::{
-        Activity, Component, DisplayControl, Event, EventFile, EventKind, Level, Outcome, Session,
+        Activity, Component, DisplayControl, Event, EventFile, EventKind, Level, NativeDialog,
+        Outcome, Session,
     };
     #[cfg(unix)]
     use super::{create_session_file_at, open_verified_log_directory};
-    use serde_json::json;
+    use serde_json::{Value, json};
     use std::fs;
     use std::path::PathBuf;
     use std::sync::Arc;
@@ -1454,6 +1500,77 @@ mod tests {
             fs::remove_file(path).unwrap();
             fs::remove_dir(directory).unwrap();
         }
+    }
+
+    #[test]
+    fn native_dialog_omissions_are_typed_diagnostic_records_without_private_data() {
+        let directory = std::env::temp_dir().join(format!(
+            "sanikey-native-dialog-omission-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let (events_session, events_path) =
+            Session::create_in_directory_with_level(&directory, Component::Desktop, Level::Events)
+                .expect("sessione eventi sintetica");
+        events_session
+            .record_native_dialog_omission(NativeDialog::ProfileFile)
+            .expect("omissione ignorata a livello eventi");
+        events_session
+            .finish(Component::Desktop)
+            .expect("fine sessione eventi");
+        let events = fs::read_to_string(&events_path).expect("log eventi");
+        assert!(!events.contains("content_omitted"));
+
+        let (diagnostic_session, diagnostic_path) = Session::create_in_directory_with_level(
+            &directory,
+            Component::Desktop,
+            Level::Diagnostic,
+        )
+        .expect("sessione diagnostica sintetica");
+        diagnostic_session
+            .record_native_dialog_omission(NativeDialog::ProfileFile)
+            .expect("omissione picker profilo");
+        diagnostic_session
+            .record_native_dialog_omission(NativeDialog::PathFolder)
+            .expect("omissione picker cartella");
+        diagnostic_session
+            .record_native_dialog_omission(NativeDialog::UsbTargetFolder)
+            .expect("omissione picker destinazione USB");
+        diagnostic_session
+            .finish(Component::Desktop)
+            .expect("fine sessione diagnostica");
+        let diagnostic = fs::read_to_string(&diagnostic_path).expect("log diagnostico");
+        let omissions: Vec<Value> = diagnostic
+            .lines()
+            .filter_map(|line| {
+                let record: Value = serde_json::from_str(line).expect("record JSON");
+                (record["type"] == "content_omitted").then_some(record)
+            })
+            .collect();
+        assert_eq!(omissions.len(), 3);
+        assert_eq!(omissions[0]["source"], "native_dialog");
+        assert_eq!(omissions[0]["dialog"], "profile_file");
+        assert_eq!(omissions[0]["reason"], "external_component_unobservable");
+        assert_eq!(omissions[1]["dialog"], "path_folder");
+        assert_eq!(omissions[2]["dialog"], "usb_target_folder");
+        assert!(!diagnostic.contains("private"));
+
+        let (trace_session, trace_path) =
+            Session::create_in_directory_with_level(&directory, Component::Desktop, Level::Trace)
+                .expect("sessione trace sintetica");
+        trace_session
+            .record_native_dialog_omission(NativeDialog::ProfileFile)
+            .expect("omissione picker al livello trace");
+        trace_session
+            .finish(Component::Desktop)
+            .expect("fine sessione trace");
+        let trace = fs::read_to_string(&trace_path).expect("log trace");
+        assert!(trace.contains("external_component_unobservable"));
+
+        fs::remove_file(events_path).expect("rimozione log eventi");
+        fs::remove_file(diagnostic_path).expect("rimozione log diagnostico");
+        fs::remove_file(trace_path).expect("rimozione log trace");
+        fs::remove_dir(directory).expect("rimozione directory sintetica");
     }
 
     #[test]
