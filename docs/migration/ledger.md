@@ -189,6 +189,15 @@ per DICOM resta da affrontare l'indice DICOMDIR assente. La differenza sulla
 validazione di `background_opacity = NaN` richiede una decisione G2 prima di
 dichiarare completa la parità della configurazione.
 
+Aggiornamento 2026-11-15: il manutentore richiede, per la parità operativa
+AIFA, che la GUI mostri e consenta di selezionare anche i candidati da rivedere
+quando esistono candidati esatti. La GUI attuale mostra solo gli esatti in
+quel caso. Lavoro e verifiche restano da eseguire in
+[P08.03](tasks/P08.03-portare-riferimenti-e-fogli-aifa.md); la capability AIFA
+rimane pending. La CLI Python della baseline fissata usa anch'essa il fallback
+`search.exact or search.review`, quindi il requisito richiesto non è una
+equivalenza già accertata con quella specifica interfaccia.
+
 Leggere [START-HERE.md](START-HERE.md). P11.01–P11.03 sono implementate e
 verificate automaticamente su Linux. P11.04 ha una qualifica Linux parziale,
 con un difetto di layout corretto e coperto da un test di clip headless; il
