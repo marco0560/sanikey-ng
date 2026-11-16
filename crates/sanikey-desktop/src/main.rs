@@ -2734,6 +2734,12 @@ impl DesktopApp {
                     )
                     .clicked()
                 {
+                    record_ui_action(
+                        self.log_session.as_ref(),
+                        &mut self.log_failure,
+                        Activity::GuiAifaReviewRequested,
+                        DisplayControl::new("review_aifa"),
+                    );
                     self.start_aifa_review();
                 }
                 if ui
@@ -4491,6 +4497,10 @@ mod tests {
                 "gui_preflight_repeat_requested",
             ),
             (
+                Activity::GuiAifaReviewRequested,
+                "gui_aifa_review_requested",
+            ),
+            (
                 Activity::GuiObservationImportRequested,
                 "gui_observation_import_requested",
             ),
@@ -6178,6 +6188,97 @@ enabled = false
                 .any(|label| label == "Importa/aggiorna osservazioni"),
             "{labels:?}"
         );
+    }
+
+    #[test]
+    fn events_aifa_review_click_is_separate_from_local_load_outcome() {
+        use sanikey_core::logging::{Component, Level, Session};
+
+        let directory = TestDirectory::new();
+        let profile = profile_with_document(&directory);
+        let person = profile.accounts().people[0].clone();
+        fs::write(
+            person.metadata_directory.join("medications.toml"),
+            "[[medication]]\nid='PRIVATE-DRUG-ID'\nname='PRIVATE-DRUG-NAME'\n",
+        )
+        .expect("farmaco sintetico");
+        let (session, log_path) = Session::create_in_directory_with_level(
+            &directory.0,
+            Component::Desktop,
+            Level::Events,
+        )
+        .expect("sessione Events sintetica");
+        let mut app = DesktopApp {
+            log_session: Some(session.clone()),
+            ..DesktopApp::default()
+        };
+        app.import_profile(profile.source_path());
+        app.review = Some(ReviewSummary {
+            selected_people: vec!["Persona A sintetica".to_owned()],
+            ..ReviewSummary::default()
+        });
+
+        let context = egui::Context::default();
+        let mut frame = eframe::Frame::_new_kittest();
+        click_button(&mut app, &context, &mut frame, "Rivedi riferimenti AIFA");
+        app.worker_handle
+            .take()
+            .expect("worker AIFA avviato dal click")
+            .join()
+            .expect("worker terminato");
+        assert!(!app.log_failure);
+        session.finish(Component::Desktop).expect("fine sessione");
+        drop(app);
+
+        let log = fs::read_to_string(log_path).expect("log Events sintetico");
+        let records = log
+            .lines()
+            .map(|line| serde_json::from_str::<serde_json::Value>(line).expect("record JSON"))
+            .collect::<Vec<_>>();
+        let action = records
+            .iter()
+            .filter(|record| {
+                record["activity"] == "gui_aifa_review_requested"
+                    && record["target"]["name"] == "review_aifa"
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            action.len(),
+            2,
+            "click GUI registrato come azione tipizzata"
+        );
+        assert_eq!(action[0]["event"], "started");
+        assert_eq!(action[1]["event"], "succeeded");
+
+        let operation = records
+            .iter()
+            .filter(|record| record["activity"] == "aifa")
+            .collect::<Vec<_>>();
+        let operation_start = operation
+            .iter()
+            .find(|record| record["event"] == "started")
+            .expect("avvio caricamento AIFA");
+        let operation_success = operation
+            .iter()
+            .find(|record| record["event"] == "succeeded")
+            .expect("esito caricamento AIFA");
+        assert_eq!(
+            operation_start["operation_id"],
+            operation_success["operation_id"]
+        );
+        assert_ne!(action[0]["operation_id"], operation_start["operation_id"]);
+        for private_value in [
+            "patient-a",
+            "Persona A",
+            "PRIVATE-DRUG-ID",
+            "PRIVATE-DRUG-NAME",
+            "metadata",
+        ] {
+            assert!(
+                !log.contains(private_value),
+                "dato privato nel log Events: {private_value}"
+            );
+        }
     }
 
     #[test]

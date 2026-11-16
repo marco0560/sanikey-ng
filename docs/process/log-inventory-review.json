@@ -1304,12 +1304,12 @@
       "evidence_sha256": "819d4256ec1ca09d931b7ff1a4bd1583a3d515e8223f51bb43bc40d0271c183e"
     },
     {
-      "id": "crates/sanikey-desktop/src/main.rs#b798a846118cb0a88557fad0ab14b872237f84571600930a453cdd8528570af5:95",
-      "source_sha256": "b798a846118cb0a88557fad0ab14b872237f84571600930a453cdd8528570af5",
+      "id": "crates/sanikey-desktop/src/main.rs#56ca9bd6a68e05ee9967e24e5e92cbf8c571f0bb9313c155f67b7797f5bab442:95",
+      "source_sha256": "56ca9bd6a68e05ee9967e24e5e92cbf8c571f0bb9313c155f67b7797f5bab442",
       "status": "covered",
       "evidence": "tests::person_selection_trace_records_inputs_output_duration_and_redacts_secret_paths verifica i campi completi di input e risultato, call_id, durata e redazione del percorso segreto.",
       "evidence_file": "crates/sanikey-desktop/src/main.rs",
-      "evidence_sha256": "b798a846118cb0a88557fad0ab14b872237f84571600930a453cdd8528570af5"
+      "evidence_sha256": "56ca9bd6a68e05ee9967e24e5e92cbf8c571f0bb9313c155f67b7797f5bab442"
     },
     {
       "id": "crates/sanikey-core/src/database.rs#be55618145de2a8ab951f7b9cb4039710ea448456a348a9f7cde332227c0fb3a:20",

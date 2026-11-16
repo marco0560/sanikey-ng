@@ -147,7 +147,7 @@ macOS. La [misura sintetica](verification/2026-11-14-log-benchmark.md) riporta
 dimensioni e tempi del logger, senza stimare le prestazioni delle build reali.
 Il 2026-11-16 `cargo xtask check`, con directory temporanea del workspace, ha superato Clippy, test, doctest,
 build e controlli di pubblicabilità su Linux: 355 test core passati e 2
-ignorati, 70 desktop e 20 CLI passati, oltre ai test degli adattatori. Codira
+ignorati, 71 desktop e 20 CLI passati, oltre ai test degli adattatori. Codira
 ha indicizzato 258 file supportati senza errori e l'audit Rustdoc, ripetuto
 dopo la documentazione dei simboli rilevati, non ha prodotto ulteriori rilievi;
 12 asset senza analyzer restano fuori dalla copertura. L'implementazione e le
@@ -200,6 +200,8 @@ l’esito e il percorso selezionato dal picker USB, senza attribuire una causa
 a `None`. Il test di integrazione database è stato eseguito separatamente.
 Il click di importazione osservazioni è registrato come azione distinta; il
 test di integrazione dei report parametri è stato eseguito separatamente.
+Il click di revisione riferimenti AIFA è un evento distinto dall’esito del
+caricamento; il test sintetico copre il caso riuscito.
 
 Decisione G2 del 2026-11-10: applicare `--repo-root` al preflight privacy
 dei comandi CLI `build-patient` e `build-all`, come descritto nella
