@@ -245,68 +245,68 @@
       "evidence_sha256": "e9ac50f5618aa701a389b0013a0232ba1a90290ea113408399e14ca0f632ba03"
     },
     {
-      "id": "crates/sanikey-core/src/dicom.rs#e3e526588540abbf838a6c361c94a5d848a80b790856abd4b983b28a883d7474:29",
-      "source_sha256": "e3e526588540abbf838a6c361c94a5d848a80b790856abd4b983b28a883d7474",
+      "id": "crates/sanikey-core/src/dicom.rs#d752820ed51d20656aca7d7d217804b7789c382ef53a6a4f10378e90eb21e596:28",
+      "source_sha256": "d752820ed51d20656aca7d7d217804b7789c382ef53a6a4f10378e90eb21e596",
       "status": "covered",
       "evidence": "dicom::tests::synthetic_trace_records_complete_dicom_helper_calls confronta argomenti e risultati rappresentabili di read_dicom_metadata, call_id e durata.",
       "evidence_file": "crates/sanikey-core/src/dicom/tests.rs",
-      "evidence_sha256": "60569c1a8a3c177b2fc6b24d0bb0106e8f22d92420164beb736fe028bde37c92"
+      "evidence_sha256": "819d4256ec1ca09d931b7ff1a4bd1583a3d515e8223f51bb43bc40d0271c183e"
     },
     {
-      "id": "crates/sanikey-core/src/dicom.rs#e3e526588540abbf838a6c361c94a5d848a80b790856abd4b983b28a883d7474:35",
-      "source_sha256": "e3e526588540abbf838a6c361c94a5d848a80b790856abd4b983b28a883d7474",
+      "id": "crates/sanikey-core/src/dicom.rs#d752820ed51d20656aca7d7d217804b7789c382ef53a6a4f10378e90eb21e596:34",
+      "source_sha256": "d752820ed51d20656aca7d7d217804b7789c382ef53a6a4f10378e90eb21e596",
       "status": "covered",
       "evidence": "dicom::tests::synthetic_trace_records_complete_dicom_helper_calls confronta argomenti e risultati rappresentabili di normalize_date, call_id e durata.",
       "evidence_file": "crates/sanikey-core/src/dicom/tests.rs",
-      "evidence_sha256": "60569c1a8a3c177b2fc6b24d0bb0106e8f22d92420164beb736fe028bde37c92"
+      "evidence_sha256": "819d4256ec1ca09d931b7ff1a4bd1583a3d515e8223f51bb43bc40d0271c183e"
     },
     {
-      "id": "crates/sanikey-core/src/dicom.rs#e3e526588540abbf838a6c361c94a5d848a80b790856abd4b983b28a883d7474:37",
-      "source_sha256": "e3e526588540abbf838a6c361c94a5d848a80b790856abd4b983b28a883d7474",
+      "id": "crates/sanikey-core/src/dicom.rs#d752820ed51d20656aca7d7d217804b7789c382ef53a6a4f10378e90eb21e596:36",
+      "source_sha256": "d752820ed51d20656aca7d7d217804b7789c382ef53a6a4f10378e90eb21e596",
       "status": "covered",
       "evidence": "dicom::tests::synthetic_trace_records_complete_dicom_helper_calls confronta argomenti e risultati rappresentabili di study_id, call_id e durata.",
       "evidence_file": "crates/sanikey-core/src/dicom/tests.rs",
-      "evidence_sha256": "60569c1a8a3c177b2fc6b24d0bb0106e8f22d92420164beb736fe028bde37c92"
+      "evidence_sha256": "819d4256ec1ca09d931b7ff1a4bd1583a3d515e8223f51bb43bc40d0271c183e"
     },
     {
-      "id": "crates/sanikey-core/src/dicom.rs#e3e526588540abbf838a6c361c94a5d848a80b790856abd4b983b28a883d7474:39",
-      "source_sha256": "e3e526588540abbf838a6c361c94a5d848a80b790856abd4b983b28a883d7474",
+      "id": "crates/sanikey-core/src/dicom.rs#d752820ed51d20656aca7d7d217804b7789c382ef53a6a4f10378e90eb21e596:38",
+      "source_sha256": "d752820ed51d20656aca7d7d217804b7789c382ef53a6a4f10378e90eb21e596",
       "status": "covered",
       "evidence": "dicom::tests::synthetic_trace_records_complete_dicom_helper_calls confronta argomenti e risultati rappresentabili di staging_root, call_id e durata.",
       "evidence_file": "crates/sanikey-core/src/dicom/tests.rs",
-      "evidence_sha256": "60569c1a8a3c177b2fc6b24d0bb0106e8f22d92420164beb736fe028bde37c92"
+      "evidence_sha256": "819d4256ec1ca09d931b7ff1a4bd1583a3d515e8223f51bb43bc40d0271c183e"
     },
     {
-      "id": "crates/sanikey-core/src/dicom.rs#e3e526588540abbf838a6c361c94a5d848a80b790856abd4b983b28a883d7474:61",
-      "source_sha256": "e3e526588540abbf838a6c361c94a5d848a80b790856abd4b983b28a883d7474",
+      "id": "crates/sanikey-core/src/dicom.rs#d752820ed51d20656aca7d7d217804b7789c382ef53a6a4f10378e90eb21e596:60",
+      "source_sha256": "d752820ed51d20656aca7d7d217804b7789c382ef53a6a4f10378e90eb21e596",
       "status": "covered",
       "evidence": "dicom::tests::synthetic_trace_records_complete_dicom_helper_calls confronta argomenti e risultati rappresentabili di is_dicom_instance_path, call_id e durata.",
       "evidence_file": "crates/sanikey-core/src/dicom/tests.rs",
-      "evidence_sha256": "60569c1a8a3c177b2fc6b24d0bb0106e8f22d92420164beb736fe028bde37c92"
+      "evidence_sha256": "819d4256ec1ca09d931b7ff1a4bd1583a3d515e8223f51bb43bc40d0271c183e"
     },
     {
-      "id": "crates/sanikey-core/src/dicom.rs#e3e526588540abbf838a6c361c94a5d848a80b790856abd4b983b28a883d7474:68",
-      "source_sha256": "e3e526588540abbf838a6c361c94a5d848a80b790856abd4b983b28a883d7474",
+      "id": "crates/sanikey-core/src/dicom.rs#d752820ed51d20656aca7d7d217804b7789c382ef53a6a4f10378e90eb21e596:67",
+      "source_sha256": "d752820ed51d20656aca7d7d217804b7789c382ef53a6a4f10378e90eb21e596",
       "status": "covered",
       "evidence": "dicom::tests::synthetic_trace_records_complete_dicom_helper_calls confronta argomenti e risultati rappresentabili di viewer_priority, call_id e durata.",
       "evidence_file": "crates/sanikey-core/src/dicom/tests.rs",
-      "evidence_sha256": "60569c1a8a3c177b2fc6b24d0bb0106e8f22d92420164beb736fe028bde37c92"
+      "evidence_sha256": "819d4256ec1ca09d931b7ff1a4bd1583a3d515e8223f51bb43bc40d0271c183e"
     },
     {
-      "id": "crates/sanikey-core/src/dicom.rs#e3e526588540abbf838a6c361c94a5d848a80b790856abd4b983b28a883d7474:70",
-      "source_sha256": "e3e526588540abbf838a6c361c94a5d848a80b790856abd4b983b28a883d7474",
+      "id": "crates/sanikey-core/src/dicom.rs#d752820ed51d20656aca7d7d217804b7789c382ef53a6a4f10378e90eb21e596:69",
+      "source_sha256": "d752820ed51d20656aca7d7d217804b7789c382ef53a6a4f10378e90eb21e596",
       "status": "covered",
       "evidence": "dicom::tests::synthetic_trace_records_complete_dicom_helper_calls confronta argomenti e risultati rappresentabili di viewer_root, call_id e durata.",
       "evidence_file": "crates/sanikey-core/src/dicom/tests.rs",
-      "evidence_sha256": "60569c1a8a3c177b2fc6b24d0bb0106e8f22d92420164beb736fe028bde37c92"
+      "evidence_sha256": "819d4256ec1ca09d931b7ff1a4bd1583a3d515e8223f51bb43bc40d0271c183e"
     },
     {
-      "id": "crates/sanikey-core/src/dicom.rs#e3e526588540abbf838a6c361c94a5d848a80b790856abd4b983b28a883d7474:72",
-      "source_sha256": "e3e526588540abbf838a6c361c94a5d848a80b790856abd4b983b28a883d7474",
+      "id": "crates/sanikey-core/src/dicom.rs#d752820ed51d20656aca7d7d217804b7789c382ef53a6a4f10378e90eb21e596:71",
+      "source_sha256": "d752820ed51d20656aca7d7d217804b7789c382ef53a6a4f10378e90eb21e596",
       "status": "covered",
       "evidence": "dicom::tests::synthetic_trace_records_complete_dicom_helper_calls confronta argomenti e risultati rappresentabili di is_executable_or_installer, call_id e durata.",
       "evidence_file": "crates/sanikey-core/src/dicom/tests.rs",
-      "evidence_sha256": "60569c1a8a3c177b2fc6b24d0bb0106e8f22d92420164beb736fe028bde37c92"
+      "evidence_sha256": "819d4256ec1ca09d931b7ff1a4bd1583a3d515e8223f51bb43bc40d0271c183e"
     },
     {
       "id": "crates/sanikey-core/src/inventory.rs#e4106b178f7059041d59ad81a5310a07289cd5bb0a8280ae78c88131cb6034c7:26",
@@ -1136,12 +1136,12 @@
       "evidence_sha256": "9ead94eaf97e98dd3cb1b461c94c806a6d234631d6a49dc3e8872dc27f75f59a"
     },
     {
-      "id": "crates/sanikey-desktop/src/main.rs#f599b11a74adf72e1e5c30550f1e0358012c7af763a53567670f49b3f5c53872:90",
-      "source_sha256": "f599b11a74adf72e1e5c30550f1e0358012c7af763a53567670f49b3f5c53872",
+      "id": "crates/sanikey-desktop/src/main.rs#21e026276b0a08f9012c9d2bc68c069441a761f37419c7ca66677a9fbd828d45:90",
+      "source_sha256": "21e026276b0a08f9012c9d2bc68c069441a761f37419c7ca66677a9fbd828d45",
       "status": "covered",
       "evidence": "tests::person_selection_trace_records_inputs_output_duration_and_redacts_secret_paths verifica input e output rappresentabili, call_id, durata e redazione del percorso segreto.",
       "evidence_file": "crates/sanikey-desktop/src/main.rs",
-      "evidence_sha256": "f599b11a74adf72e1e5c30550f1e0358012c7af763a53567670f49b3f5c53872"
+      "evidence_sha256": "21e026276b0a08f9012c9d2bc68c069441a761f37419c7ca66677a9fbd828d45"
     },
     {
       "id": "crates/sanikey-core/src/metadata/parse/timeline.rs#4b133f26531d918c12f1d25cbb99b2aebac272825ab9cf1e71f5a44a5f908574:0",
@@ -1272,20 +1272,44 @@
       "evidence_sha256": "6030dbf6785c897b9052faba91521f48c40a6247a905771fedc0c094a05ed674"
     },
     {
-      "id": "crates/sanikey-core/src/dicom.rs#e3e526588540abbf838a6c361c94a5d848a80b790856abd4b983b28a883d7474:20",
-      "source_sha256": "e3e526588540abbf838a6c361c94a5d848a80b790856abd4b983b28a883d7474",
+      "id": "crates/sanikey-core/src/dicom.rs#d752820ed51d20656aca7d7d217804b7789c382ef53a6a4f10378e90eb21e596:20",
+      "source_sha256": "d752820ed51d20656aca7d7d217804b7789c382ef53a6a4f10378e90eb21e596",
       "status": "covered",
       "evidence": "trace_dicom_media::dicom_media_copy_traces_paths_result_call_ids_duration_and_binary_omission verifica input/output nel caso sintetico riuscito, call_id, durata e omissione.",
       "evidence_file": "crates/sanikey-core/tests/trace_dicom_media.rs",
       "evidence_sha256": "d2fc86ad52ce74599fa236662b1164d81f4b176b239dba352112c08fd2dc8c1f"
     },
     {
-      "id": "crates/sanikey-core/src/dicom.rs#e3e526588540abbf838a6c361c94a5d848a80b790856abd4b983b28a883d7474:75",
-      "source_sha256": "e3e526588540abbf838a6c361c94a5d848a80b790856abd4b983b28a883d7474",
+      "id": "crates/sanikey-core/src/dicom.rs#d752820ed51d20656aca7d7d217804b7789c382ef53a6a4f10378e90eb21e596:75",
+      "source_sha256": "d752820ed51d20656aca7d7d217804b7789c382ef53a6a4f10378e90eb21e596",
       "status": "covered",
       "evidence": "trace_dicom_media::dicom_media_copy_traces_paths_result_call_ids_duration_and_binary_omission verifica input/output nel caso sintetico riuscito, call_id, durata e omissione.",
       "evidence_file": "crates/sanikey-core/tests/trace_dicom_media.rs",
       "evidence_sha256": "d2fc86ad52ce74599fa236662b1164d81f4b176b239dba352112c08fd2dc8c1f"
+    },
+    {
+      "id": "crates/sanikey-core/src/parameter_slices.rs#4e0d01d54a6cd2f856789ac0d3106e15d1aaac0d693bea1a79d4d12e66907130:30",
+      "source_sha256": "4e0d01d54a6cd2f856789ac0d3106e15d1aaac0d693bea1a79d4d12e66907130",
+      "status": "covered",
+      "evidence": "trace_parameter_discovery::configured_parameter_discovery_traces_inputs_results_ids_and_durations confronta input e risultati sintetici completi, call_id e durata.",
+      "evidence_file": "crates/sanikey-core/tests/trace_parameter_discovery.rs",
+      "evidence_sha256": "5ce936bd1468b9f7ce41cf253fb5aa01b1239f7369f0b7f0d3800984643831db"
+    },
+    {
+      "id": "crates/sanikey-core/src/parameter_slices.rs#4e0d01d54a6cd2f856789ac0d3106e15d1aaac0d693bea1a79d4d12e66907130:32",
+      "source_sha256": "4e0d01d54a6cd2f856789ac0d3106e15d1aaac0d693bea1a79d4d12e66907130",
+      "status": "covered",
+      "evidence": "trace_parameter_discovery::configured_parameter_discovery_traces_inputs_results_ids_and_durations confronta input e risultati sintetici completi, call_id e durata.",
+      "evidence_file": "crates/sanikey-core/tests/trace_parameter_discovery.rs",
+      "evidence_sha256": "5ce936bd1468b9f7ce41cf253fb5aa01b1239f7369f0b7f0d3800984643831db"
+    },
+    {
+      "id": "crates/sanikey-core/src/dicom.rs#d752820ed51d20656aca7d7d217804b7789c382ef53a6a4f10378e90eb21e596:30",
+      "source_sha256": "d752820ed51d20656aca7d7d217804b7789c382ef53a6a4f10378e90eb21e596",
+      "status": "covered",
+      "evidence": "dicom::tests::dicomdir_trace_distinguishes_open_and_sequence_outcomes_while_events_stay_terse verifica gli esiti sintetici di apertura, sequenza mancante/non-sequenza/vuota e lettura riuscita, correlazione call_id/durata ed Events senza dettagli Trace.",
+      "evidence_file": "crates/sanikey-core/src/dicom/tests.rs",
+      "evidence_sha256": "819d4256ec1ca09d931b7ff1a4bd1583a3d515e8223f51bb43bc40d0271c183e"
     }
   ]
 }

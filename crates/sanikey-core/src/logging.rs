@@ -360,6 +360,8 @@ pub enum Activity {
     GuiLogLevelSelected,
     /// GUI consent selection changed.
     GuiConsentChanged,
+    /// GUI operator requested logging activation or level application.
+    GuiLoggingStartRequested,
     /// GUI logging deactivation requested.
     GuiLoggingStop,
     /// GUI operator chose to keep waiting for a worker during shutdown.
@@ -404,6 +406,7 @@ impl Activity {
             Self::GuiPanelToggled => "gui_panel_toggled",
             Self::GuiLogLevelSelected => "gui_log_level_selected",
             Self::GuiConsentChanged => "gui_consent_changed",
+            Self::GuiLoggingStartRequested => "gui_logging_start_requested",
             Self::GuiLoggingStop => "gui_logging_stop",
             Self::GuiShutdownKeepWaiting => "gui_shutdown_keep_waiting",
             Self::GuiShutdownForceClose => "gui_shutdown_force_close",

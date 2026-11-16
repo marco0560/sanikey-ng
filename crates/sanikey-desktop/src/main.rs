@@ -2160,6 +2160,12 @@ impl DesktopApp {
                 }) => {
                     self.log_failure = false;
                     self.finish_log_session();
+                    record_ui_action(
+                        Some(&session),
+                        &mut self.log_failure,
+                        Activity::GuiLoggingStartRequested,
+                        DisplayControl::new("logging_start"),
+                    );
                     self.log_session = Some(session);
                     self.log_path = Some(path);
                     self.active_log_level = Some(level);
@@ -3768,28 +3774,55 @@ mod tests {
     fn logging_session_switch_and_stop_finish_after_display_frame() {
         use sanikey_core::logging::Level;
 
+        fn assert_single_start_action(path: &std::path::Path) {
+            let log = fs::read_to_string(path).expect("log sessione");
+            let records = log
+                .lines()
+                .map(|line| serde_json::from_str::<serde_json::Value>(line).expect("record JSON"))
+                .collect::<Vec<_>>();
+            let actions = records
+                .iter()
+                .filter(|record| {
+                    record["activity"] == "gui_logging_start_requested"
+                        && record["target"]["name"] == "logging_start"
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(
+                actions.len(),
+                2,
+                "un solo click di attivazione per sessione"
+            );
+            assert_eq!(actions[0]["event"], "started");
+            assert_eq!(actions[1]["event"], "succeeded");
+        }
+
         let directory = TestDirectory::new();
         let mut app = DesktopApp {
             log_directory: Some(directory.0.clone()),
-            pending_log_action: Some(super::PendingLogAction::Start(Level::Events)),
             ..DesktopApp::default()
         };
         let context = egui::Context::default();
         let mut frame = eframe::Frame::_new_kittest();
 
-        run_app_frame(&mut app, &context, &mut frame, Vec::new()).drop_without_applying_deltas();
+        click_button(&mut app, &context, &mut frame, "Attiva / applica livello");
         let events_path = app.log_path.clone().expect("percorso log eventi");
         assert_eq!(app.active_log_level, Some(Level::Events));
 
-        app.selected_log_level = Level::Diagnostic;
-        app.confirm_sensitive_logging = true;
-        app.pending_log_action = Some(super::PendingLogAction::Start(Level::Diagnostic));
-        run_app_frame(&mut app, &context, &mut frame, Vec::new()).drop_without_applying_deltas();
+        click_button(&mut app, &context, &mut frame, "Diagnostica");
+        click_button(
+            &mut app,
+            &context,
+            &mut frame,
+            "Confermo di voler registrare contenuti privati per questa sessione.",
+        );
+        click_button(&mut app, &context, &mut frame, "Attiva / applica livello");
         let diagnostic_path = app.log_path.clone().expect("percorso log diagnostico");
         assert_ne!(events_path, diagnostic_path);
         assert_eq!(app.active_log_level, Some(Level::Diagnostic));
-        let ended_events = fs::read_to_string(events_path).expect("log eventi terminato");
+        assert_eq!(app.selected_log_level, Level::Diagnostic);
+        let ended_events = fs::read_to_string(&events_path).expect("log eventi terminato");
         assert!(ended_events.contains("\"event\":\"finished\""));
+        assert_single_start_action(&events_path);
 
         run_app_frame(&mut app, &context, &mut frame, Vec::new()).drop_without_applying_deltas();
         app.pending_log_action = Some(super::PendingLogAction::Stop);
@@ -3797,9 +3830,10 @@ mod tests {
         assert!(app.log_session.is_none());
         assert!(app.active_log_level.is_none());
         let ended_diagnostic =
-            fs::read_to_string(diagnostic_path).expect("log diagnostico terminato");
+            fs::read_to_string(&diagnostic_path).expect("log diagnostico terminato");
         assert!(ended_diagnostic.contains("logging_heading"));
         assert!(ended_diagnostic.contains("\"event\":\"finished\""));
+        assert_single_start_action(&diagnostic_path);
     }
 
     #[test]
@@ -4386,6 +4420,10 @@ mod tests {
             (Activity::GuiPanelToggled, "gui_panel_toggled"),
             (Activity::GuiLogLevelSelected, "gui_log_level_selected"),
             (Activity::GuiConsentChanged, "gui_consent_changed"),
+            (
+                Activity::GuiLoggingStartRequested,
+                "gui_logging_start_requested",
+            ),
             (Activity::GuiLoggingStop, "gui_logging_stop"),
             (
                 Activity::GuiBuildCancelRequested,

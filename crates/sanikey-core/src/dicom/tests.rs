@@ -1006,3 +1006,137 @@ fn synthetic_trace_records_dicom_boundaries_and_events_omit_private_details() {
         }
     }
 }
+
+#[test]
+fn dicomdir_trace_distinguishes_open_and_sequence_outcomes_while_events_stay_terse() {
+    let temp = TempDir::new();
+    let config = person(temp.path());
+    let assert_read_state = |record: DocumentRecord,
+                             expected_state: &str,
+                             expected_items: Option<usize>,
+                             expected_studies: Option<usize>,
+                             expected_result_count: usize,
+                             expect_parser_error: bool| {
+        let (studies, _log, records) =
+            traced(&temp, || super::studies_from_dicomdir(&config, &record));
+        assert_eq!(studies.len(), expected_result_count);
+        let (_, exit) = function_span(&records, "dicom::studies_from_dicomdir");
+        let output = &exit["result"]["value"]["output"]["value"];
+        assert_eq!(output["directory_record_sequence_state"], expected_state);
+        assert_eq!(
+            output["directory_record_item_count"],
+            serde_json::json!(expected_items)
+        );
+        assert_eq!(
+            output["distinct_study_count"],
+            serde_json::json!(expected_studies)
+        );
+        assert_eq!(
+            output["parser_error"]["kind"] == "data",
+            expect_parser_error
+        );
+        assert_eq!(output["studies"]["kind"], "data");
+    };
+
+    let missing_path = temp.path().join("missing-DICOMDIR");
+    assert_read_state(
+        document(missing_path, "binary", "dicomdir-open-error", None),
+        "open_failed",
+        None,
+        None,
+        0,
+        true,
+    );
+
+    let missing_sequence_path = temp.path().join("DICOMDIR-missing-sequence");
+    dicom_file(
+        &missing_sequence_path,
+        Some("1.2.826.0.1.3680043.10.999.10"),
+        None,
+        None,
+    );
+    assert_read_state(
+        document(
+            missing_sequence_path,
+            "binary",
+            "dicomdir-missing-sequence",
+            None,
+        ),
+        "sequence_missing",
+        None,
+        None,
+        0,
+        false,
+    );
+
+    let non_sequence_path = temp.path().join("DICOMDIR-non-sequence");
+    let mut non_sequence_dataset = Vec::new();
+    element(
+        &mut non_sequence_dataset,
+        (0x0004, 0x1220),
+        "LO",
+        b"not a sequence",
+    );
+    write_dicom(&non_sequence_path, non_sequence_dataset);
+    assert_read_state(
+        document(non_sequence_path, "binary", "dicomdir-non-sequence", None),
+        "sequence_not_sequence",
+        None,
+        None,
+        0,
+        false,
+    );
+
+    let empty_sequence_path = temp.path().join("DICOMDIR-empty-sequence");
+    dicomdir(&empty_sequence_path, &[]);
+    assert_read_state(
+        document(
+            empty_sequence_path,
+            "binary",
+            "dicomdir-empty-sequence",
+            None,
+        ),
+        "sequence_empty",
+        Some(0),
+        Some(0),
+        0,
+        false,
+    );
+
+    let successful_path = temp.path().join("DICOMDIR-success");
+    dicomdir(
+        &successful_path,
+        &[(
+            "1.2.826.0.1.3680043.10.999.11",
+            "20260102",
+            "Studio DICOMDIR sintetico",
+        )],
+    );
+    assert_read_state(
+        document(successful_path.clone(), "binary", "dicomdir-success", None),
+        "sequence_read",
+        Some(1),
+        Some(1),
+        1,
+        false,
+    );
+
+    let (events, events_path) = Session::create_in_directory_with_level(
+        &temp.path().join("dicomdir-events"),
+        Component::Core,
+        Level::Events,
+    )
+    .expect("sessione Events sintetica");
+    let event_result = events.scoped(|| {
+        super::studies_from_dicomdir(
+            &config,
+            &document(successful_path, "binary", "dicomdir-events", None),
+        )
+    });
+    assert_eq!(event_result.len(), 1);
+    drop(events);
+    let events_log = fs::read_to_string(events_path).expect("log Events sintetico");
+    assert!(!events_log.contains("function_enter"));
+    assert!(!events_log.contains("directory_record_sequence_state"));
+    assert!(!events_log.contains("sequence_read"));
+}

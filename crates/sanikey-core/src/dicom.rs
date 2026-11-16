@@ -746,6 +746,10 @@ fn read_dicom_metadata(path: &Path) -> Option<DicomMetadata> {
 }
 
 fn studies_from_dicomdir(person: &PersonConfig, document: &DocumentRecord) -> Vec<DicomStudy> {
+    let mut directory_record_sequence_state = "not_read";
+    let mut directory_record_item_count = None;
+    let mut study_record_count = None;
+    let mut parser_error = None;
     trace_dicom_call!(
         "dicom::studies_from_dicomdir",
         [
@@ -758,16 +762,37 @@ fn studies_from_dicomdir(person: &PersonConfig, document: &DocumentRecord) -> Ve
             ),
         ],
         {
-            let Ok(object) = OpenFileOptions::new().open_file(&document.path) else {
+            let object = match OpenFileOptions::new().open_file(&document.path) {
+                Ok(object) => object,
+                Err(error) => {
+                    directory_record_sequence_state = "open_failed";
+                    parser_error = Some(error.to_string());
+                    return Vec::new();
+                }
+            };
+            let element = match object.element_opt(DIRECTORY_RECORD_SEQUENCE) {
+                Ok(Some(element)) => element,
+                Ok(None) => {
+                    directory_record_sequence_state = "sequence_missing";
+                    return Vec::new();
+                }
+                Err(error) => {
+                    directory_record_sequence_state = "sequence_lookup_failed";
+                    parser_error = Some(error.to_string());
+                    return Vec::new();
+                }
+            };
+            let Some(items) = element.value().items() else {
+                directory_record_sequence_state = "sequence_not_sequence";
                 return Vec::new();
             };
-            let Some(items) = object
-                .element(DIRECTORY_RECORD_SEQUENCE)
-                .ok()
-                .and_then(|element| element.value().items())
-            else {
+            directory_record_item_count = Some(items.len());
+            if items.is_empty() {
+                directory_record_sequence_state = "sequence_empty";
+                study_record_count = Some(0);
                 return Vec::new();
-            };
+            }
+            directory_record_sequence_state = "sequence_read";
             let mut by_uid = BTreeMap::new();
             for item in items {
                 if element_text(&item, DIRECTORY_RECORD_TYPE).as_deref() != Some("STUDY") {
@@ -782,6 +807,7 @@ fn studies_from_dicomdir(person: &PersonConfig, document: &DocumentRecord) -> Ve
                     by_uid.entry(uid).or_insert(metadata);
                 }
             }
+            study_record_count = Some(by_uid.len());
             by_uid
                 .into_iter()
                 .map(|(uid, metadata)| DicomStudy {
@@ -801,7 +827,15 @@ fn studies_from_dicomdir(person: &PersonConfig, document: &DocumentRecord) -> Ve
                 })
                 .collect()
         },
-        |result: &Vec<DicomStudy>| trace_studies(result)
+        |result: &Vec<DicomStudy>| {
+            TraceValue::Data(json!({
+                "studies": trace_studies(result).to_json(),
+                "directory_record_sequence_state": directory_record_sequence_state,
+                "directory_record_item_count": directory_record_item_count,
+                "distinct_study_count": study_record_count,
+                "parser_error": parser_error.as_deref().map(trace_sensitive_text).map(|value| value.to_json()),
+            }))
+        }
     )
 }
 
