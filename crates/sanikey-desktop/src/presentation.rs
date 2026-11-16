@@ -342,4 +342,49 @@ mod tests {
         }
         fs::remove_dir_all(directory).expect("rimozione directory sintetica");
     }
+
+    #[test]
+    fn capture_redacts_escaped_json_secrets_and_keeps_private_text_at_diagnostic_and_trace_levels()
+    {
+        use sanikey_core::logging::{Component, DisplayControl, Level, Session};
+        use std::fs;
+        use std::sync::atomic::{AtomicU64, Ordering};
+
+        static NEXT_TEMP_ID: AtomicU64 = AtomicU64::new(0);
+        let temporary_root =
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../../../.Temp");
+        fs::create_dir_all(&temporary_root).expect("directory temporanea di progetto");
+        let source = r#"Ricerca privata: {"api\u005fkey":"SECRET-JSON-ESCAPED-SYNTHETIC","ordinary":"PRIVATE-JSON-VALUE-SYNTHETIC"}"#;
+
+        for level in [Level::Diagnostic, Level::Trace] {
+            let directory = temporary_root.join(format!(
+                "sanikey-presentation-json-redaction-{}-{}-{level:?}",
+                std::process::id(),
+                NEXT_TEMP_ID.fetch_add(1, Ordering::Relaxed)
+            ));
+            fs::create_dir_all(&directory).expect("directory log sintetica");
+            let (session, path) =
+                Session::create_in_directory_with_level(&directory, Component::Desktop, level)
+                    .expect("sessione diagnostica sintetica");
+            let mut failed = false;
+            let displayed = session.scoped(|| {
+                PresentedText::new(source, Classification::Unclassified).capture(
+                    Some(&session),
+                    &mut failed,
+                    DisplayControl::new("synthetic_json_query"),
+                )
+            });
+            assert_eq!(displayed, source, "il testo GUI deve restare invariato");
+            assert!(!failed);
+            session
+                .finish(Component::Desktop)
+                .expect("chiusura log sintetico");
+
+            let contents = fs::read_to_string(path).expect("log diagnostico sintetico");
+            assert!(contents.contains("PRIVATE-JSON-VALUE-SYNTHETIC"));
+            assert!(!contents.contains("SECRET-JSON-ESCAPED-SYNTHETIC"));
+            assert!(contents.contains("secret_omitted"));
+            fs::remove_dir_all(directory).expect("rimozione directory log sintetica");
+        }
+    }
 }

@@ -113,7 +113,7 @@ pub fn redact_secret_assignments(value: &str) -> String {
     let mut ranges = Vec::new();
     let mut index = 0;
     while index < bytes.len() {
-        let (key_start, key_end, mut separator) = match bytes[index] {
+        let (key_start, key_end, mut separator, json_quoted_key) = match bytes[index] {
             b'"' | b'\'' => {
                 let quote = bytes[index];
                 let start = index + 1;
@@ -134,19 +134,33 @@ pub fn redact_secret_assignments(value: &str) -> String {
                 while matches!(bytes.get(delimiter), Some(b' ' | b'\t' | b'\r')) {
                     delimiter += 1;
                 }
+                let mut crossed_line_break = false;
+                if quote == b'"' {
+                    while bytes.get(delimiter) == Some(&b'\n') {
+                        crossed_line_break = true;
+                        delimiter += 1;
+                        while matches!(bytes.get(delimiter), Some(b' ' | b'\t' | b'\r')) {
+                            delimiter += 1;
+                        }
+                    }
+                }
                 if !matches!(bytes.get(delimiter), Some(b'=' | b':')) {
                     index += 1;
                     continue;
                 }
+                if crossed_line_break && bytes.get(delimiter) != Some(&b':') {
+                    index += 1;
+                    continue;
+                }
                 index = separator;
-                (start, end, separator)
+                (start, end, delimiter, quote == b'"')
             }
             byte if is_key_byte(byte) && (index == 0 || !is_key_byte(bytes[index - 1])) => {
                 let start = index;
                 while index < bytes.len() && is_key_byte(bytes[index]) {
                     index += 1;
                 }
-                (start, index, index)
+                (start, index, index, false)
             }
             _ => {
                 index += 1;
@@ -154,17 +168,24 @@ pub fn redact_secret_assignments(value: &str) -> String {
             }
         };
         let key = &value[key_start..key_end];
-        if !is_secret_key(key) {
+        let secret_key = is_secret_key(key)
+            || (json_quoted_key
+                && key.contains('\\')
+                && serde_json::from_str::<String>(&value[key_start - 1..key_end + 1])
+                    .is_ok_and(|decoded| is_secret_key(&decoded)));
+        if !secret_key {
             continue;
         }
         while matches!(bytes.get(separator), Some(b' ' | b'\t' | b'\r')) {
             separator += 1;
         }
-        if !matches!(bytes.get(separator), Some(b'=' | b':')) {
+        let Some(&separator_byte @ (b'=' | b':')) = bytes.get(separator) else {
             continue;
-        }
+        };
         let mut value_start = separator + 1;
-        while matches!(bytes.get(value_start), Some(b' ' | b'\t' | b'\r')) {
+        while matches!(bytes.get(value_start), Some(b' ' | b'\t' | b'\r'))
+            || (separator_byte == b':' && matches!(bytes.get(value_start), Some(b'\n')))
+        {
             value_start += 1;
         }
         if let Some(value_end) = secret_assignment_end(value, value_start) {
@@ -977,6 +998,24 @@ refresh_token = "secret-token-value"
         assert!(retained.contains("kept"));
         let missing = redact_secret_assignments("password =\nordinary = \"kept\"");
         assert!(missing.contains("ordinary = \"kept\""));
+    }
+
+    #[test]
+    fn text_redaction_decodes_json_unicode_escapes_in_secret_keys() {
+        let input = r#"{"api\u005fkey":"synthetic-api-secret","ordinary":"private-value","pass\u0077ord":"synthetic-password-secret","private_note":"private-note-value"}"#;
+
+        let redacted = redact_secret_assignments(input);
+
+        assert!(redacted.contains("secret_omitted"));
+        assert!(redacted.contains("\"ordinary\":\"private-value\""));
+        assert!(redacted.contains("\"private_note\":\"private-note-value\""));
+        assert!(!redacted.contains("synthetic-api-secret"));
+        assert!(!redacted.contains("synthetic-password-secret"));
+
+        let newline_separator = "\"api\\u005fkey\"\n  :\n  \"synthetic-newline-secret\"";
+        let redacted = redact_secret_assignments(newline_separator);
+        assert!(redacted.contains("secret_omitted"));
+        assert!(!redacted.contains("synthetic-newline-secret"));
     }
 
     #[test]
