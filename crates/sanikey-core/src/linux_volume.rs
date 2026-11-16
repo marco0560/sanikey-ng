@@ -6,10 +6,10 @@ use crate::logging::{
     trace_sensitive_text,
 };
 use crate::operation::{ErrorCode, OperationError};
-use rustix::fs::statvfs;
+use rustix::fs::{StatVfs, statvfs};
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Output};
 
 /// Metadati letti dal mount Linux che contiene il target.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -35,6 +35,7 @@ pub fn inspect_linux_volume(target: &Path) -> Result<LinuxVolumeInfo, OperationE
         "linux_volume::inspect_linux_volume",
         || vec![TraceField::new("target", TraceValue::path(target))],
     );
+    let mut statvfs_trace = None;
     let result = (|| {
         if !target.is_dir() {
             return Err(usb_error(
@@ -42,20 +43,21 @@ pub fn inspect_linux_volume(target: &Path) -> Result<LinuxVolumeInfo, OperationE
             ));
         }
 
-        let statistics = statvfs(target).map_err(|error| {
+        let statistics_result = statvfs(target);
+        if trace.is_some() {
+            statvfs_trace = Some(trace_statvfs_result(&statistics_result));
+        }
+        let statistics = statistics_result.map_err(|error| {
             usb_error(format!("lettura spazio del volume Linux fallita: {error}"))
         })?;
-        let block_size = if statistics.f_frsize == 0 {
-            statistics.f_bsize
-        } else {
-            statistics.f_frsize
-        };
-        let available_bytes = statistics
-            .f_bfree
-            .checked_mul(block_size)
-            .ok_or_else(|| usb_error("spazio disponibile Linux fuori intervallo"))?;
+        let available_bytes = calculate_available_bytes(&statistics)?;
 
-        let mount = find_mount_info(target);
+        let mount = find_mount_info(target, || {
+            Command::new("findmnt")
+                .args(["--json", "--output", "TARGET,FSTYPE,UUID", "--target"])
+                .arg(target)
+                .output()
+        });
         Ok(LinuxVolumeInfo {
             mount_target: mount
                 .as_ref()
@@ -67,16 +69,75 @@ pub fn inspect_linux_volume(target: &Path) -> Result<LinuxVolumeInfo, OperationE
         })
     })();
     if let Some(trace) = trace {
+        let statvfs_trace = statvfs_trace
+            .unwrap_or_else(|| json!({"outcome":"not_called","reason":"target_not_directory"}));
         let result_value = match &result {
             Ok(info) => json!({
                 "outcome": "succeeded",
+                "statvfs_result": statvfs_trace,
                 "mount_target": info.mount_target.as_ref().map(|path| TraceValue::path(path).to_json()),
                 "filesystem": info.filesystem,
                 "uuid": info.uuid,
                 "available_bytes": info.available_bytes,
             }),
             Err(error) => {
-                json!({"outcome": "failed", "code": error.code().as_str(), "message": trace_sensitive_text(error.message()).to_json()})
+                json!({"outcome": "failed", "code": error.code().as_str(), "message": trace_sensitive_text(error.message()).to_json(), "statvfs_result": statvfs_trace})
+            }
+        };
+        let _ = trace.finish(TraceValue::Data(result_value));
+    }
+    result
+}
+
+fn trace_statvfs_result(result: &rustix::io::Result<StatVfs>) -> serde_json::Value {
+    match result {
+        Ok(statistics) => json!({
+            "outcome": "succeeded",
+            "f_bsize": statistics.f_bsize,
+            "f_frsize": statistics.f_frsize,
+            "f_blocks": statistics.f_blocks,
+            "f_bfree": statistics.f_bfree,
+            "f_bavail": statistics.f_bavail,
+            "f_files": statistics.f_files,
+            "f_ffree": statistics.f_ffree,
+            "f_favail": statistics.f_favail,
+            "f_fsid": statistics.f_fsid,
+            "f_flag_bits": statistics.f_flag.bits(),
+            "f_namemax": statistics.f_namemax,
+        }),
+        Err(error) => json!({
+            "outcome": "failed",
+            "error": trace_sensitive_text(&error.to_string()).to_json(),
+        }),
+    }
+}
+
+fn calculate_available_bytes(statistics: &StatVfs) -> Result<u64, OperationError> {
+    let trace = trace_current(
+        Component::Core,
+        "linux_volume::calculate_available_bytes",
+        || {
+            vec![
+                TraceField::new("f_bfree", TraceValue::Data(json!(statistics.f_bfree))),
+                TraceField::new("f_frsize", TraceValue::Data(json!(statistics.f_frsize))),
+                TraceField::new("f_bsize", TraceValue::Data(json!(statistics.f_bsize))),
+            ]
+        },
+    );
+    let block_size = if statistics.f_frsize == 0 {
+        statistics.f_bsize
+    } else {
+        statistics.f_frsize
+    };
+    let result = statistics
+        .f_bfree
+        .checked_mul(block_size)
+        .ok_or_else(|| usb_error("spazio disponibile Linux fuori intervallo"));
+    if let Some(trace) = trace {
+        let result_value = match &result {
+            Ok(available_bytes) => json!({"outcome":"succeeded","available_bytes":available_bytes}),
+            Err(error) => {
+                json!({"outcome":"failed","code":error.code().as_str(),"message":trace_sensitive_text(error.message()).to_json()})
             }
         };
         let _ = trace.finish(TraceValue::Data(result_value));
@@ -240,29 +301,59 @@ fn is_likely_physical_target(target: &Path) -> bool {
     likely_physical
 }
 
-fn find_mount_info(target: &Path) -> Option<std::collections::BTreeMap<String, String>> {
+fn find_mount_info(
+    target: &Path,
+    run_findmnt: impl FnOnce() -> std::io::Result<Output>,
+) -> Option<std::collections::BTreeMap<String, String>> {
     let trace = trace_current(Component::Core, "linux_volume::find_mount_info", || {
         vec![
             TraceField::new("target", TraceValue::path(target)),
             TraceField::new(
-                "process_internals",
+                "command",
+                TraceValue::Data(json!([
+                    "findmnt",
+                    "--json",
+                    "--output",
+                    "TARGET,FSTYPE,UUID",
+                    "--target",
+                    TraceValue::path(target).to_json(),
+                ])),
+            ),
+            TraceField::new(
+                "external_internal_execution",
                 TraceValue::Omitted(TraceOmission::ExternalComponent),
             ),
         ]
     });
-    let output = Command::new("findmnt")
-        .args(["--json", "--output", "TARGET,FSTYPE,UUID", "--target"])
-        .arg(target)
-        .output();
-    let result = output.ok().and_then(|output| {
-        output
-            .status
-            .success()
-            .then(|| parse_findmnt_output(&output.stdout))
-            .flatten()
-    });
+    let output = run_findmnt();
+    let result = match &output {
+        Ok(output) if output.status.success() => parse_findmnt_output(&output.stdout),
+        Ok(_) | Err(_) => None,
+    };
     if let Some(trace) = trace {
-        let _ = trace.finish(trace_json_value(&json!(result)));
+        use std::os::unix::process::ExitStatusExt;
+
+        let process_result = match &output {
+            Ok(output) => json!({
+                "outcome": "process_exited",
+                "success": output.status.success(),
+                "code": output.status.code(),
+                "signal": output.status.signal(),
+                "stdout": trace_findmnt_payload(&output.stdout).to_json(),
+                "stderr": trace_findmnt_payload(&output.stderr).to_json(),
+                "external_internal_execution": TraceValue::Omitted(TraceOmission::ExternalComponent).to_json(),
+            }),
+            Err(error) => json!({
+                "outcome": "spawn_failed",
+                "error_kind": format!("{:?}", error.kind()),
+                "error": trace_sensitive_text(&error.to_string()).to_json(),
+                "external_internal_execution": TraceValue::Omitted(TraceOmission::ExternalComponent).to_json(),
+            }),
+        };
+        let _ = trace.finish(TraceValue::Data(json!({
+            "process_result": process_result,
+            "mount_info": result,
+        })));
     }
     result
 }
@@ -330,11 +421,68 @@ fn usb_error(message: impl Into<String>) -> OperationError {
 #[cfg(test)]
 mod tests {
     use super::{
-        LinuxVolumeInfo, expected_uuid, find_mount_info, inspect_linux_volume,
-        is_likely_physical_target, parse_findmnt_output, validate_volume_info,
+        LinuxVolumeInfo, calculate_available_bytes, expected_uuid, find_mount_info,
+        inspect_linux_volume, is_likely_physical_target, parse_findmnt_output,
+        trace_statvfs_result, validate_volume_info,
     };
     use crate::config::{AccountsConfig, PersonConfig, UsbConfig};
+    use crate::logging::{Component, Level, Session};
+    use rustix::fs::{StatVfs, StatVfsMountFlags};
+    use serde_json::{Value, json};
+    use std::fs;
+    use std::os::unix::process::ExitStatusExt;
     use std::path::PathBuf;
+    use std::process::{ExitStatus, Output};
+
+    fn process_output(code: i32, stdout: &[u8], stderr: &[u8]) -> Output {
+        Output {
+            status: ExitStatus::from_raw(code << 8),
+            stdout: stdout.to_vec(),
+            stderr: stderr.to_vec(),
+        }
+    }
+
+    fn statvfs_fixture(free_blocks: u64, fragment_size: u64, block_size: u64) -> StatVfs {
+        StatVfs {
+            f_bsize: block_size,
+            f_frsize: fragment_size,
+            f_blocks: 100,
+            f_bfree: free_blocks,
+            f_bavail: free_blocks.saturating_sub(1),
+            f_files: 50,
+            f_ffree: 25,
+            f_favail: 24,
+            f_fsid: 42,
+            f_flag: StatVfsMountFlags::RDONLY | StatVfsMountFlags::NOEXEC,
+            f_namemax: 255,
+        }
+    }
+
+    fn assert_correlated_spans(records: &[Value], function: &str, expected_count: usize) {
+        let entries: Vec<_> = records
+            .iter()
+            .filter(|record| record["type"] == "function_enter" && record["function"] == function)
+            .collect();
+        let exits: Vec<_> = records
+            .iter()
+            .filter(|record| record["type"] == "function_exit" && record["function"] == function)
+            .collect();
+        assert_eq!(entries.len(), expected_count, "ingressi {function}");
+        assert_eq!(exits.len(), expected_count, "uscite {function}");
+        for entry in entries {
+            let call_id = entry["call_id"].as_u64().expect("call_id numerico");
+            let matching: Vec<_> = exits
+                .iter()
+                .filter(|exit| exit["call_id"] == call_id)
+                .collect();
+            assert_eq!(matching.len(), 1, "uscita correlata {function}#{call_id}");
+            assert_eq!(matching[0]["outcome"], "returned");
+            assert!(
+                matching[0]["duration_ms"].is_u64(),
+                "durata assente {function}#{call_id}"
+            );
+        }
+    }
 
     fn config(global_uuid: Option<&str>, people: &[(&str, bool)]) -> AccountsConfig {
         AccountsConfig {
@@ -443,6 +591,75 @@ mod tests {
     }
 
     #[test]
+    fn synthetic_statvfs_fields_and_available_space_calculation_are_traced() {
+        let directory = std::env::temp_dir().join(format!(
+            "sanikey-linux-statvfs-trace-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let (session, log_path) =
+            Session::create_in_directory_with_level(&directory, Component::Core, Level::Trace)
+                .expect("sessione Trace sintetica");
+        let fragment_stats = statvfs_fixture(5, 1024, 4096);
+        let fallback_stats = statvfs_fixture(3, 0, 4096);
+        let fragment_result: rustix::io::Result<StatVfs> = Ok(fragment_stats);
+        let projected = trace_statvfs_result(&fragment_result);
+        assert_eq!(projected["f_bfree"], 5);
+        assert_eq!(projected["f_frsize"], 1024);
+        assert_eq!(projected["f_bsize"], 4096);
+        assert_eq!(projected["f_blocks"], 100);
+        assert_eq!(projected["f_bavail"], 4);
+        assert_eq!(projected["f_files"], 50);
+        assert_eq!(projected["f_ffree"], 25);
+        assert_eq!(projected["f_favail"], 24);
+        assert_eq!(projected["f_fsid"], 42);
+        assert_eq!(projected["f_namemax"], 255);
+        assert_eq!(
+            projected["f_flag_bits"],
+            (StatVfsMountFlags::RDONLY | StatVfsMountFlags::NOEXEC).bits()
+        );
+
+        let (available_frag, available_fallback, inspected) = session.scoped(|| {
+            (
+                calculate_available_bytes(fragment_result.as_ref().unwrap())
+                    .expect("fragmentsize sintetico"),
+                calculate_available_bytes(&fallback_stats).expect("fallback block size sintetico"),
+                inspect_linux_volume(&directory).expect("statvfs directory sintetica"),
+            )
+        });
+        drop(session);
+
+        assert_eq!(available_frag, 5 * 1024);
+        assert_eq!(available_fallback, 3 * 4096);
+        assert!(inspected.available_bytes > 0);
+        let contents = fs::read_to_string(&log_path).expect("log statvfs sintetico");
+        let records: Vec<Value> = contents
+            .lines()
+            .map(|line| serde_json::from_str(line).expect("record JSON"))
+            .collect();
+        assert_correlated_spans(&records, "linux_volume::calculate_available_bytes", 3);
+        assert!(contents.contains("\"name\":\"f_frsize\""));
+        assert!(contents.contains("\"value\":1024"));
+        assert!(contents.contains("\"available_bytes\":5120"));
+        assert!(contents.contains("\"value\":0"));
+        assert!(contents.contains("\"available_bytes\":12288"));
+        let inspect_exit = records
+            .iter()
+            .find(|record| {
+                record["type"] == "function_exit"
+                    && record["function"] == "linux_volume::inspect_linux_volume"
+            })
+            .expect("uscita inspect_linux_volume");
+        assert!(inspect_exit["result"]["value"]["statvfs_result"]["f_bfree"].is_number());
+        assert!(inspect_exit["result"]["value"]["statvfs_result"]["f_frsize"].is_number());
+        assert!(inspect_exit["result"]["value"]["statvfs_result"]["f_bsize"].is_number());
+        assert!(inspect_exit["result"]["value"]["statvfs_result"]["f_namemax"].is_number());
+        assert!(inspect_exit["result"]["value"]["statvfs_result"]["f_flag_bits"].is_number());
+        fs::remove_file(log_path).expect("rimozione log sintetico");
+        fs::remove_dir_all(directory).expect("rimozione directory sintetica");
+    }
+
+    #[test]
     fn validates_synthetic_volume_uuid_filesystem_and_space_constraints() {
         let mut configured = config(Some("FIXTURE-UUID"), &[]);
         configured.usb.require_exfat = true;
@@ -501,9 +718,6 @@ mod tests {
     #[test]
     // Fixture sintetiche e directory locale: non è una prova con USB fisica.
     fn synthetic_logging_separates_trace_details_from_events() {
-        use crate::logging::{Component, Level, Session};
-        use std::fs;
-
         for (suffix, level) in [("events", Level::Events), ("trace", Level::Trace)] {
             let directory = std::env::temp_dir().join(format!(
                 "sanikey-linux-volume-{suffix}-{}-{:?}",
@@ -520,7 +734,12 @@ mod tests {
                 assert_eq!(expected_uuid(&configured, true), Some("FIXTURE-UUID"));
                 assert!(is_likely_physical_target(&target));
                 assert!(parse_findmnt_output(payload).is_some());
-                let _ = find_mount_info(std::env::temp_dir().as_path());
+                assert!(
+                    find_mount_info(std::env::temp_dir().as_path(), || {
+                        Ok(process_output(0, payload, b"synthetic findmnt warning"))
+                    })
+                    .is_some()
+                );
                 validate_volume_info(
                     &configured,
                     &target,
@@ -553,15 +772,92 @@ mod tests {
                 assert!(contents.contains("Persona sintetica"));
                 assert!(contents.contains("FIXTURE-UUID"));
                 assert!(contents.contains("private-mount-label"));
+                assert!(contents.contains("synthetic findmnt warning"));
                 assert!(contents.contains("secret_omitted"));
                 assert!(!contents.contains("synthetic-findmnt-secret"));
             } else {
                 assert!(!contents.contains("function_enter"));
                 assert!(!contents.contains("FIXTURE-UUID"));
                 assert!(!contents.contains("Persona sintetica"));
+                assert!(!contents.contains("synthetic findmnt warning"));
+                assert!(!contents.contains("synthetic-findmnt-secret"));
             }
             fs::remove_file(path).expect("rimozione log sintetico");
             fs::remove_dir_all(directory).expect("rimozione directory sintetica");
         }
+    }
+
+    #[test]
+    fn findmnt_trace_records_exit_streams_and_spawn_errors() {
+        let directory = std::env::temp_dir().join(format!(
+            "sanikey-linux-findmnt-boundary-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let (session, log_path) =
+            Session::create_in_directory_with_level(&directory, Component::Core, Level::Trace)
+                .expect("sessione Trace sintetica");
+        let target = PathBuf::from("/media/synthetic");
+        let nonzero_stdout = br#"{"filesystems":[]}"#;
+        let nonzero_stderr = b"synthetic findmnt exit failure";
+
+        let failed_exit = session.scoped(|| {
+            find_mount_info(&target, || {
+                Ok(process_output(7, nonzero_stdout, nonzero_stderr))
+            })
+        });
+        let failed_spawn = session.scoped(|| {
+            find_mount_info(&target, || {
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    "synthetic findmnt executable missing",
+                ))
+            })
+        });
+        drop(session);
+
+        assert!(failed_exit.is_none());
+        assert!(failed_spawn.is_none());
+        let contents = fs::read_to_string(&log_path).expect("log findmnt sintetico");
+        assert!(contents.contains("synthetic findmnt exit failure"));
+        assert!(contents.contains("synthetic findmnt executable missing"));
+        assert!(contents.contains("\"code\":7"));
+        assert!(contents.contains("\"outcome\":\"spawn_failed\""));
+        assert!(contents.contains("\"error_kind\":\"NotFound\""));
+        assert!(contents.contains("external_internal_execution"));
+        assert!(contents.contains("external_component"));
+        let records: Vec<Value> = contents
+            .lines()
+            .map(|line| serde_json::from_str(line).expect("record JSON"))
+            .collect();
+        assert_correlated_spans(&records, "linux_volume::find_mount_info", 2);
+        let expected_command = json!([
+            "findmnt",
+            "--json",
+            "--output",
+            "TARGET,FSTYPE,UUID",
+            "--target",
+            {
+                "kind": "data",
+                "value": {
+                    "encoding": "utf8",
+                    "value": target.to_str().expect("target sintetico UTF-8"),
+                }
+            }
+        ]);
+        for entry in records.iter().filter(|record| {
+            record["type"] == "function_enter"
+                && record["function"] == "linux_volume::find_mount_info"
+        }) {
+            let command = entry["arguments"]
+                .as_array()
+                .expect("argomenti")
+                .iter()
+                .find(|argument| argument["name"] == "command")
+                .expect("argv findmnt");
+            assert_eq!(command["content"]["value"], expected_command);
+        }
+        fs::remove_file(log_path).expect("rimozione log sintetico");
+        fs::remove_dir_all(directory).expect("rimozione directory sintetica");
     }
 }

@@ -352,6 +352,10 @@ pub enum Activity {
     GuiConsentChanged,
     /// GUI logging deactivation requested.
     GuiLoggingStop,
+    /// GUI operator chose to keep waiting for a worker during shutdown.
+    GuiShutdownKeepWaiting,
+    /// GUI operator chose to close the window while a worker remains active.
+    GuiShutdownForceClose,
 }
 
 impl Activity {
@@ -384,6 +388,8 @@ impl Activity {
             Self::GuiLogLevelSelected => "gui_log_level_selected",
             Self::GuiConsentChanged => "gui_consent_changed",
             Self::GuiLoggingStop => "gui_logging_stop",
+            Self::GuiShutdownKeepWaiting => "gui_shutdown_keep_waiting",
+            Self::GuiShutdownForceClose => "gui_shutdown_force_close",
         }
     }
 }

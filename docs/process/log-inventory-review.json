@@ -1144,12 +1144,12 @@
       "evidence_sha256": "9ead94eaf97e98dd3cb1b461c94c806a6d234631d6a49dc3e8872dc27f75f59a"
     },
     {
-      "id": "crates/sanikey-desktop/src/main.rs#a63848adab258c16fe3eb1037ab52349f0fbdad6011af6493b8e48a33aa091c0:86",
-      "source_sha256": "a63848adab258c16fe3eb1037ab52349f0fbdad6011af6493b8e48a33aa091c0",
+      "id": "crates/sanikey-desktop/src/main.rs#38ca5989a9ab708a944d357b713960b0055613eb82a82d1d51ad4d6fa825efb1:86",
+      "source_sha256": "38ca5989a9ab708a944d357b713960b0055613eb82a82d1d51ad4d6fa825efb1",
       "status": "covered",
       "evidence": "tests::person_selection_trace_records_inputs_output_duration_and_redacts_secret_paths verifica input e output rappresentabili, call_id, durata e redazione del percorso segreto.",
       "evidence_file": "crates/sanikey-desktop/src/main.rs",
-      "evidence_sha256": "a63848adab258c16fe3eb1037ab52349f0fbdad6011af6493b8e48a33aa091c0"
+      "evidence_sha256": "38ca5989a9ab708a944d357b713960b0055613eb82a82d1d51ad4d6fa825efb1"
     },
     {
       "id": "crates/sanikey-core/src/metadata/parse/timeline.rs#4b133f26531d918c12f1d25cbb99b2aebac272825ab9cf1e71f5a44a5f908574:0",
@@ -1174,6 +1174,22 @@
       "evidence": "metadata::tests::trace_timeline::timeline_parsers_trace_complete_inputs_results_ids_durations_and_secret_omissions confronta input e risultati dei casi sintetici, call_id, durata e omissione del segreto.",
       "evidence_file": "crates/sanikey-core/src/metadata/tests/trace_timeline.rs",
       "evidence_sha256": "41374629060d0aebc067ec6d47da686da7d82b1f868e78463cf276ae17c8115c"
+    },
+    {
+      "id": "crates/sanikey-core/src/metadata/parse/observations.rs#c5897dad093453cf2bddce367266f2e34d1039376a90882cd0767fbea5c6219c:0",
+      "source_sha256": "c5897dad093453cf2bddce367266f2e34d1039376a90882cd0767fbea5c6219c",
+      "status": "covered",
+      "evidence": "metadata::tests::trace_observations::observation_parsers_trace_complete_inputs_results_call_ids_and_durations confronta argomenti e risultati sintetici completi, call_id e durata.",
+      "evidence_file": "crates/sanikey-core/src/metadata/tests/trace_observations.rs",
+      "evidence_sha256": "d30ccaf7e57a4a80886a8b38db0c113db480d9a9488c63cddfb031b2e00b82a2"
+    },
+    {
+      "id": "crates/sanikey-core/src/metadata/parse/observations.rs#c5897dad093453cf2bddce367266f2e34d1039376a90882cd0767fbea5c6219c:2",
+      "source_sha256": "c5897dad093453cf2bddce367266f2e34d1039376a90882cd0767fbea5c6219c",
+      "status": "covered",
+      "evidence": "metadata::tests::trace_observations::observation_parsers_trace_complete_inputs_results_call_ids_and_durations confronta argomenti e risultati sintetici completi, call_id e durata.",
+      "evidence_file": "crates/sanikey-core/src/metadata/tests/trace_observations.rs",
+      "evidence_sha256": "d30ccaf7e57a4a80886a8b38db0c113db480d9a9488c63cddfb031b2e00b82a2"
     }
   ]
 }

@@ -3305,6 +3305,12 @@ impl DesktopApp {
                         ))
                         .clicked()
                     {
+                        record_ui_action(
+                            self.log_session.as_ref(),
+                            &mut self.log_failure,
+                            Activity::GuiShutdownForceClose,
+                            DisplayControl::new("shutdown_force_close"),
+                        );
                         let context = ui.ctx().clone();
                         self.force_incomplete_shutdown(&context);
                     }
@@ -3317,6 +3323,12 @@ impl DesktopApp {
                         ))
                         .clicked()
                     {
+                        record_ui_action(
+                            self.log_session.as_ref(),
+                            &mut self.log_failure,
+                            Activity::GuiShutdownKeepWaiting,
+                            DisplayControl::new("shutdown_keep_waiting"),
+                        );
                         self.shutdown_timed_out = false;
                         self.shutdown_requested_at = Some(std::time::Instant::now());
                     }
@@ -3859,6 +3871,114 @@ mod tests {
             !visible_text
                 .iter()
                 .any(|text| text.contains("marcata come incompleta"))
+        );
+    }
+
+    #[test]
+    fn shutdown_choices_are_recorded_when_the_operator_clicks_them() {
+        use sanikey_core::logging::{Component, Level, Session};
+
+        let directory = TestDirectory::new();
+        let (session, log_path) = Session::create_in_directory_with_level(
+            &directory.0,
+            Component::Desktop,
+            Level::Events,
+        )
+        .expect("sessione sintetica");
+        session
+            .shutdown_pending(Component::Desktop)
+            .expect("marcatore di attesa sintetico");
+
+        let (release_sender, release_receiver) = std::sync::mpsc::channel();
+        let worker = thread::spawn(move || {
+            let _ = release_receiver.recv();
+        });
+        let mut app = DesktopApp {
+            log_session: Some(session),
+            worker_handle: Some(worker),
+            shutdown_requested_at: Some(
+                std::time::Instant::now() - std::time::Duration::from_secs(11),
+            ),
+            shutdown_timed_out: true,
+            ..DesktopApp::default()
+        };
+        let context = egui::Context::default();
+        let mut frame = eframe::Frame::_new_kittest();
+        {
+            let mut click_button = |app: &mut DesktopApp, label: &str| {
+                let initial = run_app_frame(app, &context, &mut frame, Vec::new());
+                let position = initial
+                    .shapes
+                    .iter()
+                    .find_map(|clipped| match &clipped.shape {
+                        egui::epaint::Shape::Text(text) if text.galley.text() == label => {
+                            Some(text.visual_bounding_rect().center())
+                        }
+                        _ => None,
+                    })
+                    .unwrap_or_else(|| panic!("pulsante sintetico non renderizzato: {label}"));
+                initial.drop_without_applying_deltas();
+
+                for event in [
+                    egui::Event::PointerMoved(position),
+                    egui::Event::PointerButton {
+                        pos: position,
+                        button: egui::PointerButton::Primary,
+                        pressed: true,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                    egui::Event::PointerButton {
+                        pos: position,
+                        button: egui::PointerButton::Primary,
+                        pressed: false,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ] {
+                    run_app_frame(app, &context, &mut frame, vec![event])
+                        .drop_without_applying_deltas();
+                }
+            };
+
+            click_button(&mut app, "Continua ad attendere");
+            assert!(!app.shutdown_timed_out);
+            assert!(app.shutdown_requested_at.is_some());
+
+            app.shutdown_timed_out = true;
+            click_button(&mut app, "Chiudi comunque");
+            assert!(app.shutdown_incomplete);
+        }
+
+        release_sender.send(()).expect("rilascio worker sintetico");
+        app.worker_handle
+            .take()
+            .expect("worker sintetico")
+            .join()
+            .expect("worker sintetico terminato");
+        drop(app);
+
+        let records = fs::read_to_string(log_path)
+            .expect("log sintetico")
+            .lines()
+            .map(|line| serde_json::from_str::<serde_json::Value>(line).expect("record JSON"))
+            .collect::<Vec<_>>();
+        for (activity, target) in [
+            ("gui_shutdown_keep_waiting", "shutdown_keep_waiting"),
+            ("gui_shutdown_force_close", "shutdown_force_close"),
+        ] {
+            let action = records
+                .iter()
+                .filter(|record| {
+                    record["activity"] == activity && record["target"]["name"] == target
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(action.len(), 2, "ciclo action {activity}");
+            assert_eq!(action[0]["event"], "started");
+            assert_eq!(action[1]["event"], "succeeded");
+        }
+        assert!(
+            records
+                .iter()
+                .any(|record| record["event"] == "shutdown_incomplete")
         );
     }
 
