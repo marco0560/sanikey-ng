@@ -905,12 +905,24 @@ impl DesktopApp {
         trace_desktop_call!("desktop::DesktopApp::choose_usb_target", fields [
             "file_dialog" => trace_egui_boundary(),
         ], || {
+        self.choose_usb_target_with_picker(|| rfd::FileDialog::new().pick_folder());
+        })
+    }
+
+    #[cfg(target_os = "linux")]
+    fn choose_usb_target_with_picker(&mut self, picker: impl FnOnce() -> Option<PathBuf>) {
+        record_ui_action(
+            self.log_session.as_ref(),
+            &mut self.log_failure,
+            Activity::GuiUsbTargetSelectionRequested,
+            DisplayControl::new("choose_usb"),
+        );
         record_native_dialog_omission(
             self.log_session.as_ref(),
             &mut self.log_failure,
             NativeDialog::UsbTargetFolder,
         );
-        let Some(target) = rfd::FileDialog::new().pick_folder() else {
+        let Some(target) = picker() else {
             return;
         };
         let worker_target = target.clone();
@@ -930,7 +942,6 @@ impl DesktopApp {
         self.usb_volume = None;
         self.confirm_usb_target = false;
         self.usb_copy = None;
-        })
     }
 
     #[cfg(target_os = "linux")]
@@ -4264,6 +4275,10 @@ mod tests {
                 Activity::GuiPreflightRepeatRequested,
                 "gui_preflight_repeat_requested",
             ),
+            (
+                Activity::GuiUsbTargetSelectionRequested,
+                "gui_usb_target_selection_requested",
+            ),
             (Activity::GuiUsbConfirmation, "gui_usb_confirmation"),
             (Activity::GuiAifaCandidate, "gui_aifa_candidate"),
             (
@@ -4439,6 +4454,58 @@ mod tests {
         assert!(!log.contains("documento sintetico"));
         assert!(!log.contains("patient-a"));
         assert!(!log.contains("Persona A"));
+        assert!(!log.contains(&directory.0.to_string_lossy().to_string()));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn usb_target_picker_cancel_records_gui_action_without_operation_or_private_data() {
+        use sanikey_core::logging::{Component, Level, Session};
+
+        let directory = TestDirectory::new();
+        let (session, path) = Session::create_in_directory_with_level(
+            &directory.0,
+            Component::Desktop,
+            Level::Events,
+        )
+        .expect("sessione sintetica");
+        let mut app = DesktopApp {
+            log_session: Some(session.clone()),
+            ..DesktopApp::default()
+        };
+        let mut picker_called = false;
+        app.choose_usb_target_with_picker(|| {
+            picker_called = true;
+            None
+        });
+        assert!(picker_called, "il picker sintetico deve essere invocato");
+        assert!(app.receiver.is_none(), "annullare non avvia un'operazione");
+        assert!(app.usb_target.is_none());
+        session.finish(Component::Desktop).expect("fine sessione");
+        drop(app);
+
+        let log = fs::read_to_string(path).expect("log sintetico");
+        let records = log
+            .lines()
+            .map(|line| serde_json::from_str::<serde_json::Value>(line).expect("record JSON"))
+            .collect::<Vec<_>>();
+        let selection_action = records
+            .iter()
+            .filter(|record| {
+                record["activity"] == "gui_usb_target_selection_requested"
+                    && record["target"]["name"] == "choose_usb"
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(selection_action.len(), 2);
+        assert_eq!(selection_action[0]["event"], "started");
+        assert_eq!(selection_action[1]["event"], "succeeded");
+        assert!(
+            records.iter().all(|record| {
+                record["activity"] != "usb" || !record["operation_id"].is_number()
+            }),
+            "un picker annullato non deve avviare l'operazione USB"
+        );
+        assert!(!log.contains("dato privato sintetico"));
         assert!(!log.contains(&directory.0.to_string_lossy().to_string()));
     }
 

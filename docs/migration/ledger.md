@@ -146,9 +146,9 @@ sintetiche Linux degli adattatori non qualificano esecuzioni native Windows o
 macOS. La [misura sintetica](verification/2026-11-14-log-benchmark.md) riporta
 dimensioni e tempi del logger, senza stimare le prestazioni delle build reali.
 Il 2026-11-16 `cargo xtask check`, con directory temporanea del workspace, ha superato Clippy, test, doctest,
-build e controlli di pubblicabilità su Linux: 351 test core passati e 2
-ignorati, 64 desktop e 20 CLI passati, oltre ai test degli adattatori. Codira
-ha indicizzato 251 file supportati senza errori e l'audit Rustdoc, ripetuto
+build e controlli di pubblicabilità su Linux: 352 test core passati e 2
+ignorati, 65 desktop e 20 CLI passati, oltre ai test degli adattatori. Codira
+ha indicizzato 252 file supportati senza errori e l'audit Rustdoc, ripetuto
 dopo la documentazione dei simboli rilevati, non ha prodotto ulteriori rilievi;
 12 asset senza analyzer restano fuori dalla copertura. L'implementazione e le
 modifiche preesistenti sono nel commit `ed96e00`; `e86b8dc` aggiunge la
@@ -157,8 +157,8 @@ e `c892a05` protegge anche le sequenze non UTF-8 con segreti riconoscibili.
 Il gate completo è stato ripetuto dopo questi interventi. Restano da dimostrare
 la copertura funzione per funzione e le qualifiche native separate. Il registro
 di revisione associa le prove agli hash del sorgente e del file di evidenza:
-nello snapshot corrente 148 voci sono segnate coperte, sei sono eccezioni
-motivate e 3.113 elementi,
+nello snapshot corrente 149 voci sono segnate coperte, sei sono eccezioni
+motivate e 3.126 elementi,
 incluse macro e closure, restano da revisionare. I picker nativi ora registrano in Diagnostica e Traccia
 un'omissione esplicita del testo di sistema non osservabile.
 Le operazioni di produzione proiettano in Traccia il risultato rappresentabile
@@ -176,6 +176,9 @@ di integrazione TXT è stato eseguito separatamente dal gate standard.
 Il click per ripetere il preflight è registrato come azione; Trace conserva
 lo stato di uscita degli estrattori di archivi e dichiara le omissioni. Il test
 di integrazione della configurazione è stato eseguito separatamente.
+La selezione del volume USB è registrata anche quando il picker viene annullato;
+Trace conserva gli esiti dei tentativi di caricamento di PDFium. La prova del
+loader usa sostituti sintetici e non qualifica la libreria reale.
 
 Decisione G2 del 2026-11-10: applicare `--repo-root` al preflight privacy
 dei comandi CLI `build-patient` e `build-all`, come descritto nella

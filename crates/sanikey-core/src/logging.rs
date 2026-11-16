@@ -338,6 +338,8 @@ pub enum Activity {
     GuiReviewEdit,
     /// GUI operator requested that preflight be repeated.
     GuiPreflightRepeatRequested,
+    /// GUI operator requested to choose the Linux USB target folder.
+    GuiUsbTargetSelectionRequested,
     /// GUI USB confirmation changed.
     GuiUsbConfirmation,
     /// GUI AIFA candidate selection changed.
@@ -385,6 +387,7 @@ impl Activity {
             Self::GuiPersonSelection => "gui_person_selection",
             Self::GuiReviewEdit => "gui_review_edit",
             Self::GuiPreflightRepeatRequested => "gui_preflight_repeat_requested",
+            Self::GuiUsbTargetSelectionRequested => "gui_usb_target_selection_requested",
             Self::GuiUsbConfirmation => "gui_usb_confirmation",
             Self::GuiAifaCandidate => "gui_aifa_candidate",
             Self::GuiProfileDialogOpened => "gui_profile_dialog_opened",

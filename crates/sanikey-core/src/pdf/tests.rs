@@ -1,7 +1,8 @@
 //! Fixture sintetiche per estrazione PDF digitale e OCR.
 
 use super::{
-    ExtractedText, PdfExtractionOptions, TextPageSpan, bind_pdfium, extract_pdf_text,
+    ExtractedText, PdfExtractionOptions, PdfiumBindingError, PdfiumBindingResult,
+    PdfiumSystemAttempt, TextPageSpan, bind_pdfium, bind_pdfium_candidates, extract_pdf_text,
     extract_pdf_text_with_options, find_tesseract, pdf_page_count, run_tesseract,
     test_support::{synthetic_pdf, synthetic_scanned_pdf, synthetic_scanned_pdf_with_digital_text},
 };
@@ -280,6 +281,141 @@ fn tesseract_launch_failure_is_reported_without_exposing_stderr() {
         result
             .unwrap_err()
             .contains("avvio di Tesseract non riuscito")
+    );
+}
+
+#[test]
+fn pdfium_binding_trace_records_failed_candidates_fallback_and_initialized_state() {
+    let candidates = [
+        PathBuf::from("synthetic-invalid-pdfium.so"),
+        PathBuf::from("synthetic-good-pdfium.so"),
+    ];
+    let mut candidate_number = 0;
+    let report = bind_pdfium_candidates(
+        &candidates,
+        |_| {
+            candidate_number += 1;
+            if candidate_number == 1 {
+                Err(PdfiumBindingError::Failed(
+                    "synthetic loader failure".to_owned(),
+                ))
+            } else {
+                Ok("candidate binding")
+            }
+        },
+        || panic!("il fallback di sistema non deve essere tentato"),
+    );
+    assert!(matches!(
+        &report.result,
+        PdfiumBindingResult::Bound(value) if *value == "candidate binding"
+    ));
+    assert_eq!(report.candidates.len(), 2);
+    assert_eq!(report.candidates[0].outcome, "failed");
+    assert_eq!(
+        report.candidates[0].error.as_deref(),
+        Some("synthetic loader failure")
+    );
+    assert_eq!(report.candidates[1].outcome, "bound");
+    assert!(matches!(report.system, PdfiumSystemAttempt::NotAttempted));
+    assert!(
+        report.candidates[0]
+            .to_json()
+            .to_string()
+            .contains("synthetic loader failure")
+    );
+
+    let failed_candidate = [PathBuf::from("synthetic-invalid-pdfium.so")];
+    let fallback_report = bind_pdfium_candidates(
+        &failed_candidate,
+        |_| {
+            Err(PdfiumBindingError::Failed(
+                "synthetic candidate error".to_owned(),
+            ))
+        },
+        || Ok("system binding"),
+    );
+    assert!(matches!(
+        &fallback_report.result,
+        PdfiumBindingResult::Bound(value) if *value == "system binding"
+    ));
+    assert!(matches!(fallback_report.system, PdfiumSystemAttempt::Bound));
+    assert_eq!(
+        fallback_report.system.to_json(),
+        json!({"outcome": "bound"})
+    );
+    assert_eq!(
+        fallback_report.candidates[0].error.as_deref(),
+        Some("synthetic candidate error")
+    );
+
+    let initialized_report = bind_pdfium_candidates::<String>(
+        &failed_candidate,
+        |_| Err(PdfiumBindingError::AlreadyInitialized),
+        || panic!("non tentare il fallback dopo binding già inizializzato"),
+    );
+    assert!(matches!(
+        initialized_report.result,
+        PdfiumBindingResult::AlreadyInitialized
+    ));
+    assert_eq!(
+        initialized_report.candidates[0].outcome,
+        "already_initialized"
+    );
+    assert!(matches!(
+        initialized_report.system,
+        PdfiumSystemAttempt::NotAttempted
+    ));
+    assert_eq!(
+        initialized_report.candidates[0].to_json()["outcome"],
+        "already_initialized"
+    );
+
+    let system_initialized_report = bind_pdfium_candidates::<String>(
+        &failed_candidate,
+        |_| {
+            Err(PdfiumBindingError::Failed(
+                "synthetic candidate error".to_owned(),
+            ))
+        },
+        || Err(PdfiumBindingError::AlreadyInitialized),
+    );
+    assert!(matches!(
+        system_initialized_report.result,
+        PdfiumBindingResult::AlreadyInitialized
+    ));
+    assert!(matches!(
+        system_initialized_report.system,
+        PdfiumSystemAttempt::AlreadyInitialized
+    ));
+    assert_eq!(
+        system_initialized_report.system.to_json(),
+        json!({"outcome": "already_initialized"})
+    );
+
+    let system_failure_report = bind_pdfium_candidates::<String>(
+        &failed_candidate,
+        |_| {
+            Err(PdfiumBindingError::Failed(
+                "synthetic candidate error".to_owned(),
+            ))
+        },
+        || {
+            Err(PdfiumBindingError::Failed(
+                "synthetic system error".to_owned(),
+            ))
+        },
+    );
+    assert!(matches!(
+        &system_failure_report.result,
+        PdfiumBindingResult::Failed(error) if error == "synthetic system error"
+    ));
+    assert_eq!(system_failure_report.system.to_json()["outcome"], "failed");
+    assert!(
+        system_failure_report
+            .system
+            .to_json()
+            .to_string()
+            .contains("synthetic system error")
     );
 }
 

@@ -402,7 +402,6 @@ fn empty_extraction(document_id: &str) -> ExtractedText {
 fn bind_pdfium() -> Result<Pdfium, String> {
     let explicit_library = std::env::var_os("SANIKEY_PDFIUM_LIBRARY");
     let mut candidates_for_trace = Vec::new();
-    let mut system_binding_attempted = false;
     let trace = trace_current(Component::Core, "pdf::bind_pdfium", || {
         vec![TraceField::new(
             "requested_library_path",
@@ -412,55 +411,171 @@ fn bind_pdfium() -> Result<Pdfium, String> {
                 .unwrap_or_else(|| TraceValue::data(Value::Null)),
         )]
     });
-    let result = (|| {
-        let library_name = Pdfium::pdfium_platform_library_name_at_path("");
-        let mut candidates = Vec::new();
-        if let Some(explicit) = explicit_library {
-            let path = PathBuf::from(explicit);
-            candidates_for_trace.push(path.clone());
-            candidates.push(path);
-        }
-        if let Ok(executable) = std::env::current_exe()
-            && let Some(directory) = executable.parent()
-        {
-            let path = directory.join(&library_name);
-            candidates_for_trace.push(path.clone());
-            candidates.push(path);
-        }
-        for candidate in candidates {
-            match Pdfium::bind_to_library(&candidate) {
-                Ok(bindings) => return Ok(Pdfium::new(bindings)),
-                Err(
-                    pdfium_render::prelude::PdfiumError::PdfiumLibraryBindingsAlreadyInitialized,
-                ) => {
-                    return Ok(Pdfium::default());
-                }
-                Err(_) => {}
-            }
-        }
-        system_binding_attempted = true;
-        match Pdfium::bind_to_system_library() {
-            Ok(bindings) => Ok(Pdfium::new(bindings)),
-            Err(pdfium_render::prelude::PdfiumError::PdfiumLibraryBindingsAlreadyInitialized) => {
-                Ok(Pdfium::default())
-            }
-            Err(error) => Err(format!(
-                "libreria PDFium non disponibile; collocarla accanto all'eseguibile o impostare SANIKEY_PDFIUM_LIBRARY: {error}"
-            )),
-        }
-    })();
+    let library_name = Pdfium::pdfium_platform_library_name_at_path("");
+    let mut candidates = Vec::new();
+    if let Some(explicit) = explicit_library {
+        let path = PathBuf::from(explicit);
+        candidates_for_trace.push(path.clone());
+        candidates.push(path);
+    }
+    if let Ok(executable) = std::env::current_exe()
+        && let Some(directory) = executable.parent()
+    {
+        let path = directory.join(&library_name);
+        candidates_for_trace.push(path.clone());
+        candidates.push(path);
+    }
+    let report = bind_pdfium_candidates(
+        &candidates,
+        |candidate| Pdfium::bind_to_library(candidate).map_err(pdfium_binding_error),
+        || Pdfium::bind_to_system_library().map_err(pdfium_binding_error),
+    );
+    let result = match report.result {
+        PdfiumBindingResult::Bound(bindings) => Ok(Pdfium::new(bindings)),
+        PdfiumBindingResult::AlreadyInitialized => Ok(Pdfium::default()),
+        PdfiumBindingResult::Failed(error) => Err(format!(
+            "libreria PDFium non disponibile; collocarla accanto all'eseguibile o impostare SANIKEY_PDFIUM_LIBRARY: {error}"
+        )),
+    };
     if let Some(trace) = trace {
         let _ = trace.finish(TraceValue::Data(json!({
             "return": match &result { Ok(_) => json!("bound"), Err(error) => trace_sensitive_text(error).to_json() },
             "output": {
                 "candidate_paths": candidates_for_trace.iter().map(|path| TraceValue::path(path).to_json()).collect::<Vec<_>>(),
+                "candidate_attempts": report.candidates.iter().map(PdfiumCandidateAttempt::to_json).collect::<Vec<_>>(),
                 "binding_handle": TraceValue::Omitted(TraceOmission::ExternalComponent).to_json(),
-                "system_binding_attempted": system_binding_attempted,
-                "system_library_resolution": TraceValue::Omitted(TraceOmission::ExternalComponent).to_json(),
+                "system_binding_attempted": !matches!(&report.system, PdfiumSystemAttempt::NotAttempted),
+                "system_library_resolution": report.system.to_json(),
             },
         })));
     }
     result
+}
+
+enum PdfiumBindingError {
+    AlreadyInitialized,
+    Failed(String),
+}
+
+enum PdfiumBindingResult<T> {
+    Bound(T),
+    AlreadyInitialized,
+    Failed(String),
+}
+
+struct PdfiumCandidateAttempt {
+    path: PathBuf,
+    outcome: &'static str,
+    error: Option<String>,
+}
+
+/// Rappresenta un tentativo di binding a una libreria PDFium candidata.
+impl PdfiumCandidateAttempt {
+    fn to_json(&self) -> Value {
+        json!({
+            "path": TraceValue::path(&self.path).to_json(),
+            "outcome": self.outcome,
+            "error": self.error.as_deref().map(|error| trace_sensitive_text(error).to_json()),
+        })
+    }
+}
+
+enum PdfiumSystemAttempt {
+    NotAttempted,
+    Bound,
+    AlreadyInitialized,
+    Failed(String),
+}
+
+/// Rappresenta l'esito del fallback alla libreria PDFium di sistema.
+impl PdfiumSystemAttempt {
+    fn to_json(&self) -> Value {
+        match self {
+            Self::NotAttempted => json!({"outcome": "not_attempted"}),
+            Self::Bound => json!({"outcome": "bound"}),
+            Self::AlreadyInitialized => json!({"outcome": "already_initialized"}),
+            Self::Failed(error) => json!({
+                "outcome": "failed",
+                "error": trace_sensitive_text(error).to_json(),
+            }),
+        }
+    }
+}
+
+struct PdfiumBindingReport<T> {
+    result: PdfiumBindingResult<T>,
+    candidates: Vec<PdfiumCandidateAttempt>,
+    system: PdfiumSystemAttempt,
+}
+
+fn bind_pdfium_candidates<T>(
+    candidates: &[PathBuf],
+    mut bind_candidate: impl FnMut(&Path) -> Result<T, PdfiumBindingError>,
+    bind_system: impl FnOnce() -> Result<T, PdfiumBindingError>,
+) -> PdfiumBindingReport<T> {
+    let mut attempts = Vec::with_capacity(candidates.len());
+    for candidate in candidates {
+        match bind_candidate(candidate) {
+            Ok(bindings) => {
+                attempts.push(PdfiumCandidateAttempt {
+                    path: candidate.clone(),
+                    outcome: "bound",
+                    error: None,
+                });
+                return PdfiumBindingReport {
+                    result: PdfiumBindingResult::Bound(bindings),
+                    candidates: attempts,
+                    system: PdfiumSystemAttempt::NotAttempted,
+                };
+            }
+            Err(PdfiumBindingError::AlreadyInitialized) => {
+                attempts.push(PdfiumCandidateAttempt {
+                    path: candidate.clone(),
+                    outcome: "already_initialized",
+                    error: None,
+                });
+                return PdfiumBindingReport {
+                    result: PdfiumBindingResult::AlreadyInitialized,
+                    candidates: attempts,
+                    system: PdfiumSystemAttempt::NotAttempted,
+                };
+            }
+            Err(PdfiumBindingError::Failed(error)) => {
+                attempts.push(PdfiumCandidateAttempt {
+                    path: candidate.clone(),
+                    outcome: "failed",
+                    error: Some(error),
+                });
+            }
+        }
+    }
+
+    match bind_system() {
+        Ok(bindings) => PdfiumBindingReport {
+            result: PdfiumBindingResult::Bound(bindings),
+            candidates: attempts,
+            system: PdfiumSystemAttempt::Bound,
+        },
+        Err(PdfiumBindingError::AlreadyInitialized) => PdfiumBindingReport {
+            result: PdfiumBindingResult::AlreadyInitialized,
+            candidates: attempts,
+            system: PdfiumSystemAttempt::AlreadyInitialized,
+        },
+        Err(PdfiumBindingError::Failed(error)) => PdfiumBindingReport {
+            result: PdfiumBindingResult::Failed(error.clone()),
+            candidates: attempts,
+            system: PdfiumSystemAttempt::Failed(error),
+        },
+    }
+}
+
+fn pdfium_binding_error(error: pdfium_render::prelude::PdfiumError) -> PdfiumBindingError {
+    match error {
+        pdfium_render::prelude::PdfiumError::PdfiumLibraryBindingsAlreadyInitialized => {
+            PdfiumBindingError::AlreadyInitialized
+        }
+        error => PdfiumBindingError::Failed(error.to_string()),
+    }
 }
 
 fn find_tesseract() -> Result<PathBuf, String> {
