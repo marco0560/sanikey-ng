@@ -819,6 +819,60 @@ impl DesktopApp {
         medication_index: usize,
         decision: AifaDecision,
     ) {
+        self.start_aifa_decision_with_probe(
+            person_index,
+            medication_index,
+            decision,
+            probe_leaflet_documents,
+        );
+    }
+
+    fn start_aifa_candidate_confirmation(
+        &mut self,
+        person_index: usize,
+        medication_index: usize,
+        candidate: Box<AifaCandidate>,
+    ) {
+        self.start_aifa_candidate_confirmation_with_probe(
+            person_index,
+            medication_index,
+            candidate,
+            probe_leaflet_documents,
+        );
+    }
+
+    fn start_aifa_candidate_confirmation_with_probe(
+        &mut self,
+        person_index: usize,
+        medication_index: usize,
+        candidate: Box<AifaCandidate>,
+        probe: impl FnOnce(&MedicationLeaflet) -> Vec<LeafletDownloadFailure> + Send + 'static,
+    ) {
+        record_ui_action(
+            self.log_session.as_ref(),
+            &mut self.log_failure,
+            Activity::GuiAifaCandidateConfirmationRequested,
+            DisplayControl::indexed(
+                "aifa_confirm_candidate",
+                person_index,
+                Some(medication_index),
+            ),
+        );
+        self.start_aifa_decision_with_probe(
+            person_index,
+            medication_index,
+            AifaDecision::Confirm(candidate),
+            probe,
+        );
+    }
+
+    fn start_aifa_decision_with_probe(
+        &mut self,
+        person_index: usize,
+        medication_index: usize,
+        decision: AifaDecision,
+        probe: impl FnOnce(&MedicationLeaflet) -> Vec<LeafletDownloadFailure> + Send + 'static,
+    ) {
         trace_desktop_call!("desktop::DesktopApp::start_aifa_decision", fields [
             "person_index" => TraceValue::data(person_index),
             "medication_index" => TraceValue::data(medication_index),
@@ -848,7 +902,7 @@ impl DesktopApp {
                 metadata,
                 &medication,
                 decision,
-                probe_leaflet_documents,
+                probe,
             );
             let outcome = outcome_from_result(&result, FailureCategory::Other);
             let _ = sender.send(DesktopEvent::AifaDecisionSaved {
@@ -910,6 +964,34 @@ impl DesktopApp {
     }
 
     #[cfg(target_os = "linux")]
+    fn invoke_usb_target_picker(picker: impl FnOnce() -> Option<PathBuf>) -> Option<PathBuf> {
+        trace_desktop_call!(
+            "desktop::invoke_usb_target_picker",
+            fields ["dialog" => TraceValue::data("usb_target_folder")],
+            output |result: &Option<PathBuf>| {
+                TraceValue::record(&[
+                    TraceField::new(
+                        "state",
+                        TraceValue::data(if result.is_some() {
+                            "selected"
+                        } else {
+                            "no_selection"
+                        }),
+                    ),
+                    TraceField::new(
+                        "path",
+                        result
+                            .as_deref()
+                            .map(trace_desktop_path)
+                            .unwrap_or_else(|| TraceValue::data(())),
+                    ),
+                ])
+            },
+            picker
+        )
+    }
+
+    #[cfg(target_os = "linux")]
     fn choose_usb_target_with_picker(&mut self, picker: impl FnOnce() -> Option<PathBuf>) {
         record_ui_action(
             self.log_session.as_ref(),
@@ -922,7 +1004,7 @@ impl DesktopApp {
             &mut self.log_failure,
             NativeDialog::UsbTargetFolder,
         );
-        let Some(target) = picker() else {
+        let Some(target) = Self::invoke_usb_target_picker(picker) else {
             return;
         };
         let worker_target = target.clone();
@@ -3257,7 +3339,7 @@ impl DesktopApp {
                     self.start_aifa_search(person, medication, manual);
                 }
                 Some(AifaUiAction::Confirm(person, medication, candidate)) => {
-                    self.start_aifa_decision(person, medication, AifaDecision::Confirm(candidate));
+                    self.start_aifa_candidate_confirmation(person, medication, candidate);
                 }
                 Some(AifaUiAction::MarkNotApplicable(person, medication)) => {
                     self.start_aifa_decision(person, medication, AifaDecision::MarkNotApplicable);
@@ -4409,6 +4491,10 @@ mod tests {
             (Activity::GuiUsbConfirmation, "gui_usb_confirmation"),
             (Activity::GuiAifaCandidate, "gui_aifa_candidate"),
             (
+                Activity::GuiAifaCandidateConfirmationRequested,
+                "gui_aifa_candidate_confirmation_requested",
+            ),
+            (
                 Activity::GuiAifaNotApplicableRequested,
                 "gui_aifa_not_applicable_requested",
             ),
@@ -4660,6 +4746,87 @@ mod tests {
         assert!(!log.contains("patient-a"));
         assert!(!log.contains("Persona A"));
         assert!(!log.contains(&directory.0.to_string_lossy().to_string()));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn usb_target_picker_trace_records_no_selection_and_selected_path() {
+        use sanikey_core::logging::{Component, Level, Session};
+        use serde_json::{Value, json};
+
+        fn trace_field<'a>(fields: &'a [Value], name: &str) -> &'a Value {
+            fields
+                .iter()
+                .find(|field| field["name"] == name)
+                .map(|field| &field["content"])
+                .unwrap_or_else(|| panic!("campo Trace {name} assente"))
+        }
+
+        let directory = TestDirectory::new();
+        let selected_path = directory.0.join("destinazione privata sintetica Ω");
+        let (session, log_path) =
+            Session::create_in_directory_with_level(&directory.0, Component::Desktop, Level::Trace)
+                .expect("sessione Trace sintetica");
+
+        let no_selection = session.scoped(|| DesktopApp::invoke_usb_target_picker(|| None));
+        let selected =
+            session.scoped(|| DesktopApp::invoke_usb_target_picker(|| Some(selected_path.clone())));
+        session
+            .finish(Component::Desktop)
+            .expect("fine sessione Trace");
+
+        assert!(no_selection.is_none());
+        assert_eq!(selected, Some(selected_path.clone()));
+        let log = fs::read_to_string(log_path).expect("log Trace sintetico");
+        assert!(log.contains("destinazione privata sintetica Ω"));
+        let records = log
+            .lines()
+            .map(|line| serde_json::from_str::<Value>(line).expect("record JSON Trace"))
+            .collect::<Vec<_>>();
+        let enters = records
+            .iter()
+            .filter(|record| {
+                record["type"] == "function_enter"
+                    && record["function"] == "desktop::invoke_usb_target_picker"
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(enters.len(), 2);
+
+        for (entry, expected_state, expected_path) in [
+            (&enters[0], "no_selection", None),
+            (&enters[1], "selected", Some(selected_path.as_path())),
+        ] {
+            let exit = records
+                .iter()
+                .find(|record| {
+                    record["type"] == "function_exit"
+                        && record["function"] == "desktop::invoke_usb_target_picker"
+                        && record["call_id"] == entry["call_id"]
+                })
+                .expect("uscita correlata del picker");
+            assert_eq!(exit["outcome"], "returned");
+            assert!(exit["duration_ms"].as_u64().is_some());
+            let arguments = entry["arguments"].as_array().expect("argomenti picker");
+            assert_eq!(arguments.len(), 1);
+            assert_eq!(arguments[0]["name"], "dialog");
+            assert_eq!(arguments[0]["content"]["value"], "usb_target_folder");
+
+            let result_fields = exit["result"]["value"]
+                .as_array()
+                .expect("record esito picker");
+            assert_eq!(trace_field(result_fields, "state")["value"], expected_state);
+            let recorded_path = trace_field(result_fields, "path");
+            match expected_path {
+                Some(expected_path) => assert_eq!(
+                    recorded_path,
+                    &json!({
+                        "kind": "data",
+                        "value": {"encoding": "utf8", "value": expected_path.to_str().unwrap()}
+                    })
+                ),
+                None => assert_eq!(recorded_path, &json!({"kind":"data", "value":null})),
+            }
+        }
     }
 
     #[cfg(target_os = "linux")]
@@ -6449,6 +6616,137 @@ enabled = false
                 !log.contains(private_value),
                 "dato privato nel log: {private_value}"
             );
+        }
+    }
+
+    #[test]
+    fn aifa_candidate_confirmation_dispatch_logs_action_and_operation_outcome_separately() {
+        use sanikey_core::logging::{Component, Level, Session};
+
+        for (probe_fails, expected_outcome) in [(false, "succeeded"), (true, "failed")] {
+            let directory = TestDirectory::new();
+            let metadata_directory = directory.0.join("private-aifa-metadata");
+            fs::create_dir_all(&metadata_directory).expect("metadati sintetici");
+            fs::write(
+                metadata_directory.join("medications.toml"),
+                "[[medication]]\nid='PRIVATE-DRUG-ID'\nname='PRIVATE-DRUG-NAME'\n",
+            )
+            .expect("farmaco sintetico");
+            let metadata = load_curated_metadata(&metadata_directory).expect("metadati caricati");
+            let medication = metadata.medications[0].clone();
+            let (session, path) = Session::create_in_directory_with_level(
+                &directory.0,
+                Component::Desktop,
+                Level::Events,
+            )
+            .expect("sessione Events sintetica");
+            let mut app = DesktopApp {
+                log_session: Some(session.clone()),
+                aifa_people: Some(vec![AifaPersonReview {
+                    id: "PRIVATE-PERSON-ID".into(),
+                    display_name: "PRIVATE-PERSON-NAME".into(),
+                    metadata_directory,
+                    metadata,
+                    medications: vec![AifaMedicationReview {
+                        medication,
+                        query: String::new(),
+                        search: Some(AifaCandidateSearch::default()),
+                        selected_candidate: Some(0),
+                        status: String::new(),
+                    }],
+                }]),
+                ..DesktopApp::default()
+            };
+            let candidate = Box::new(AifaCandidate {
+                title: "PRIVATE-CANDIDATE-TITLE".into(),
+                codice_sis: "123".into(),
+                aic6: "456".into(),
+                active_ingredients: Vec::new(),
+                form: None,
+                strength: None,
+                company: None,
+                atc: Vec::new(),
+                routes: Vec::new(),
+                packages: Vec::new(),
+                mismatches: Vec::new(),
+            });
+
+            app.start_aifa_candidate_confirmation_with_probe(0, 0, candidate, move |reference| {
+                if probe_fails {
+                    vec![LeafletDownloadFailure {
+                        medication_id: reference.medication_id.clone(),
+                        kind: "FI".into(),
+                        url: "https://example.invalid/private-fi.pdf".into(),
+                        reason: "synthetic failure".into(),
+                    }]
+                } else {
+                    Vec::new()
+                }
+            });
+            app.worker_handle
+                .take()
+                .expect("worker di conferma avviato")
+                .join()
+                .expect("worker terminato");
+            assert!(!app.log_failure);
+            session.finish(Component::Desktop).expect("fine sessione");
+            drop(app);
+
+            let log = fs::read_to_string(path).expect("log Events sintetico");
+            let records = log
+                .lines()
+                .map(|line| serde_json::from_str::<serde_json::Value>(line).expect("record JSON"))
+                .collect::<Vec<_>>();
+            let action = records
+                .iter()
+                .filter(|record| {
+                    record["activity"] == "gui_aifa_candidate_confirmation_requested"
+                        && record["target"]["name"] == "aifa_confirm_candidate"
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(
+                action.len(),
+                2,
+                "azione GUI registrata indipendentemente dall'esito"
+            );
+            assert_eq!(action[0]["event"], "started");
+            assert_eq!(action[1]["event"], "succeeded");
+            assert_eq!(action[0]["target"]["index"], 0);
+            assert_eq!(action[0]["target"]["child_index"], 0);
+
+            let operation = records
+                .iter()
+                .filter(|record| record["activity"] == "aifa")
+                .collect::<Vec<_>>();
+            let operation_start = operation
+                .iter()
+                .find(|record| record["event"] == "started")
+                .expect("avvio operazione AIFA");
+            let operation_outcome = operation
+                .iter()
+                .find(|record| record["event"] == expected_outcome)
+                .expect("esito operazione AIFA atteso");
+            assert_eq!(
+                operation_start["operation_id"],
+                operation_outcome["operation_id"]
+            );
+            assert_ne!(action[0]["operation_id"], operation_start["operation_id"]);
+
+            for private_value in [
+                "PRIVATE-DRUG-ID",
+                "PRIVATE-DRUG-NAME",
+                "PRIVATE-PERSON-ID",
+                "PRIVATE-PERSON-NAME",
+                "PRIVATE-CANDIDATE-TITLE",
+                "private-aifa-metadata",
+                "private-fi.pdf",
+                "synthetic failure",
+            ] {
+                assert!(
+                    !log.contains(private_value),
+                    "dato privato nel log: {private_value}"
+                );
+            }
         }
     }
 

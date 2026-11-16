@@ -1136,14 +1136,6 @@
       "evidence_sha256": "9ead94eaf97e98dd3cb1b461c94c806a6d234631d6a49dc3e8872dc27f75f59a"
     },
     {
-      "id": "crates/sanikey-desktop/src/main.rs#21e026276b0a08f9012c9d2bc68c069441a761f37419c7ca66677a9fbd828d45:90",
-      "source_sha256": "21e026276b0a08f9012c9d2bc68c069441a761f37419c7ca66677a9fbd828d45",
-      "status": "covered",
-      "evidence": "tests::person_selection_trace_records_inputs_output_duration_and_redacts_secret_paths verifica input e output rappresentabili, call_id, durata e redazione del percorso segreto.",
-      "evidence_file": "crates/sanikey-desktop/src/main.rs",
-      "evidence_sha256": "21e026276b0a08f9012c9d2bc68c069441a761f37419c7ca66677a9fbd828d45"
-    },
-    {
       "id": "crates/sanikey-core/src/metadata/parse/timeline.rs#4b133f26531d918c12f1d25cbb99b2aebac272825ab9cf1e71f5a44a5f908574:0",
       "source_sha256": "4b133f26531d918c12f1d25cbb99b2aebac272825ab9cf1e71f5a44a5f908574",
       "status": "covered",
@@ -1310,6 +1302,30 @@
       "evidence": "dicom::tests::dicomdir_trace_distinguishes_open_and_sequence_outcomes_while_events_stay_terse verifica gli esiti sintetici di apertura, sequenza mancante/non-sequenza/vuota e lettura riuscita, correlazione call_id/durata ed Events senza dettagli Trace.",
       "evidence_file": "crates/sanikey-core/src/dicom/tests.rs",
       "evidence_sha256": "819d4256ec1ca09d931b7ff1a4bd1583a3d515e8223f51bb43bc40d0271c183e"
+    },
+    {
+      "id": "crates/sanikey-desktop/src/main.rs#923eeb5581aec53913de76a8e08ff2f6fe2bc593b192a053d5c980591c76877d:95",
+      "source_sha256": "923eeb5581aec53913de76a8e08ff2f6fe2bc593b192a053d5c980591c76877d",
+      "status": "covered",
+      "evidence": "tests::person_selection_trace_records_inputs_output_duration_and_redacts_secret_paths verifica i campi completi di input e risultato, call_id, durata e redazione del percorso segreto.",
+      "evidence_file": "crates/sanikey-desktop/src/main.rs",
+      "evidence_sha256": "923eeb5581aec53913de76a8e08ff2f6fe2bc593b192a053d5c980591c76877d"
+    },
+    {
+      "id": "crates/sanikey-core/src/database.rs#be55618145de2a8ab951f7b9cb4039710ea448456a348a9f7cde332227c0fb3a:20",
+      "source_sha256": "be55618145de2a8ab951f7b9cb4039710ea448456a348a9f7cde332227c0fb3a",
+      "status": "covered",
+      "evidence": "trace_database_build::database_build_wrapper_and_implementation_trace_full_inputs_outputs_and_parentage verifica gli argomenti completi, il risultato, call_id, durata e parentage di build_database.",
+      "evidence_file": "crates/sanikey-core/tests/trace_database_build.rs",
+      "evidence_sha256": "2d82ccbf3b229f250d7c5a55978bcdf9fd0b17e071225e8ed8df1aaa2543b278"
+    },
+    {
+      "id": "crates/sanikey-core/src/database.rs#be55618145de2a8ab951f7b9cb4039710ea448456a348a9f7cde332227c0fb3a:22",
+      "source_sha256": "be55618145de2a8ab951f7b9cb4039710ea448456a348a9f7cde332227c0fb3a",
+      "status": "covered",
+      "evidence": "trace_database_build::database_build_wrapper_and_implementation_trace_full_inputs_outputs_and_parentage verifica gli argomenti completi, il risultato, call_id, durata e parentage di build_database_impl.",
+      "evidence_file": "crates/sanikey-core/tests/trace_database_build.rs",
+      "evidence_sha256": "2d82ccbf3b229f250d7c5a55978bcdf9fd0b17e071225e8ed8df1aaa2543b278"
     }
   ]
 }

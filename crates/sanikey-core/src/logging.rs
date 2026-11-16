@@ -348,6 +348,8 @@ pub enum Activity {
     GuiUsbConfirmation,
     /// GUI AIFA candidate selection changed.
     GuiAifaCandidate,
+    /// GUI operator requested confirmation of an AIFA candidate.
+    GuiAifaCandidateConfirmationRequested,
     /// GUI operator requested to mark a medication as not listed by AIFA.
     GuiAifaNotApplicableRequested,
     /// GUI profile dialog opened.
@@ -400,6 +402,9 @@ impl Activity {
             Self::GuiUsbTargetSelectionRequested => "gui_usb_target_selection_requested",
             Self::GuiUsbConfirmation => "gui_usb_confirmation",
             Self::GuiAifaCandidate => "gui_aifa_candidate",
+            Self::GuiAifaCandidateConfirmationRequested => {
+                "gui_aifa_candidate_confirmation_requested"
+            }
             Self::GuiAifaNotApplicableRequested => "gui_aifa_not_applicable_requested",
             Self::GuiProfileDialogOpened => "gui_profile_dialog_opened",
             Self::GuiAifaQueryEdited => "gui_aifa_query_edited",
