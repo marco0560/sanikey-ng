@@ -478,11 +478,24 @@ fn trace_process_result(result: &Result<ExitStatus, ProcessFailure>) -> TraceVal
             "state":"exited",
             "success":status.success(),
             "exit_code":status.code(),
+            "signal":process_exit_signal(status),
         })),
         Err(ProcessFailure::Launch) => TraceValue::Data(json!({"state":"launch_failed"})),
         Err(ProcessFailure::Timeout) => TraceValue::Data(json!({"state":"timed_out"})),
         Err(ProcessFailure::Wait) => TraceValue::Data(json!({"state":"wait_failed"})),
     }
+}
+
+#[cfg(unix)]
+fn process_exit_signal(status: &ExitStatus) -> Option<i32> {
+    use std::os::unix::process::ExitStatusExt;
+
+    status.signal()
+}
+
+#[cfg(not(unix))]
+fn process_exit_signal(_status: &ExitStatus) -> Option<i32> {
+    None
 }
 
 fn run_process(program: &Path, arguments: &[OsString]) -> Result<ExitStatus, ProcessFailure> {

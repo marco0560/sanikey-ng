@@ -173,7 +173,9 @@ fn converter_process_timeout_kills_the_child() {
 #[test]
 fn process_trace_captures_native_command_and_exit_but_events_stay_terse() {
     use super::run_process;
+    use serde_json::Value;
     use std::ffi::OsString;
+    use std::os::unix::process::ExitStatusExt;
 
     let directory = TestDirectory::new();
     for (suffix, level) in [("events", Level::Events), ("trace", Level::Trace)] {
@@ -182,12 +184,19 @@ fn process_trace_captures_native_command_and_exit_but_events_stay_terse() {
             Session::create_in_directory_with_level(&logs, Component::Core, level)
                 .expect("sessione sintetica");
         session.scoped(|| {
-            let status = run_process(
-                PathBuf::from("/bin/sh").as_path(),
-                &[OsString::from("-c"), OsString::from("exit 0")],
-            )
-            .expect("processo sintetico");
-            assert!(status.success());
+            for (command, expected_code, expected_signal) in [
+                ("exit 0", Some(0), None),
+                ("exit 7", Some(7), None),
+                ("kill -TERM $$", None, Some(15)),
+            ] {
+                let status = run_process(
+                    PathBuf::from("/bin/sh").as_path(),
+                    &[OsString::from("-c"), OsString::from(command)],
+                )
+                .expect("processo sintetico");
+                assert_eq!(status.code(), expected_code);
+                assert_eq!(status.signal(), expected_signal);
+            }
         });
         drop(session);
 
@@ -199,9 +208,41 @@ fn process_trace_captures_native_command_and_exit_but_events_stay_terse() {
             assert!(log.contains("arguments_native"));
             assert!(log.contains("exit_code"));
             assert!(log.contains("external_component"));
+            let records: Vec<Value> = log
+                .lines()
+                .map(|line| serde_json::from_str(line).expect("record JSON sintetico"))
+                .collect();
+            let entries: Vec<_> = records
+                .iter()
+                .filter(|record| {
+                    record["type"] == "function_enter"
+                        && record["function"] == "office::run_process"
+                })
+                .collect();
+            assert_eq!(entries.len(), 3);
+            for (entry, (expected_code, expected_signal)) in entries.into_iter().zip([
+                (serde_json::json!(0), Value::Null),
+                (serde_json::json!(7), Value::Null),
+                (Value::Null, serde_json::json!(15)),
+            ]) {
+                let call_id = entry["call_id"].as_u64().expect("call_id numerico");
+                let exit = records
+                    .iter()
+                    .find(|record| {
+                        record["type"] == "function_exit"
+                            && record["function"] == "office::run_process"
+                            && record["call_id"] == call_id
+                    })
+                    .expect("uscita correlata tramite call_id");
+                assert!(exit["duration_ms"].as_u64().is_some());
+                let result = &exit["result"]["value"];
+                assert_eq!(result["exit_code"], expected_code);
+                assert_eq!(result["signal"], expected_signal);
+            }
         } else {
             assert!(!log.contains("function_enter"));
             assert!(!log.contains("/bin/sh"));
+            assert!(!log.contains("signal"));
         }
     }
 }

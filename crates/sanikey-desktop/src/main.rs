@@ -1756,6 +1756,20 @@ fn choose_folder(
         "label_text" => TraceValue::data("captured by PresentedText"),
         "path_text" => TraceValue::data("captured by PresentedText"),
     ], || {
+    let mut picker = || rfd::FileDialog::new().pick_folder();
+    choose_folder_with_picker(ui, label_text, path, session, log_failure, control, &mut picker)
+    })
+}
+
+fn choose_folder_with_picker(
+    ui: &mut egui::Ui,
+    label_text: &str,
+    path: &mut PathBuf,
+    session: Option<&Session>,
+    log_failure: &mut bool,
+    control: DisplayControl,
+    picker: &mut impl FnMut() -> Option<PathBuf>,
+) {
     let label_text = PresentedText::new(label_text, Classification::Public);
     let label =
         ui.label(label_text.capture(session, log_failure, control.with_part(DisplayPart::Label)));
@@ -1771,20 +1785,25 @@ fn choose_folder(
             .button(button.capture(session, log_failure, control.with_part(DisplayPart::Action)))
             .clicked()
         {
-            record_native_dialog_omission(session, log_failure, NativeDialog::PathFolder);
-            if let Some(chosen) = rfd::FileDialog::new().pick_folder() {
-                *path = chosen;
-                record_ui_action(
+            record_ui_action(
                 session,
                 log_failure,
-                Activity::GuiFolderChosen,
+                Activity::GuiFolderPickerRequested,
                 control.with_part(DisplayPart::Action),
+            );
+            record_native_dialog_omission(session, log_failure, NativeDialog::PathFolder);
+            if let Some(chosen) = picker() {
+                *path = chosen;
+                record_ui_action(
+                    session,
+                    log_failure,
+                    Activity::GuiFolderChosen,
+                    control.with_part(DisplayPart::Action),
                 );
             }
         }
     });
     PresentedText::new(&text, Classification::Private).capture(session, log_failure, control);
-    })
 }
 
 fn add_responsive_path_edit(
@@ -3453,11 +3472,11 @@ mod tests {
         AifaCandidate, AifaCandidateSearch, AifaDecision, AifaMedicationReview, AifaPersonReview,
         BLUE_TEXT, DesktopApp, DesktopEvent, DisplayControl, FIELD_BACKGROUND,
         LeafletDownloadFailure, ReviewSummary, STRAW_BACKGROUND, add_responsive_path_edit,
-        build_selected_people, build_selected_people_with, configure_desktop_theme,
-        desktop_visuals, import_selected_observations, indeterminate_progress_segment,
-        load_aifa_people, record_native_dialog_omission, record_ui_action, review_profile,
-        save_aifa_decision_with, selection_from_person, show_path, spawn_logged_worker,
-        trace_desktop_path, warning_text_color,
+        build_selected_people, build_selected_people_with, choose_folder_with_picker,
+        configure_desktop_theme, desktop_visuals, import_selected_observations,
+        indeterminate_progress_segment, load_aifa_people, record_native_dialog_omission,
+        record_ui_action, review_profile, save_aifa_decision_with, selection_from_person,
+        show_path, spawn_logged_worker, trace_desktop_path, warning_text_color,
     };
     use eframe::egui;
     use sanikey_core::build::{BuildCounts, BuildOptions, PatientBuildResult, build_patient};
@@ -3569,6 +3588,59 @@ mod tests {
             },
         ] {
             run_app_frame(app, context, frame, vec![event]).drop_without_applying_deltas();
+        }
+    }
+
+    fn click_ui_button(
+        context: &egui::Context,
+        label: &str,
+        render: &mut impl FnMut(&mut egui::Ui),
+    ) {
+        let screen_rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
+        let initial = context.run_ui(
+            egui::RawInput {
+                screen_rect: Some(screen_rect),
+                ..Default::default()
+            },
+            |ui| render(ui),
+        );
+        let position = initial
+            .shapes
+            .iter()
+            .find_map(|clipped| match &clipped.shape {
+                egui::epaint::Shape::Text(text) if text.galley.text() == label => {
+                    Some(text.visual_bounding_rect().center())
+                }
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("pulsante sintetico non renderizzato: {label}"));
+        initial.drop_without_applying_deltas();
+
+        for event in [
+            egui::Event::PointerMoved(position),
+            egui::Event::PointerButton {
+                pos: position,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            },
+            egui::Event::PointerButton {
+                pos: position,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ] {
+            context
+                .run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(screen_rect),
+                        events: vec![event],
+                        ..Default::default()
+                    },
+                    |ui| render(ui),
+                )
+                .drop_without_applying_deltas();
         }
     }
 
@@ -4268,6 +4340,10 @@ mod tests {
         let activities = [
             (Activity::GuiProfilePathEdited, "gui_profile_path_edited"),
             (Activity::GuiFolderEdited, "gui_folder_edited"),
+            (
+                Activity::GuiFolderPickerRequested,
+                "gui_folder_picker_requested",
+            ),
             (Activity::GuiFolderChosen, "gui_folder_chosen"),
             (Activity::GuiPersonSelection, "gui_person_selection"),
             (Activity::GuiReviewEdit, "gui_review_edit"),
@@ -4312,6 +4388,76 @@ mod tests {
             assert!(log.contains(&format!("\"activity\":\"{activity}\"")));
         }
         assert!(!log.contains("dato privato sintetico"));
+    }
+
+    #[test]
+    fn per_person_folder_picker_cancel_is_logged_without_private_path_or_selection() {
+        use sanikey_core::logging::{Component, Level, Session};
+
+        let directory = TestDirectory::new();
+        let (session, path) = Session::create_in_directory_with_level(
+            &directory.0,
+            Component::Desktop,
+            Level::Events,
+        )
+        .expect("sessione sintetica");
+        let private_path = directory.0.join("private-synthetic-folder");
+        let mut displayed_path = private_path.clone();
+        let mut log_failure = false;
+        let mut picker_called = false;
+        let mut picker = || {
+            picker_called = true;
+            None
+        };
+        let context = egui::Context::default();
+        {
+            let mut render = |ui: &mut egui::Ui| {
+                choose_folder_with_picker(
+                    ui,
+                    "Documenti",
+                    &mut displayed_path,
+                    Some(&session),
+                    &mut log_failure,
+                    DisplayControl::indexed("source_documents", 0, None),
+                    &mut picker,
+                );
+            };
+            click_ui_button(&context, "Scegli…", &mut render);
+        }
+
+        assert!(picker_called, "picker sintetico invocato dal click");
+        assert_eq!(
+            displayed_path, private_path,
+            "annullare conserva il percorso"
+        );
+        assert!(!log_failure);
+        session.finish(Component::Desktop).expect("fine sessione");
+        drop(session);
+
+        let log = fs::read_to_string(path).expect("log sintetico");
+        let records = log
+            .lines()
+            .map(|line| serde_json::from_str::<serde_json::Value>(line).expect("record JSON"))
+            .collect::<Vec<_>>();
+        let requested = records
+            .iter()
+            .filter(|record| {
+                record["activity"] == "gui_folder_picker_requested"
+                    && record["target"]["name"] == "source_documents"
+                    && record["target"]["index"] == 0
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(requested.len(), 2);
+        assert_eq!(requested[0]["event"], "started");
+        assert_eq!(requested[1]["event"], "succeeded");
+        assert!(
+            records
+                .iter()
+                .all(|record| record["activity"] != "gui_folder_chosen"),
+            "l'annullamento non equivale a una selezione"
+        );
+        assert!(!log.contains(&private_path.to_string_lossy().to_string()));
+        assert!(!log.contains("private-synthetic-folder"));
     }
 
     #[test]

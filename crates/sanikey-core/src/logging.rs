@@ -330,6 +330,8 @@ pub enum Activity {
     GuiProfilePathEdited,
     /// GUI folder path edited.
     GuiFolderEdited,
+    /// GUI operator requested a per-person folder picker.
+    GuiFolderPickerRequested,
     /// GUI folder chosen with the file dialog.
     GuiFolderChosen,
     /// GUI person selection changed.
@@ -383,6 +385,7 @@ impl Activity {
             Self::OtherOperation => "other_operation",
             Self::GuiProfilePathEdited => "gui_profile_path_edited",
             Self::GuiFolderEdited => "gui_folder_edited",
+            Self::GuiFolderPickerRequested => "gui_folder_picker_requested",
             Self::GuiFolderChosen => "gui_folder_chosen",
             Self::GuiPersonSelection => "gui_person_selection",
             Self::GuiReviewEdit => "gui_review_edit",
