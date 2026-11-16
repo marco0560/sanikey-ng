@@ -16,7 +16,7 @@ use std::collections::{HashSet, VecDeque};
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
 use std::path::{Component, Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Command, ExitStatus, Stdio};
 use std::time::{Duration, UNIX_EPOCH};
 
 const CONTAINER_SUFFIXES: &[&str] = &[".7z", ".img", ".iso", ".rar", ".tar.xz", ".zip"];
@@ -1084,44 +1084,140 @@ fn extract_process_to_file_impl(
     mut output: File,
     timeout: Option<Duration>,
 ) -> Result<(), String> {
-    trace_container_call!(
+    let outcome = trace_container_call!(
         "containers::extract_process_to_file_impl",
         [
             TraceField::new("command", trace_sensitive_text(&format!("{command:?}"))),
             TraceField::new(
-                "output",
+                "stdout_capture",
+                TraceValue::data(false),
+            ),
+            TraceField::new("stderr_capture", TraceValue::data(false)),
+            TraceField::new(
+                "member_file_contents",
                 TraceValue::Omitted(TraceOmission::ExternalComponent)
             ),
             TraceField::new("timeout", TraceValue::data(format!("{timeout:?}")))
-        ],
+        ], result |outcome: &ProcessExtractionOutcome| outcome.trace_value(),
         {
-            let mut child = command
-                .stdout(Stdio::from(
-                    output.try_clone().map_err(|cause| cause.to_string())?,
-                ))
+            let output_handle = match output.try_clone() {
+                Ok(output) => output,
+                Err(cause) => return ProcessExtractionOutcome::before_start(cause.to_string()),
+            };
+            let mut child = match command
+                .stdout(Stdio::from(output_handle))
                 .stderr(Stdio::null())
                 .spawn()
-                .map_err(|cause| cause.to_string())?;
+            {
+                Ok(child) => child,
+                Err(cause) => return ProcessExtractionOutcome::before_start(cause.to_string()),
+            };
             let started = std::time::Instant::now();
             loop {
-                match child.try_wait().map_err(|cause| cause.to_string())? {
-                    Some(status) if status.success() => {
-                        output.flush().map_err(|cause| cause.to_string())?;
-                        return Ok(());
+                let status = match child.try_wait() {
+                    Ok(status) => status,
+                    Err(cause) => {
+                        return ProcessExtractionOutcome::status_unknown(cause.to_string());
                     }
-                    Some(_) => {
-                        return Err("estrazione del membro non riuscita".to_owned());
+                };
+                match status {
+                    Some(status) if status.success() => {
+                        let result = output.flush().map_err(|cause| cause.to_string());
+                        return ProcessExtractionOutcome::exited(status, result);
+                    }
+                    Some(status) => {
+                        return ProcessExtractionOutcome::exited(
+                            status,
+                            Err("estrazione del membro non riuscita".to_owned()),
+                        );
                     }
                     None if timeout.is_some_and(|limit| started.elapsed() >= limit) => {
                         let _ = child.kill();
-                        let _ = child.wait();
-                        return Err("timeout durante l'estrazione del membro".to_owned());
+                        let status = child.wait().ok();
+                        return ProcessExtractionOutcome::timed_out(status);
                     }
                     None => std::thread::sleep(Duration::from_millis(10)),
                 }
             }
         }
-    )
+    );
+    outcome.into_result()
+}
+
+struct ProcessExtractionOutcome {
+    result: Result<(), String>,
+    state: &'static str,
+    status: Option<ExitStatus>,
+}
+
+/// Mantiene separati l'esito applicativo e i dettagli di processo destinati alla traccia.
+impl ProcessExtractionOutcome {
+    fn before_start(message: String) -> Self {
+        Self {
+            result: Err(message),
+            state: "not_started",
+            status: None,
+        }
+    }
+
+    fn status_unknown(message: String) -> Self {
+        Self {
+            result: Err(message),
+            state: "status_unknown",
+            status: None,
+        }
+    }
+
+    fn exited(status: ExitStatus, result: Result<(), String>) -> Self {
+        Self {
+            result,
+            state: "exited",
+            status: Some(status),
+        }
+    }
+
+    fn timed_out(status: Option<ExitStatus>) -> Self {
+        Self {
+            result: Err("timeout durante l'estrazione del membro".to_owned()),
+            state: "timed_out",
+            status,
+        }
+    }
+
+    fn trace_value(&self) -> TraceValue {
+        let status = self.status.as_ref();
+        TraceValue::Data(json!({
+            "process_state": self.state,
+            "exit_code": status.and_then(ExitStatus::code),
+            "signal": status.and_then(process_exit_signal),
+            "stdout": TraceValue::Omitted(TraceOmission::ExternalComponent).to_json(),
+            "stderr": TraceValue::Omitted(TraceOmission::ExternalComponent).to_json(),
+            "member_file_contents": TraceValue::Omitted(TraceOmission::ExternalComponent).to_json(),
+            "result": match &self.result {
+                Ok(()) => json!({"state": "succeeded"}),
+                Err(error) => json!({
+                    "state": "error",
+                    "message": trace_sensitive_text(error).to_json(),
+                }),
+            },
+        }))
+    }
+
+    fn into_result(self) -> Result<(), String> {
+        self.result
+    }
+}
+
+#[cfg(unix)]
+fn process_exit_signal(status: &ExitStatus) -> Option<i32> {
+    use std::os::unix::process::ExitStatusExt;
+
+    status.signal()
+}
+
+#[cfg(not(unix))]
+fn process_exit_signal(_status: &ExitStatus) -> Option<i32> {
+    None
 }
 
 fn safe_member_path(target: &Path, name: &str) -> Result<PathBuf, String> {

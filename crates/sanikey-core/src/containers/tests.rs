@@ -1,7 +1,8 @@
 //! Fixture sintetiche per estrazione e staging dei contenitori.
 
 use super::{
-    is_container_path, parse_7z_listing, safe_member_path, stage_container_documents, write_member,
+    extract_process_to_file, is_container_path, parse_7z_listing, safe_member_path,
+    stage_container_documents, write_member,
 };
 use crate::config::{IngestionConfig, PersonConfig, SearchConfig, UiConfig};
 use crate::inventory::scan_document_inventory;
@@ -11,6 +12,8 @@ use serde_json::{Value, json};
 use std::fs;
 use std::io::{Cursor, Write};
 use std::path::{Path, PathBuf};
+#[cfg(target_os = "linux")]
+use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 struct TestDirectory(PathBuf);
@@ -337,6 +340,115 @@ fn traced_container_helpers_match_complete_arguments_results_and_omissions() {
             create_result,
         )],
     );
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn extract_process_trace_records_status_and_unobserved_streams_without_changing_file_output() {
+    let directory = TestDirectory::new();
+    let (trace_session, trace_path) = Session::create_in_directory_with_level(
+        &directory.path().join("process-trace"),
+        Component::Core,
+        Level::Trace,
+    )
+    .expect("sessione Trace processo sintetico");
+
+    for (name, code) in [("success", 0), ("failure", 37)] {
+        let output_path = directory.path().join(format!("{name}.member"));
+        let mut command = Command::new("/bin/sh");
+        command
+            .arg("-c")
+            .arg("printf 'SYNTHETIC_MEMBER'; printf 'SYNTHETIC_STDERR' >&2; exit \"$1\"")
+            .arg("synthetic-extractor")
+            .arg(code.to_string());
+        let result = trace_session.scoped(|| {
+            extract_process_to_file(
+                &mut command,
+                fs::File::create(&output_path).expect("file membro sintetico"),
+                None,
+            )
+        });
+        if code == 0 {
+            result.expect("estrazione sintetica riuscita");
+        } else {
+            assert_eq!(
+                result.expect_err("exit non zero atteso"),
+                "estrazione del membro non riuscita"
+            );
+        }
+        assert_eq!(
+            fs::read(output_path).expect("output del processo sintetico"),
+            b"SYNTHETIC_MEMBER"
+        );
+    }
+    drop(trace_session);
+
+    let trace_records: Vec<Value> = fs::read_to_string(trace_path)
+        .expect("log Trace del processo")
+        .lines()
+        .map(|line| serde_json::from_str(line).expect("record Trace JSON valido"))
+        .collect();
+    let entries: Vec<_> = trace_records
+        .iter()
+        .filter(|record| {
+            record["type"] == "function_enter"
+                && record["function"] == "containers::extract_process_to_file_impl"
+        })
+        .collect();
+    assert_eq!(entries.len(), 2);
+    for (entry, (expected_code, expected_state)) in
+        entries.into_iter().zip([(0, "succeeded"), (37, "error")])
+    {
+        let call_id = entry["call_id"].as_u64().expect("call_id numerico");
+        let arguments = entry["arguments"].to_string();
+        assert!(arguments.contains("stdout_capture"));
+        assert!(arguments.contains("stderr_capture"));
+        assert!(arguments.contains("member_file_contents"));
+        let exit = trace_records
+            .iter()
+            .find(|record| {
+                record["type"] == "function_exit"
+                    && record["function"] == "containers::extract_process_to_file_impl"
+                    && record["call_id"] == call_id
+            })
+            .expect("uscita correlata tramite call_id");
+        assert!(exit["duration_ms"].as_u64().is_some());
+        let output = &exit["result"]["value"];
+        assert_eq!(output["process_state"], "exited");
+        assert_eq!(output["exit_code"], expected_code);
+        assert!(output["signal"].is_null());
+        assert_eq!(output["result"]["state"], expected_state);
+        for stream in ["stdout", "stderr", "member_file_contents"] {
+            assert_eq!(output[stream]["kind"], "omitted");
+            assert_eq!(output[stream]["reason"], "external_component");
+        }
+    }
+
+    let (events_session, events_path) = Session::create_in_directory_with_level(
+        &directory.path().join("process-events"),
+        Component::Core,
+        Level::Events,
+    )
+    .expect("sessione Events processo sintetico");
+    let mut command = Command::new("/bin/sh");
+    command
+        .arg("-c")
+        .arg("printf 'SYNTHETIC_MEMBER'; printf 'SYNTHETIC_STDERR' >&2; exit 0");
+    events_session
+        .scoped(|| {
+            extract_process_to_file(
+                &mut command,
+                fs::File::create(directory.path().join("events.member"))
+                    .expect("file membro Events sintetico"),
+                None,
+            )
+        })
+        .expect("estrazione Events sintetica");
+    drop(events_session);
+    let events_log = fs::read_to_string(events_path).expect("log Events del processo");
+    assert!(!events_log.contains("SYNTHETIC_MEMBER"));
+    assert!(!events_log.contains("SYNTHETIC_STDERR"));
+    assert!(!events_log.contains("function_enter"));
 }
 
 #[test]

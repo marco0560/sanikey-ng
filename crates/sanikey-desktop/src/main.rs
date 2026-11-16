@@ -2568,6 +2568,12 @@ impl DesktopApp {
                     ))
                     .clicked()
                 {
+                    record_ui_action(
+                        self.log_session.as_ref(),
+                        &mut self.log_failure,
+                        Activity::GuiPreflightRepeatRequested,
+                        DisplayControl::new("repeat_preflight"),
+                    );
                     self.review = None;
                     self.aifa_people = None;
                     self.start_preflight();
@@ -4254,6 +4260,10 @@ mod tests {
             (Activity::GuiFolderChosen, "gui_folder_chosen"),
             (Activity::GuiPersonSelection, "gui_person_selection"),
             (Activity::GuiReviewEdit, "gui_review_edit"),
+            (
+                Activity::GuiPreflightRepeatRequested,
+                "gui_preflight_repeat_requested",
+            ),
             (Activity::GuiUsbConfirmation, "gui_usb_confirmation"),
             (Activity::GuiAifaCandidate, "gui_aifa_candidate"),
             (
@@ -4360,6 +4370,76 @@ mod tests {
             assert_eq!(build_events[0]["event"], "started");
             assert_eq!(build_events[1]["event"], expected_terminal_event);
         }
+    }
+
+    #[test]
+    fn repeat_preflight_click_is_logged_separately_from_preflight_operation() {
+        use sanikey_core::logging::{Component, Level, Session};
+
+        let directory = TestDirectory::new();
+        let profile = profile_with_document(&directory);
+        let (session, path) = Session::create_in_directory_with_level(
+            &directory.0,
+            Component::Desktop,
+            Level::Events,
+        )
+        .expect("sessione sintetica");
+        let mut app = DesktopApp {
+            log_session: Some(session.clone()),
+            ..DesktopApp::default()
+        };
+        app.import_profile(profile.source_path());
+        app.review = Some(ReviewSummary::default());
+
+        let context = egui::Context::default();
+        let mut frame = eframe::Frame::_new_kittest();
+        click_button(&mut app, &context, &mut frame, "Rifai preflight");
+        app.worker_handle
+            .take()
+            .expect("worker Preflight avviato dal click")
+            .join()
+            .expect("worker Preflight terminato");
+        session.finish(Component::Desktop).expect("fine sessione");
+        drop(app);
+
+        let log = fs::read_to_string(path).expect("log sintetico");
+        let records = log
+            .lines()
+            .map(|line| serde_json::from_str::<serde_json::Value>(line).expect("record JSON"))
+            .collect::<Vec<_>>();
+        let repeat_action = records
+            .iter()
+            .filter(|record| {
+                record["activity"] == "gui_preflight_repeat_requested"
+                    && record["target"]["name"] == "repeat_preflight"
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(repeat_action.len(), 2);
+        assert_eq!(repeat_action[0]["event"], "started");
+        assert_eq!(repeat_action[1]["event"], "succeeded");
+
+        let preflight = records
+            .iter()
+            .filter(|record| {
+                record["activity"] == "preflight"
+                    && record["operation_id"].is_number()
+                    && record["event"].is_string()
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(preflight.len(), 2);
+        assert_eq!(preflight[0]["event"], "started");
+        assert!(matches!(
+            preflight[1]["event"].as_str(),
+            Some("succeeded" | "failed")
+        ));
+        assert_ne!(
+            repeat_action[0]["operation_id"],
+            preflight[0]["operation_id"]
+        );
+        assert!(!log.contains("documento sintetico"));
+        assert!(!log.contains("patient-a"));
+        assert!(!log.contains("Persona A"));
+        assert!(!log.contains(&directory.0.to_string_lossy().to_string()));
     }
 
     #[test]
