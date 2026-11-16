@@ -2,14 +2,6 @@
   "schema": 2,
   "reviews": [
     {
-      "id": "crates/sanikey-core/src/aifa.rs#b663de73332bd93687e7157ddaa45374ab050e744ef679ccc2cd48c89952c56c:144",
-      "source_sha256": "b663de73332bd93687e7157ddaa45374ab050e744ef679ccc2cd48c89952c56c",
-      "status": "covered",
-      "evidence": "aifa::tests::lookup_queries_trace_complete_inputs_and_result_or_secret_omission confronta tutti gli argomenti e il risultato, verifica call_id e durata, inclusa omissione del segreto.",
-      "evidence_file": "crates/sanikey-core/src/aifa/tests.rs",
-      "evidence_sha256": "eb32f51818f375c3532ed697224f36edf6634927bbfdf32cf01ef7fab7b1eeac"
-    },
-    {
       "id": "crates/sanikey-desktop/src/presentation.rs#f9a025196ad3726b409e87dd5cfd0e120e206303b5328cc4c5a0579dd4217ed3:13",
       "source_sha256": "f9a025196ad3726b409e87dd5cfd0e120e206303b5328cc4c5a0579dd4217ed3",
       "status": "exception",
@@ -69,20 +61,20 @@
       "evidence_sha256": "f9a025196ad3726b409e87dd5cfd0e120e206303b5328cc4c5a0579dd4217ed3"
     },
     {
-      "id": "crates/sanikey-core/src/aifa.rs#b663de73332bd93687e7157ddaa45374ab050e744ef679ccc2cd48c89952c56c:85",
-      "source_sha256": "b663de73332bd93687e7157ddaa45374ab050e744ef679ccc2cd48c89952c56c",
+      "id": "crates/sanikey-core/src/aifa.rs#e79e8207566d2406d10aca11f0fc5420abc3a1b70f17b65eb8e23d1dbce8ae0e:85",
+      "source_sha256": "e79e8207566d2406d10aca11f0fc5420abc3a1b70f17b65eb8e23d1dbce8ae0e",
       "status": "covered",
       "evidence": "aifa::tests::aifa_client_constructors_have_nested_trace_spans_and_representable_results verifica ingresso, uscita, durata e annidamento di Default::default.",
       "evidence_file": "crates/sanikey-core/src/aifa/tests.rs",
-      "evidence_sha256": "eb32f51818f375c3532ed697224f36edf6634927bbfdf32cf01ef7fab7b1eeac"
+      "evidence_sha256": "49d2b393ef2071b7465bf63d8038f2dc0781bae685a06498859c9c388cf525da"
     },
     {
-      "id": "crates/sanikey-core/src/aifa.rs#b663de73332bd93687e7157ddaa45374ab050e744ef679ccc2cd48c89952c56c:87",
-      "source_sha256": "b663de73332bd93687e7157ddaa45374ab050e744ef679ccc2cd48c89952c56c",
+      "id": "crates/sanikey-core/src/aifa.rs#e79e8207566d2406d10aca11f0fc5420abc3a1b70f17b65eb8e23d1dbce8ae0e:87",
+      "source_sha256": "e79e8207566d2406d10aca11f0fc5420abc3a1b70f17b65eb8e23d1dbce8ae0e",
       "status": "covered",
       "evidence": "aifa::tests::aifa_client_constructors_have_nested_trace_spans_and_representable_results verifica ingresso, uscita, durata e risultato rappresentabile di AifaClient::new.",
       "evidence_file": "crates/sanikey-core/src/aifa/tests.rs",
-      "evidence_sha256": "eb32f51818f375c3532ed697224f36edf6634927bbfdf32cf01ef7fab7b1eeac"
+      "evidence_sha256": "49d2b393ef2071b7465bf63d8038f2dc0781bae685a06498859c9c388cf525da"
     },
     {
       "id": "crates/sanikey-core/src/build.rs#0a79b7f35352399b2298c170601565000ab7a193b5c39f444264f390f04202fa:32",
@@ -1144,12 +1136,12 @@
       "evidence_sha256": "9ead94eaf97e98dd3cb1b461c94c806a6d234631d6a49dc3e8872dc27f75f59a"
     },
     {
-      "id": "crates/sanikey-desktop/src/main.rs#58c6d28480d900368baad3638d6c0f0721ea8afe3a1d9df8401b90a3d3f35a1b:90",
-      "source_sha256": "58c6d28480d900368baad3638d6c0f0721ea8afe3a1d9df8401b90a3d3f35a1b",
+      "id": "crates/sanikey-desktop/src/main.rs#1c33297e5ee3c922f750a2e4a3a269818afcc4f4fb9ba30b7cd67586f98465da:90",
+      "source_sha256": "1c33297e5ee3c922f750a2e4a3a269818afcc4f4fb9ba30b7cd67586f98465da",
       "status": "covered",
       "evidence": "tests::person_selection_trace_records_inputs_output_duration_and_redacts_secret_paths verifica input e output rappresentabili, call_id, durata e redazione del percorso segreto.",
       "evidence_file": "crates/sanikey-desktop/src/main.rs",
-      "evidence_sha256": "58c6d28480d900368baad3638d6c0f0721ea8afe3a1d9df8401b90a3d3f35a1b"
+      "evidence_sha256": "1c33297e5ee3c922f750a2e4a3a269818afcc4f4fb9ba30b7cd67586f98465da"
     },
     {
       "id": "crates/sanikey-core/src/metadata/parse/timeline.rs#4b133f26531d918c12f1d25cbb99b2aebac272825ab9cf1e71f5a44a5f908574:0",
@@ -1270,6 +1262,14 @@
       "evidence": "trace_usb_copy_lifecycle::mirror_directory_traces_exact_copy_results_and_external_byte_omission confronta input e risultato nel caso sintetico riuscito, call_id, durata e omissioni.",
       "evidence_file": "crates/sanikey-core/tests/trace_usb_copy_lifecycle.rs",
       "evidence_sha256": "245258a54d965d811571f409d9835d5ac2b70066d86ad0ab603062057dcb3883"
+    },
+    {
+      "id": "crates/sanikey-core/src/frontend.rs#79c8418864fbe1c2483151cd8fcee8a2f6bf73aa3339ae983393fd468c750a95:21",
+      "source_sha256": "79c8418864fbe1c2483151cd8fcee8a2f6bf73aa3339ae983393fd468c750a95",
+      "status": "covered",
+      "evidence": "trace_frontend_build::frontend_build_traces_complete_person_paths_and_omits_copied_image_bytes confronta argomenti e risultati nel caso sintetico riuscito, call_id, durata e copia dello sfondo.",
+      "evidence_file": "crates/sanikey-core/tests/trace_frontend_build.rs",
+      "evidence_sha256": "6030dbf6785c897b9052faba91521f48c40a6247a905771fedc0c094a05ed674"
     }
   ]
 }

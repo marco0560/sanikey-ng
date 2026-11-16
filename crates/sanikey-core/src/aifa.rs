@@ -1311,6 +1311,7 @@ impl AifaClient {
         });
         let mut response_body = None;
         let mut failure_stage = None;
+        let mut request_error = None;
         let result = (|| {
             let response = match self
                 .agent
@@ -1319,8 +1320,10 @@ impl AifaClient {
                 .call()
             {
                 Ok(response) => response,
-                Err(_) => {
+                Err(error) => {
                     failure_stage = Some("request_failed");
+                    request_error =
+                        trace_aifa_json_request_error(error, trace.is_some(), input_has_secret);
                     return None;
                 }
             };
@@ -1358,6 +1361,7 @@ impl AifaClient {
                 TraceValue::Data(serde_json::json!({
                     "outcome": if result.is_some() { "succeeded" } else { "unavailable" },
                     "failure_stage": failure_stage,
+                    "request_error": request_error.as_ref().map(TraceValue::to_json),
                     "response_body": response_body.map(|body| trace_aifa_json_body(&body).to_json()),
                     "response_wire_bytes": TraceValue::Omitted(TraceOmission::ExternalComponent).to_json(),
                     "parsed_payload": result
@@ -1848,6 +1852,18 @@ fn aifa_request_error(error: ureq::Error) -> String {
         },
         |result: &String| trace_sensitive_text(result)
     )
+}
+
+fn trace_aifa_json_request_error(
+    error: ureq::Error,
+    trace_enabled: bool,
+    input_has_secret: bool,
+) -> Option<TraceValue> {
+    if trace_enabled && !input_has_secret {
+        Some(trace_sensitive_text(&aifa_request_error(error)))
+    } else {
+        None
+    }
 }
 
 fn aifa_error_detail(body: &str) -> Option<String> {

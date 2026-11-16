@@ -2568,6 +2568,12 @@ impl DesktopApp {
                 )
                 .clicked()
             {
+                record_ui_action(
+                    self.log_session.as_ref(),
+                    &mut self.log_failure,
+                    Activity::GuiPreflightRequested,
+                    DisplayControl::new("start_preflight"),
+                );
                 self.start_preflight();
             }
             if self.review.is_some() && !busy {
@@ -4347,6 +4353,7 @@ mod tests {
             (Activity::GuiFolderChosen, "gui_folder_chosen"),
             (Activity::GuiPersonSelection, "gui_person_selection"),
             (Activity::GuiReviewEdit, "gui_review_edit"),
+            (Activity::GuiPreflightRequested, "gui_preflight_requested"),
             (
                 Activity::GuiPreflightRepeatRequested,
                 "gui_preflight_repeat_requested",
@@ -5946,9 +5953,20 @@ enabled = false
 
     #[test]
     fn clicking_preflight_with_an_empty_path_shows_accessible_error() {
+        use sanikey_core::logging::{Component, Level, Session};
+
         let directory = TestDirectory::new();
         let profile = profile_with_document(&directory);
-        let mut app = DesktopApp::default();
+        let (session, path) = Session::create_in_directory_with_level(
+            &directory.0,
+            Component::Desktop,
+            Level::Events,
+        )
+        .expect("sessione sintetica Events");
+        let mut app = DesktopApp {
+            log_session: Some(session.clone()),
+            ..DesktopApp::default()
+        };
         app.import_profile(profile.source_path());
         app.selections[0].source_documents = PathBuf::new();
 
@@ -6016,6 +6034,31 @@ enabled = false
             "Completa tutti i percorsi delle persone selezionate prima del preflight."
         );
         assert!(error_is_accessible);
+        assert!(!app.log_failure);
+        session.finish(Component::Desktop).expect("fine sessione");
+        drop(app);
+
+        let log = fs::read_to_string(path).expect("log Events sintetico");
+        let records = log
+            .lines()
+            .map(|line| serde_json::from_str::<serde_json::Value>(line).expect("record JSON"))
+            .collect::<Vec<_>>();
+        let action = records
+            .iter()
+            .filter(|record| {
+                record["activity"] == "gui_preflight_requested"
+                    && record["target"]["name"] == "start_preflight"
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(action.len(), 2, "azione GUI avviata e completata");
+        assert_eq!(action[0]["event"], "started");
+        assert_eq!(action[1]["event"], "succeeded");
+        assert!(
+            records
+                .iter()
+                .all(|record| record["activity"] != "preflight")
+        );
+        assert!(!log.contains(&directory.0.to_string_lossy().to_string()));
     }
 
     #[test]

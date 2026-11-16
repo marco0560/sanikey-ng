@@ -4,7 +4,8 @@ use super::{
     AifaCandidate, AifaCandidateSearch, AifaClient, ConfirmedReferenceDecision,
     confirm_aifa_candidate, create_private_temp_file, download_confirmed_leaflets_with,
     leaflet_download_dates, local_leaflet_documents, lookup_candidate_search_with,
-    medication_fingerprint, update_confirmed_reference, write_confirmed_references,
+    medication_fingerprint, trace_aifa_json_request_error, update_confirmed_reference,
+    write_confirmed_references,
 };
 use crate::logging::{Component, Level, Session};
 use crate::metadata::{Medication, MedicationLeaflet, MedicationLeafletExclusion};
@@ -908,6 +909,86 @@ fn synthetic_trace_captures_aifa_request_and_pdf_bytes_but_events_stay_terse() {
         }
     }
     fs::remove_dir_all(directory).expect("pulizia directory sintetica");
+}
+
+#[test]
+fn aifa_json_request_errors_trace_http_status_and_transport_without_network() {
+    let directory = temporary_directory();
+    let (session, log_path) = Session::create_in_directory_with_level(
+        &directory.join("logs"),
+        Component::Core,
+        Level::Trace,
+    )
+    .expect("sessione Trace sintetica");
+
+    let (http_error, transport_error, secret_error) = session.scoped(|| {
+        let response = ureq::Response::new(
+            503,
+            "Service Unavailable",
+            r#"{"errors":["synthetic service unavailable"]}"#,
+        )
+        .expect("risposta HTTP sintetica");
+        let http_error =
+            trace_aifa_json_request_error(ureq::Error::Status(503, response), true, false)
+                .expect("errore HTTP tracciato")
+                .to_json();
+
+        let transport_error = trace_aifa_json_request_error(
+            ureq::Error::from(std::io::Error::other("synthetic transport failure")),
+            true,
+            false,
+        )
+        .expect("errore di trasporto tracciato")
+        .to_json();
+
+        let secret_response = ureq::Response::new(503, "Service Unavailable", "synthetic")
+            .expect("risposta HTTP sintetica");
+        let secret_error =
+            trace_aifa_json_request_error(ureq::Error::Status(503, secret_response), true, true);
+
+        (http_error, transport_error, secret_error)
+    });
+    drop(session);
+
+    assert!(http_error.to_string().contains("HTTP 503"));
+    assert!(
+        http_error
+            .to_string()
+            .contains("synthetic service unavailable")
+    );
+    assert!(transport_error.to_string().contains("errore di rete"));
+    assert!(
+        transport_error
+            .to_string()
+            .contains("synthetic transport failure")
+    );
+    assert!(secret_error.is_none());
+
+    let log = fs::read_to_string(log_path).expect("log sintetico");
+    assert!(log.contains("aifa::aifa_request_error"));
+    assert!(log.contains("HTTP 503"));
+    assert!(log.contains("synthetic service unavailable"));
+    assert!(log.contains("synthetic transport failure"));
+    fs::remove_dir_all(directory).expect("pulizia directory sintetica");
+
+    let event_directory = temporary_directory();
+    let (events, event_path) = Session::create_in_directory_with_level(
+        &event_directory.join("logs"),
+        Component::Core,
+        Level::Events,
+    )
+    .expect("sessione Events sintetica");
+    let event_response = ureq::Response::new(503, "Service Unavailable", "synthetic")
+        .expect("risposta HTTP sintetica");
+    let event_error = events.scoped(|| {
+        trace_aifa_json_request_error(ureq::Error::Status(503, event_response), false, false)
+    });
+    assert!(event_error.is_none());
+    drop(events);
+    let events_log = fs::read_to_string(event_path).expect("log Events sintetico");
+    assert!(!events_log.contains("function_enter"));
+    assert!(!events_log.contains("HTTP 503"));
+    fs::remove_dir_all(event_directory).expect("pulizia directory Events sintetica");
 }
 
 #[test]
