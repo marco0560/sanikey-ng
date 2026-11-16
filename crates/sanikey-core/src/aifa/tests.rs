@@ -128,40 +128,79 @@ fn aifa_client_constructors_have_nested_trace_spans_and_representable_results() 
             .any(|record| record["type"] == "function_exit"
                 && record["function"] == "aifa::AifaClient::lookup_candidate_search_classified")
     );
-    for function in ["aifa::AifaClient::new", "aifa::AifaClient::default"] {
-        let entry = records
-            .iter()
-            .find(|record| record["type"] == "function_enter" && record["function"] == function)
-            .unwrap_or_else(|| panic!("span di ingresso assente: {function}"));
-        let exit = records
-            .iter()
-            .find(|record| record["type"] == "function_exit" && record["function"] == function)
-            .unwrap_or_else(|| panic!("span di uscita assente: {function}"));
-        assert_eq!(exit["outcome"], "returned");
-        assert!(exit["duration_ms"].is_number());
-        if function.ends_with("default") {
-            assert!(entry["arguments"].to_string().contains("AifaClient::new"));
-        } else {
-            assert!(entry["arguments"].to_string().contains("api.aifa.gov.it"));
-        }
-        assert!(exit["result"].to_string().contains("api.aifa.gov.it"));
-        assert!(exit["result"].to_string().contains("unsupported_type"));
-    }
-    let default_entry = records
+    let default_entries: Vec<_> = records
         .iter()
-        .find(|record| {
+        .filter(|record| {
             record["type"] == "function_enter" && record["function"] == "aifa::AifaClient::default"
         })
-        .expect("span Default::default");
-    let nested_new = records
+        .collect();
+    assert_eq!(default_entries.len(), 1);
+    let default_entry = default_entries[0];
+    let new_entries: Vec<_> = records
         .iter()
-        .find(|record| {
-            record["type"] == "function_enter"
-                && record["function"] == "aifa::AifaClient::new"
-                && record["parent_call_id"] == default_entry["call_id"]
+        .filter(|record| {
+            record["type"] == "function_enter" && record["function"] == "aifa::AifaClient::new"
         })
+        .collect();
+    assert_eq!(
+        new_entries.len(),
+        2,
+        "new diretta e new annidata in default"
+    );
+
+    let default_call_id = default_entry["call_id"].as_u64().expect("call_id default");
+    let nested_new = new_entries
+        .iter()
+        .find(|entry| entry["parent_call_id"] == default_call_id)
+        .copied()
         .expect("span new annidata nel Default");
-    assert!(nested_new["call_id"].is_number());
+    let nested_new_call_id = nested_new["call_id"]
+        .as_u64()
+        .expect("call_id new annidata");
+    let direct_new = new_entries
+        .iter()
+        .find(|entry| entry["call_id"] != nested_new_call_id)
+        .copied()
+        .expect("span new diretta");
+    let direct_new_call_id = direct_new["call_id"].as_u64().expect("call_id new diretta");
+    assert_ne!(default_call_id, nested_new_call_id);
+    assert_ne!(default_call_id, direct_new_call_id);
+    assert_ne!(nested_new_call_id, direct_new_call_id);
+
+    let assert_correlated_exit = |function: &str, entry: &Value| {
+        let call_id = entry["call_id"].as_u64().expect("call_id numerico");
+        let exits: Vec<_> = records
+            .iter()
+            .filter(|record| {
+                record["type"] == "function_exit"
+                    && record["function"] == function
+                    && record["call_id"] == call_id
+            })
+            .collect();
+        assert_eq!(
+            exits.len(),
+            1,
+            "una uscita correlata per {function}#{call_id}"
+        );
+        let exit = exits[0];
+        assert_eq!(exit["outcome"], "returned");
+        assert!(exit["duration_ms"].as_u64().is_some());
+        assert!(exit["result"].to_string().contains("api.aifa.gov.it"));
+        assert!(exit["result"].to_string().contains("unsupported_type"));
+    };
+
+    for entry in [direct_new, nested_new] {
+        assert!(entry["arguments"].to_string().contains("api.aifa.gov.it"));
+        assert_correlated_exit("aifa::AifaClient::new", entry);
+    }
+    assert!(
+        default_entry["arguments"]
+            .to_string()
+            .contains("AifaClient::new")
+    );
+    assert_correlated_exit("aifa::AifaClient::default", default_entry);
+
+    assert_eq!(nested_new["parent_call_id"], default_entry["call_id"]);
 
     fs::remove_dir_all(directory).expect("pulizia log sintetico");
 }

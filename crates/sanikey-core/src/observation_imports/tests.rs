@@ -259,6 +259,140 @@ fn supports_xlsx_spreadsheets() {
 }
 
 #[test]
+fn xlsx_trace_records_the_selected_sheet_and_selection_mode() {
+    let directory = TestDirectory::new();
+    let (_metadata, documents) = directory.roots();
+    let workbook_path = documents.join("two-sheets.xlsx");
+    write_xlsx_with_sheets(
+        &workbook_path,
+        &[
+            (
+                "Riepilogo",
+                r#"<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>Marker</t></is></c></row><row r="2"><c r="A2" t="inlineStr"><is><t>FIRST_SHEET_ONLY</t></is></c></row></sheetData></worksheet>"#,
+            ),
+            (
+                "Misure",
+                r#"<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>Marker</t></is></c></row><row r="2"><c r="A2" t="inlineStr"><is><t>SECOND_SHEET_ONLY</t></is></c></row></sheetData></worksheet>"#,
+            ),
+        ],
+    );
+    let source = |sheet: Option<String>| super::SourceSpec {
+        path: workbook_path.clone(),
+        raw_path: "two-sheets.xlsx".to_owned(),
+        sheet,
+        header_rows: vec![1],
+        data_start_row: None,
+        fill_down: std::collections::HashSet::new(),
+        layout: "table".to_owned(),
+        matrix: Table::new(),
+        extracts: Vec::new(),
+    };
+    let field = |exit: &JsonValue, name: &str| {
+        exit["result"]["value"]
+            .as_array()
+            .expect("Trace record dei risultati")
+            .iter()
+            .find(|field| field["name"] == name)
+            .unwrap_or_else(|| panic!("campo Trace assente: {name}"))
+            .clone()
+    };
+
+    let (default_rows, _default_log, default_records) =
+        traced(|| super::read_source(&source(None)));
+    let default_rows = default_rows.expect("lettura foglio predefinito");
+    assert_eq!(
+        default_rows[0].get("Marker"),
+        Some(&super::Cell::Text("FIRST_SHEET_ONLY".to_owned()))
+    );
+    let (default_entry, default_exit) =
+        function_span(&default_records, "observation_imports::read_source");
+    let sheet_argument = default_entry["arguments"]
+        .as_array()
+        .expect("argomenti read_source")
+        .iter()
+        .find(|argument| argument["name"] == "sheet")
+        .expect("argomento sheet");
+    assert_eq!(sheet_argument["content"], expected_text("None"));
+    assert_eq!(
+        field(default_exit, "selected_sheet")["content"],
+        expected_text("Riepilogo")
+    );
+    assert_eq!(
+        field(default_exit, "selection_mode")["content"],
+        expected_data(json!("defaulted"))
+    );
+    let default_result = field(default_exit, "result");
+    assert!(default_result.to_string().contains("FIRST_SHEET_ONLY"));
+    assert!(!default_result.to_string().contains("SECOND_SHEET_ONLY"));
+
+    let (explicit_rows, _explicit_log, explicit_records) =
+        traced(|| super::read_source(&source(Some("Misure".to_owned()))));
+    let explicit_rows = explicit_rows.expect("lettura foglio esplicito");
+    assert_eq!(
+        explicit_rows[0].get("Marker"),
+        Some(&super::Cell::Text("SECOND_SHEET_ONLY".to_owned()))
+    );
+    let (explicit_entry, explicit_exit) =
+        function_span(&explicit_records, "observation_imports::read_source");
+    let explicit_sheet_argument = explicit_entry["arguments"]
+        .as_array()
+        .expect("argomenti read_source esplicito")
+        .iter()
+        .find(|argument| argument["name"] == "sheet")
+        .expect("argomento sheet esplicito");
+    assert_eq!(
+        explicit_sheet_argument["content"],
+        expected_text("Some(\"Misure\")")
+    );
+    assert_eq!(
+        field(explicit_exit, "selected_sheet")["content"],
+        expected_text("Misure")
+    );
+    assert_eq!(
+        field(explicit_exit, "selection_mode")["content"],
+        expected_data(json!("explicit"))
+    );
+
+    let csv_path = documents.join("input.csv");
+    fs::write(&csv_path, "Marker\nCSV_SHEET_NOT_APPLICABLE\n").expect("CSV sintetico");
+    let csv_source = super::SourceSpec {
+        path: csv_path,
+        raw_path: "input.csv".to_owned(),
+        sheet: None,
+        header_rows: vec![1],
+        data_start_row: None,
+        fill_down: std::collections::HashSet::new(),
+        layout: "table".to_owned(),
+        matrix: Table::new(),
+        extracts: Vec::new(),
+    };
+    let (csv_rows, _csv_log, csv_records) = traced(|| super::read_source(&csv_source));
+    assert_eq!(csv_rows.expect("lettura CSV").len(), 1);
+    let (_, csv_exit) = function_span(&csv_records, "observation_imports::read_source");
+    assert_eq!(field(csv_exit, "selected_sheet")["content"]["kind"], "data");
+    assert!(field(csv_exit, "selected_sheet")["content"]["value"].is_null());
+    assert_eq!(
+        field(csv_exit, "selection_mode")["content"],
+        expected_data(json!("not_applicable"))
+    );
+
+    let event_log_directory = directory.0.join("events");
+    let (events, events_path) = Session::create_in_directory_with_level(
+        &event_log_directory,
+        Component::Core,
+        Level::Events,
+    )
+    .expect("sessione Events sintetica");
+    let event_rows = events.scoped(|| super::read_source(&source(None)));
+    assert!(event_rows.is_ok());
+    drop(events);
+    let event_log = fs::read_to_string(events_path).expect("log Events sintetico");
+    assert!(!event_log.contains("function_enter"));
+    assert!(!event_log.contains("selected_sheet"));
+    assert!(!event_log.contains("Riepilogo"));
+}
+
+#[test]
 fn trace_records_private_import_content_but_redacts_identified_secrets() {
     let secret = "synthetic-secret-observation-9274";
     let private_note = "nota privata sintetica controllo 4821";
@@ -558,32 +692,71 @@ fn synthetic_trace_records_complete_observation_import_helper_spans() {
 }
 
 fn write_xlsx(path: &Path) {
+    write_xlsx_with_sheets(
+        path,
+        &[(
+            "Sheet1",
+            r#"<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>Data</t></is></c><c r="B1" t="inlineStr"><is><t>Peso</t></is></c></row><row r="2"><c r="A2" t="inlineStr"><is><t>2026-01-02</t></is></c><c r="B2"><v>70.5</v></c></row></sheetData></worksheet>"#,
+        )],
+    );
+}
+
+fn write_xlsx_with_sheets(path: &Path, sheets: &[(&str, &str)]) {
     use std::io::Write;
     use zip::write::SimpleFileOptions;
-    let file = fs::File::create(path).unwrap();
-    let mut zip = zip::ZipWriter::new(file);
-    let entries = [
+
+    let worksheet_content_types = (1..=sheets.len())
+        .map(|index| format!("<Override PartName=\"/xl/worksheets/sheet{index}.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml\"/>"))
+        .collect::<String>();
+    let workbook_sheets = sheets
+        .iter()
+        .enumerate()
+        .map(|(index, (name, _))| {
+            format!(
+                "<sheet name=\"{name}\" sheetId=\"{}\" r:id=\"rId{}\"/>",
+                index + 1,
+                index + 1
+            )
+        })
+        .collect::<String>();
+    let worksheet_relationships = sheets
+        .iter()
+        .enumerate()
+        .map(|(index, _)| {
+            format!(
+                "<Relationship Id=\"rId{}\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet\" Target=\"worksheets/sheet{}.xml\"/>",
+                index + 1,
+                index + 1
+            )
+        })
+        .collect::<String>();
+    let mut entries = vec![
         (
-            "[Content_Types].xml",
-            r#"<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>"#,
+            "[Content_Types].xml".to_owned(),
+            format!("<?xml version=\"1.0\" encoding=\"UTF-8\"?><Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\"><Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/><Default Extension=\"xml\" ContentType=\"application/xml\"/><Override PartName=\"/xl/workbook.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml\"/>{worksheet_content_types}</Types>"),
         ),
         (
-            "_rels/.rels",
-            r#"<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>"#,
+            "_rels/.rels".to_owned(),
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\"><Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\" Target=\"xl/workbook.xml\"/></Relationships>".to_owned(),
         ),
         (
-            "xl/workbook.xml",
-            r#"<?xml version="1.0" encoding="UTF-8"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Sheet1" sheetId="1" r:id="rId1"/></sheets></workbook>"#,
+            "xl/workbook.xml".to_owned(),
+            format!("<?xml version=\"1.0\" encoding=\"UTF-8\"?><workbook xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\"><sheets>{workbook_sheets}</sheets></workbook>"),
         ),
         (
-            "xl/_rels/workbook.xml.rels",
-            r#"<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>"#,
-        ),
-        (
-            "xl/worksheets/sheet1.xml",
-            r#"<?xml version="1.0" encoding="UTF-8"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>Data</t></is></c><c r="B1" t="inlineStr"><is><t>Peso</t></is></c></row><row r="2"><c r="A2" t="inlineStr"><is><t>2026-01-02</t></is></c><c r="B2"><v>70.5</v></c></row></sheetData></worksheet>"#,
+            "xl/_rels/workbook.xml.rels".to_owned(),
+            format!("<?xml version=\"1.0\" encoding=\"UTF-8\"?><Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">{worksheet_relationships}</Relationships>"),
         ),
     ];
+    entries.extend(sheets.iter().enumerate().map(|(index, (_, contents))| {
+        (
+            format!("xl/worksheets/sheet{}.xml", index + 1),
+            (*contents).to_owned(),
+        )
+    }));
+
+    let file = fs::File::create(path).unwrap();
+    let mut zip = zip::ZipWriter::new(file);
     for (name, contents) in entries {
         zip.start_file(name, SimpleFileOptions::default()).unwrap();
         zip.write_all(contents.as_bytes()).unwrap();

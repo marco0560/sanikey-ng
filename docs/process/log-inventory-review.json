@@ -66,7 +66,7 @@
       "status": "covered",
       "evidence": "aifa::tests::aifa_client_constructors_have_nested_trace_spans_and_representable_results verifica ingresso, uscita, durata e annidamento di Default::default.",
       "evidence_file": "crates/sanikey-core/src/aifa/tests.rs",
-      "evidence_sha256": "3d7dee3dd90ff2f30ce6478caeb5a66efc1f60458fa5353c3539d64a1e92427d"
+      "evidence_sha256": "90cdffa70af84e2a73f0f8ced20997e5f7243ce432cfa6a36bc4081478b8b8a9"
     },
     {
       "id": "crates/sanikey-core/src/aifa.rs#52cde4460abea29ec3b6aa48dbfa97a1e63cc2ec15358c3309e53c22f69a9ad8:87",
@@ -74,7 +74,7 @@
       "status": "covered",
       "evidence": "aifa::tests::aifa_client_constructors_have_nested_trace_spans_and_representable_results verifica ingresso, uscita, durata e risultato rappresentabile di AifaClient::new.",
       "evidence_file": "crates/sanikey-core/src/aifa/tests.rs",
-      "evidence_sha256": "3d7dee3dd90ff2f30ce6478caeb5a66efc1f60458fa5353c3539d64a1e92427d"
+      "evidence_sha256": "90cdffa70af84e2a73f0f8ced20997e5f7243ce432cfa6a36bc4081478b8b8a9"
     },
     {
       "id": "crates/sanikey-core/src/build.rs#0a79b7f35352399b2298c170601565000ab7a193b5c39f444264f390f04202fa:32",
@@ -805,68 +805,68 @@
       "evidence_sha256": "d40b361d1d9936d7fcb9f2acda742f3e484248702361052c22d4fa4ef78c16bc"
     },
     {
-      "id": "crates/sanikey-core/src/observation_imports.rs#27907e2ec8b29372c5aff1b1fb2575fa1dcd1ee91417b64aa9d84af1ace48963:190",
-      "source_sha256": "27907e2ec8b29372c5aff1b1fb2575fa1dcd1ee91417b64aa9d84af1ace48963",
+      "id": "crates/sanikey-core/src/observation_imports.rs#4fe931a5d3cbb850e4cac50d65f3c73070a2c66c4356e860e0cc11422c245e5e:190",
+      "source_sha256": "4fe931a5d3cbb850e4cac50d65f3c73070a2c66c4356e860e0cc11422c245e5e",
       "status": "covered",
       "evidence": "observation_imports::tests::synthetic_trace_records_complete_observation_import_helper_spans confronta input e output di date_value, call_id e durata.",
       "evidence_file": "crates/sanikey-core/src/observation_imports/tests.rs",
-      "evidence_sha256": "64784d2ba4371904c60e35996e270340a1514a5f7371ad3c86c8d4e64a18378a"
+      "evidence_sha256": "57c84c699e434e2e8a1afff066e60b2c3318e0c97a699579c55781ad2174811a"
     },
     {
-      "id": "crates/sanikey-core/src/observation_imports.rs#27907e2ec8b29372c5aff1b1fb2575fa1dcd1ee91417b64aa9d84af1ace48963:313",
-      "source_sha256": "27907e2ec8b29372c5aff1b1fb2575fa1dcd1ee91417b64aa9d84af1ace48963",
+      "id": "crates/sanikey-core/src/observation_imports.rs#4fe931a5d3cbb850e4cac50d65f3c73070a2c66c4356e860e0cc11422c245e5e:313",
+      "source_sha256": "4fe931a5d3cbb850e4cac50d65f3c73070a2c66c4356e860e0cc11422c245e5e",
       "status": "covered",
       "evidence": "observation_imports::tests::synthetic_trace_records_complete_observation_import_helper_spans confronta input e output di cell_text, call_id e durata; contenuto senza provenienza omesso esplicitamente.",
       "evidence_file": "crates/sanikey-core/src/observation_imports/tests.rs",
-      "evidence_sha256": "64784d2ba4371904c60e35996e270340a1514a5f7371ad3c86c8d4e64a18378a"
+      "evidence_sha256": "57c84c699e434e2e8a1afff066e60b2c3318e0c97a699579c55781ad2174811a"
     },
     {
-      "id": "crates/sanikey-core/src/observation_imports.rs#27907e2ec8b29372c5aff1b1fb2575fa1dcd1ee91417b64aa9d84af1ace48963:318",
-      "source_sha256": "27907e2ec8b29372c5aff1b1fb2575fa1dcd1ee91417b64aa9d84af1ace48963",
+      "id": "crates/sanikey-core/src/observation_imports.rs#4fe931a5d3cbb850e4cac50d65f3c73070a2c66c4356e860e0cc11422c245e5e:318",
+      "source_sha256": "4fe931a5d3cbb850e4cac50d65f3c73070a2c66c4356e860e0cc11422c245e5e",
       "status": "covered",
       "evidence": "observation_imports::tests::synthetic_trace_records_complete_observation_import_helper_spans confronta input e output di slug, call_id e durata.",
       "evidence_file": "crates/sanikey-core/src/observation_imports/tests.rs",
-      "evidence_sha256": "64784d2ba4371904c60e35996e270340a1514a5f7371ad3c86c8d4e64a18378a"
+      "evidence_sha256": "57c84c699e434e2e8a1afff066e60b2c3318e0c97a699579c55781ad2174811a"
     },
     {
-      "id": "crates/sanikey-core/src/observation_imports.rs#27907e2ec8b29372c5aff1b1fb2575fa1dcd1ee91417b64aa9d84af1ace48963:324",
-      "source_sha256": "27907e2ec8b29372c5aff1b1fb2575fa1dcd1ee91417b64aa9d84af1ace48963",
+      "id": "crates/sanikey-core/src/observation_imports.rs#4fe931a5d3cbb850e4cac50d65f3c73070a2c66c4356e860e0cc11422c245e5e:324",
+      "source_sha256": "4fe931a5d3cbb850e4cac50d65f3c73070a2c66c4356e860e0cc11422c245e5e",
       "status": "covered",
       "evidence": "observation_imports::tests::synthetic_trace_records_complete_observation_import_helper_spans confronta input e output di toml_key, call_id e durata.",
       "evidence_file": "crates/sanikey-core/src/observation_imports/tests.rs",
-      "evidence_sha256": "64784d2ba4371904c60e35996e270340a1514a5f7371ad3c86c8d4e64a18378a"
+      "evidence_sha256": "57c84c699e434e2e8a1afff066e60b2c3318e0c97a699579c55781ad2174811a"
     },
     {
-      "id": "crates/sanikey-core/src/observation_imports.rs#27907e2ec8b29372c5aff1b1fb2575fa1dcd1ee91417b64aa9d84af1ace48963:330",
-      "source_sha256": "27907e2ec8b29372c5aff1b1fb2575fa1dcd1ee91417b64aa9d84af1ace48963",
+      "id": "crates/sanikey-core/src/observation_imports.rs#4fe931a5d3cbb850e4cac50d65f3c73070a2c66c4356e860e0cc11422c245e5e:330",
+      "source_sha256": "4fe931a5d3cbb850e4cac50d65f3c73070a2c66c4356e860e0cc11422c245e5e",
       "status": "covered",
       "evidence": "observation_imports::tests::synthetic_trace_records_complete_observation_import_helper_spans confronta input e output di array, call_id e durata.",
       "evidence_file": "crates/sanikey-core/src/observation_imports/tests.rs",
-      "evidence_sha256": "64784d2ba4371904c60e35996e270340a1514a5f7371ad3c86c8d4e64a18378a"
+      "evidence_sha256": "57c84c699e434e2e8a1afff066e60b2c3318e0c97a699579c55781ad2174811a"
     },
     {
-      "id": "crates/sanikey-core/src/observation_imports.rs#27907e2ec8b29372c5aff1b1fb2575fa1dcd1ee91417b64aa9d84af1ace48963:358",
-      "source_sha256": "27907e2ec8b29372c5aff1b1fb2575fa1dcd1ee91417b64aa9d84af1ace48963",
+      "id": "crates/sanikey-core/src/observation_imports.rs#4fe931a5d3cbb850e4cac50d65f3c73070a2c66c4356e860e0cc11422c245e5e:358",
+      "source_sha256": "4fe931a5d3cbb850e4cac50d65f3c73070a2c66c4356e860e0cc11422c245e5e",
       "status": "covered",
       "evidence": "observation_imports::tests::synthetic_trace_records_complete_observation_import_helper_spans confronta input e output di optional_bool, call_id e durata.",
       "evidence_file": "crates/sanikey-core/src/observation_imports/tests.rs",
-      "evidence_sha256": "64784d2ba4371904c60e35996e270340a1514a5f7371ad3c86c8d4e64a18378a"
+      "evidence_sha256": "57c84c699e434e2e8a1afff066e60b2c3318e0c97a699579c55781ad2174811a"
     },
     {
-      "id": "crates/sanikey-core/src/observation_imports.rs#27907e2ec8b29372c5aff1b1fb2575fa1dcd1ee91417b64aa9d84af1ace48963:380",
-      "source_sha256": "27907e2ec8b29372c5aff1b1fb2575fa1dcd1ee91417b64aa9d84af1ace48963",
+      "id": "crates/sanikey-core/src/observation_imports.rs#4fe931a5d3cbb850e4cac50d65f3c73070a2c66c4356e860e0cc11422c245e5e:380",
+      "source_sha256": "4fe931a5d3cbb850e4cac50d65f3c73070a2c66c4356e860e0cc11422c245e5e",
       "status": "covered",
       "evidence": "observation_imports::tests::synthetic_trace_records_complete_observation_import_helper_spans confronta input e output di table_int, call_id e durata.",
       "evidence_file": "crates/sanikey-core/src/observation_imports/tests.rs",
-      "evidence_sha256": "64784d2ba4371904c60e35996e270340a1514a5f7371ad3c86c8d4e64a18378a"
+      "evidence_sha256": "57c84c699e434e2e8a1afff066e60b2c3318e0c97a699579c55781ad2174811a"
     },
     {
-      "id": "crates/sanikey-core/src/observation_imports.rs#27907e2ec8b29372c5aff1b1fb2575fa1dcd1ee91417b64aa9d84af1ace48963:388",
-      "source_sha256": "27907e2ec8b29372c5aff1b1fb2575fa1dcd1ee91417b64aa9d84af1ace48963",
+      "id": "crates/sanikey-core/src/observation_imports.rs#4fe931a5d3cbb850e4cac50d65f3c73070a2c66c4356e860e0cc11422c245e5e:388",
+      "source_sha256": "4fe931a5d3cbb850e4cac50d65f3c73070a2c66c4356e860e0cc11422c245e5e",
       "status": "covered",
       "evidence": "observation_imports::tests::synthetic_trace_records_complete_observation_import_helper_spans confronta input e output di table_str, call_id e durata.",
       "evidence_file": "crates/sanikey-core/src/observation_imports/tests.rs",
-      "evidence_sha256": "64784d2ba4371904c60e35996e270340a1514a5f7371ad3c86c8d4e64a18378a"
+      "evidence_sha256": "57c84c699e434e2e8a1afff066e60b2c3318e0c97a699579c55781ad2174811a"
     },
     {
       "id": "crates/sanikey-core/src/office.rs#7aa747f144610ab9a903fcc4d373002986629a10e616a96e24a9ba59bfce10a4:18",

@@ -622,6 +622,8 @@ fn parse_extract(
 }
 
 fn read_source(source: &SourceSpec) -> Result<Vec<Row>, OperationError> {
+    let selection_mode = std::cell::Cell::new("not_applicable");
+    let selected_sheet = std::cell::RefCell::new(None::<String>);
     trace_observation_call(
         "observation_imports::read_source",
         || {
@@ -647,6 +649,11 @@ fn read_source(source: &SourceSpec) -> Result<Vec<Row>, OperationError> {
             let raw_rows = if suffix == "csv" {
                 parse_csv(&read_text(&source.path)?)?
             } else if ["ods", "xls", "xlsb", "xlsm", "xlsx"].contains(&suffix.as_str()) {
+                selection_mode.set(if source.sheet.is_some() {
+                    "explicit"
+                } else {
+                    "defaulted"
+                });
                 let mut workbook = open_workbook_auto(&source.path).map_err(|error| {
                     config_error(format!(
                         "lettura osservazioni non riuscita per {}: {error}",
@@ -663,6 +670,7 @@ fn read_source(source: &SourceSpec) -> Result<Vec<Row>, OperationError> {
                             source.path.display()
                         ))
                     })?;
+                *selected_sheet.borrow_mut() = Some(sheet_name.clone());
                 let range = workbook.worksheet_range(&sheet_name).map_err(|error| {
                     config_error(format!(
                         "lettura osservazioni non riuscita per {}: {error}",
@@ -710,9 +718,25 @@ fn read_source(source: &SourceSpec) -> Result<Vec<Row>, OperationError> {
                 })
                 .collect())
         },
-        |result| match result {
-            Ok(rows) => trace_rows(rows),
-            Err(error) => trace_error(error),
+        |result| {
+            TraceValue::record(&[
+                TraceField::new(
+                    "result",
+                    match result {
+                        Ok(rows) => trace_rows(rows),
+                        Err(error) => trace_error(error),
+                    },
+                ),
+                TraceField::new(
+                    "selected_sheet",
+                    selected_sheet
+                        .borrow()
+                        .as_deref()
+                        .map(trace_sensitive_text)
+                        .unwrap_or(TraceValue::Data(serde_json::Value::Null)),
+                ),
+                TraceField::new("selection_mode", TraceValue::data(selection_mode.get())),
+            ])
         },
     )
 }
