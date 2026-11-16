@@ -565,60 +565,60 @@
       "evidence_sha256": "653cb2a95c480cf8a71aaa1b3ee7e9ef185edf8ad9ac225a52740e8a010949d9"
     },
     {
-      "id": "crates/sanikey-core/src/pdf.rs#18c478403bc895bf7e6f55e7c471587bf48c73c8a293d35830180cd9ccd16ce1:9",
-      "source_sha256": "18c478403bc895bf7e6f55e7c471587bf48c73c8a293d35830180cd9ccd16ce1",
+      "id": "crates/sanikey-core/src/pdf.rs#526c504062d2072267e6bad0814da2f34cf0af11b01d1a24c515f9a58c1ff5e9:9",
+      "source_sha256": "526c504062d2072267e6bad0814da2f34cf0af11b01d1a24c515f9a58c1ff5e9",
       "status": "covered",
       "evidence": "pdf::tests::synthetic_pdf_spans_match_full_arguments_outputs_ids_durations_and_omissions confronta argomenti e risultati di extract_pdf_text, call_id e durata.",
       "evidence_file": "crates/sanikey-core/src/pdf/tests.rs",
-      "evidence_sha256": "36e7e50a87e3041c9fe7a09549b7fead263cd2859d624e022b95f19965989010"
+      "evidence_sha256": "dedd5e02b8b27efdd52984f01a177f71a69078d0bbcf95ca21fb568faa9b383f"
     },
     {
-      "id": "crates/sanikey-core/src/pdf.rs#18c478403bc895bf7e6f55e7c471587bf48c73c8a293d35830180cd9ccd16ce1:11",
-      "source_sha256": "18c478403bc895bf7e6f55e7c471587bf48c73c8a293d35830180cd9ccd16ce1",
+      "id": "crates/sanikey-core/src/pdf.rs#526c504062d2072267e6bad0814da2f34cf0af11b01d1a24c515f9a58c1ff5e9:11",
+      "source_sha256": "526c504062d2072267e6bad0814da2f34cf0af11b01d1a24c515f9a58c1ff5e9",
       "status": "covered",
       "evidence": "pdf::tests::synthetic_pdf_spans_match_full_arguments_outputs_ids_durations_and_omissions confronta argomenti e risultati di extract_pdf_text_with_options, call_id e durata.",
       "evidence_file": "crates/sanikey-core/src/pdf/tests.rs",
-      "evidence_sha256": "36e7e50a87e3041c9fe7a09549b7fead263cd2859d624e022b95f19965989010"
+      "evidence_sha256": "dedd5e02b8b27efdd52984f01a177f71a69078d0bbcf95ca21fb568faa9b383f"
     },
     {
-      "id": "crates/sanikey-core/src/pdf.rs#18c478403bc895bf7e6f55e7c471587bf48c73c8a293d35830180cd9ccd16ce1:13",
-      "source_sha256": "18c478403bc895bf7e6f55e7c471587bf48c73c8a293d35830180cd9ccd16ce1",
+      "id": "crates/sanikey-core/src/pdf.rs#526c504062d2072267e6bad0814da2f34cf0af11b01d1a24c515f9a58c1ff5e9:13",
+      "source_sha256": "526c504062d2072267e6bad0814da2f34cf0af11b01d1a24c515f9a58c1ff5e9",
       "status": "covered",
       "evidence": "pdf::tests::synthetic_pdf_spans_match_full_arguments_outputs_ids_durations_and_omissions confronta argomenti e risultati di extract_digital_pdf_text, call_id e durata.",
       "evidence_file": "crates/sanikey-core/src/pdf/tests.rs",
-      "evidence_sha256": "36e7e50a87e3041c9fe7a09549b7fead263cd2859d624e022b95f19965989010"
+      "evidence_sha256": "dedd5e02b8b27efdd52984f01a177f71a69078d0bbcf95ca21fb568faa9b383f"
     },
     {
-      "id": "crates/sanikey-core/src/pdf.rs#18c478403bc895bf7e6f55e7c471587bf48c73c8a293d35830180cd9ccd16ce1:15",
-      "source_sha256": "18c478403bc895bf7e6f55e7c471587bf48c73c8a293d35830180cd9ccd16ce1",
+      "id": "crates/sanikey-core/src/pdf.rs#526c504062d2072267e6bad0814da2f34cf0af11b01d1a24c515f9a58c1ff5e9:15",
+      "source_sha256": "526c504062d2072267e6bad0814da2f34cf0af11b01d1a24c515f9a58c1ff5e9",
       "status": "covered",
       "evidence": "pdf::tests::synthetic_pdf_spans_match_full_arguments_outputs_ids_durations_and_omissions confronta argomenti e risultati di has_sufficient_pdf_text, call_id e durata.",
       "evidence_file": "crates/sanikey-core/src/pdf/tests.rs",
-      "evidence_sha256": "36e7e50a87e3041c9fe7a09549b7fead263cd2859d624e022b95f19965989010"
+      "evidence_sha256": "dedd5e02b8b27efdd52984f01a177f71a69078d0bbcf95ca21fb568faa9b383f"
     },
     {
-      "id": "crates/sanikey-core/src/pdf.rs#18c478403bc895bf7e6f55e7c471587bf48c73c8a293d35830180cd9ccd16ce1:21",
-      "source_sha256": "18c478403bc895bf7e6f55e7c471587bf48c73c8a293d35830180cd9ccd16ce1",
+      "id": "crates/sanikey-core/src/pdf.rs#526c504062d2072267e6bad0814da2f34cf0af11b01d1a24c515f9a58c1ff5e9:21",
+      "source_sha256": "526c504062d2072267e6bad0814da2f34cf0af11b01d1a24c515f9a58c1ff5e9",
       "status": "covered",
       "evidence": "pdf::tests::synthetic_pdf_spans_match_full_arguments_outputs_ids_durations_and_omissions confronta argomenti e risultati di empty_extraction, call_id e durata.",
       "evidence_file": "crates/sanikey-core/src/pdf/tests.rs",
-      "evidence_sha256": "36e7e50a87e3041c9fe7a09549b7fead263cd2859d624e022b95f19965989010"
+      "evidence_sha256": "dedd5e02b8b27efdd52984f01a177f71a69078d0bbcf95ca21fb568faa9b383f"
     },
     {
-      "id": "crates/sanikey-core/src/pdf.rs#18c478403bc895bf7e6f55e7c471587bf48c73c8a293d35830180cd9ccd16ce1:31",
-      "source_sha256": "18c478403bc895bf7e6f55e7c471587bf48c73c8a293d35830180cd9ccd16ce1",
+      "id": "crates/sanikey-core/src/pdf.rs#526c504062d2072267e6bad0814da2f34cf0af11b01d1a24c515f9a58c1ff5e9:31",
+      "source_sha256": "526c504062d2072267e6bad0814da2f34cf0af11b01d1a24c515f9a58c1ff5e9",
       "status": "covered",
       "evidence": "pdf::tests::synthetic_pdf_spans_match_full_arguments_outputs_ids_durations_and_omissions confronta argomenti e risultati di rgba_to_ppm, call_id e durata.",
       "evidence_file": "crates/sanikey-core/src/pdf/tests.rs",
-      "evidence_sha256": "36e7e50a87e3041c9fe7a09549b7fead263cd2859d624e022b95f19965989010"
+      "evidence_sha256": "dedd5e02b8b27efdd52984f01a177f71a69078d0bbcf95ca21fb568faa9b383f"
     },
     {
-      "id": "crates/sanikey-core/src/pdf.rs#18c478403bc895bf7e6f55e7c471587bf48c73c8a293d35830180cd9ccd16ce1:49",
-      "source_sha256": "18c478403bc895bf7e6f55e7c471587bf48c73c8a293d35830180cd9ccd16ce1",
+      "id": "crates/sanikey-core/src/pdf.rs#526c504062d2072267e6bad0814da2f34cf0af11b01d1a24c515f9a58c1ff5e9:54",
+      "source_sha256": "526c504062d2072267e6bad0814da2f34cf0af11b01d1a24c515f9a58c1ff5e9",
       "status": "covered",
       "evidence": "pdf::tests::synthetic_pdf_spans_match_full_arguments_outputs_ids_durations_and_omissions confronta argomenti e risultati di pdf_page_count, call_id e durata.",
       "evidence_file": "crates/sanikey-core/src/pdf/tests.rs",
-      "evidence_sha256": "36e7e50a87e3041c9fe7a09549b7fead263cd2859d624e022b95f19965989010"
+      "evidence_sha256": "dedd5e02b8b27efdd52984f01a177f71a69078d0bbcf95ca21fb568faa9b383f"
     },
     {
       "id": "crates/sanikey-core/src/simulated_export.rs#e9430545b06a791aed0b1daa9abb2606cbb20a5e2fe17ec03c1fd238bdcffbe8:184",
@@ -1144,12 +1144,12 @@
       "evidence_sha256": "9ead94eaf97e98dd3cb1b461c94c806a6d234631d6a49dc3e8872dc27f75f59a"
     },
     {
-      "id": "crates/sanikey-desktop/src/main.rs#38ca5989a9ab708a944d357b713960b0055613eb82a82d1d51ad4d6fa825efb1:86",
-      "source_sha256": "38ca5989a9ab708a944d357b713960b0055613eb82a82d1d51ad4d6fa825efb1",
+      "id": "crates/sanikey-desktop/src/main.rs#03bf28e7ec7d9298a80461ebb75b0ee7c2f150e17296ab5ffae7b72f61c4dfee:86",
+      "source_sha256": "03bf28e7ec7d9298a80461ebb75b0ee7c2f150e17296ab5ffae7b72f61c4dfee",
       "status": "covered",
       "evidence": "tests::person_selection_trace_records_inputs_output_duration_and_redacts_secret_paths verifica input e output rappresentabili, call_id, durata e redazione del percorso segreto.",
       "evidence_file": "crates/sanikey-desktop/src/main.rs",
-      "evidence_sha256": "38ca5989a9ab708a944d357b713960b0055613eb82a82d1d51ad4d6fa825efb1"
+      "evidence_sha256": "03bf28e7ec7d9298a80461ebb75b0ee7c2f150e17296ab5ffae7b72f61c4dfee"
     },
     {
       "id": "crates/sanikey-core/src/metadata/parse/timeline.rs#4b133f26531d918c12f1d25cbb99b2aebac272825ab9cf1e71f5a44a5f908574:0",
@@ -1190,6 +1190,30 @@
       "evidence": "metadata::tests::trace_observations::observation_parsers_trace_complete_inputs_results_call_ids_and_durations confronta argomenti e risultati sintetici completi, call_id e durata.",
       "evidence_file": "crates/sanikey-core/src/metadata/tests/trace_observations.rs",
       "evidence_sha256": "d30ccaf7e57a4a80886a8b38db0c113db480d9a9488c63cddfb031b2e00b82a2"
+    },
+    {
+      "id": "crates/sanikey-core/src/simulated_export.rs#e9430545b06a791aed0b1daa9abb2606cbb20a5e2fe17ec03c1fd238bdcffbe8:34",
+      "source_sha256": "e9430545b06a791aed0b1daa9abb2606cbb20a5e2fe17ec03c1fd238bdcffbe8",
+      "status": "covered",
+      "evidence": "trace_txt_validation::txt_validator_traces_complete_error_inputs_results_and_omitted_manifest_bytes confronta argomenti e risultati nel caso sintetico di errore, call_id, durata e omissione.",
+      "evidence_file": "crates/sanikey-core/tests/trace_txt_validation.rs",
+      "evidence_sha256": "8353e0b9822df08534d90efd6390886b07813e5756148bb4753b4aca587f2624"
+    },
+    {
+      "id": "crates/sanikey-core/src/simulated_export.rs#e9430545b06a791aed0b1daa9abb2606cbb20a5e2fe17ec03c1fd238bdcffbe8:38",
+      "source_sha256": "e9430545b06a791aed0b1daa9abb2606cbb20a5e2fe17ec03c1fd238bdcffbe8",
+      "status": "covered",
+      "evidence": "trace_txt_validation::txt_validator_traces_complete_error_inputs_results_and_omitted_manifest_bytes confronta argomenti e risultati nel caso sintetico di errore, call_id, durata e omissione.",
+      "evidence_file": "crates/sanikey-core/tests/trace_txt_validation.rs",
+      "evidence_sha256": "8353e0b9822df08534d90efd6390886b07813e5756148bb4753b4aca587f2624"
+    },
+    {
+      "id": "crates/sanikey-core/src/simulated_export.rs#e9430545b06a791aed0b1daa9abb2606cbb20a5e2fe17ec03c1fd238bdcffbe8:256",
+      "source_sha256": "e9430545b06a791aed0b1daa9abb2606cbb20a5e2fe17ec03c1fd238bdcffbe8",
+      "status": "covered",
+      "evidence": "trace_txt_validation::txt_validator_traces_complete_error_inputs_results_and_omitted_manifest_bytes confronta argomenti e risultati nel caso sintetico di errore, call_id, durata e omissione.",
+      "evidence_file": "crates/sanikey-core/tests/trace_txt_validation.rs",
+      "evidence_sha256": "8353e0b9822df08534d90efd6390886b07813e5756148bb4753b4aca587f2624"
     }
   ]
 }

@@ -356,6 +356,8 @@ pub enum Activity {
     GuiShutdownKeepWaiting,
     /// GUI operator chose to close the window while a worker remains active.
     GuiShutdownForceClose,
+    /// GUI operator requested cancellation of the current build.
+    GuiBuildCancelRequested,
 }
 
 impl Activity {
@@ -390,6 +392,7 @@ impl Activity {
             Self::GuiLoggingStop => "gui_logging_stop",
             Self::GuiShutdownKeepWaiting => "gui_shutdown_keep_waiting",
             Self::GuiShutdownForceClose => "gui_shutdown_force_close",
+            Self::GuiBuildCancelRequested => "gui_build_cancel_requested",
         }
     }
 }

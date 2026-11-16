@@ -7,9 +7,9 @@ use crate::logging::{
 use crate::metadata::DocumentRecord;
 use pdfium_render::prelude::{PdfPageObjectCommon, PdfPageObjectsCommon, PdfRenderConfig, Pdfium};
 use serde_json::{Value, json};
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Command, Output, Stdio};
 
 const MIN_PDF_TEXT_CHARACTERS: usize = 40;
 const SCANNED_PDF_PAGE_IMAGE_COVERAGE: f32 = 0.90;
@@ -550,8 +550,8 @@ fn run_tesseract(
     glossary: &Path,
     ppm: &[u8],
     page_number: usize,
-) -> Result<std::process::Output, String> {
-    trace_pdf_call!(
+) -> Result<Output, String> {
+    let result = trace_pdf_call!(
         "pdf::run_tesseract",
         [
             TraceField::new("executable", TraceValue::path(executable)),
@@ -562,7 +562,7 @@ fn run_tesseract(
                 TraceValue::Data(json!(["stdin", "stdout", "--dpi", "300", "--user-words"]))
             ),
             TraceField::new("stdin_ppm_bytes", trace_pdf_bytes(ppm)),
-            TraceField::new("stderr_capture", TraceValue::data(false)),
+            TraceField::new("stderr_capture", TraceValue::data(true)),
         ],
         {
             let mut child = Command::new(executable)
@@ -570,41 +570,106 @@ fn run_tesseract(
                 .arg(glossary)
                 .stdin(Stdio::piped())
                 .stdout(Stdio::piped())
-                .stderr(Stdio::null())
+                .stderr(Stdio::piped())
                 .spawn()
-                .map_err(|error| format!("avvio di Tesseract non riuscito: {error}"))?;
-            let mut stdin = child
-                .stdin
-                .take()
-                .ok_or_else(|| "input di Tesseract non disponibile".to_owned())?;
-            if let Err(error) = stdin.write_all(ppm) {
-                drop(stdin);
-                let _ = child.wait();
-                return Err(format!(
-                    "invio pagina {page_number} a Tesseract non riuscito: {error}"
-                ));
-            }
+                .map_err(|error| {
+                    TesseractFailure::BeforeOutput(format!(
+                        "avvio di Tesseract non riuscito: {error}"
+                    ))
+                })?;
+            let stdout = child.stdout.take().ok_or_else(|| {
+                TesseractFailure::BeforeOutput("output di Tesseract non disponibile".to_owned())
+            })?;
+            let stderr = child.stderr.take().ok_or_else(|| {
+                TesseractFailure::BeforeOutput("stderr di Tesseract non disponibile".to_owned())
+            })?;
+            let stdout_reader = std::thread::spawn(move || read_tesseract_pipe(stdout));
+            let stderr_reader = std::thread::spawn(move || read_tesseract_pipe(stderr));
+            let mut stdin = child.stdin.take().ok_or_else(|| {
+                TesseractFailure::BeforeOutput("input di Tesseract non disponibile".to_owned())
+            })?;
+            let input_error = stdin.write_all(ppm).err();
             drop(stdin);
-            let output = child
-                .wait_with_output()
-                .map_err(|error| format!("attesa di Tesseract non riuscita: {error}"))?;
+            let status = child.wait().map_err(|error| {
+                TesseractFailure::BeforeOutput(format!("attesa di Tesseract non riuscita: {error}"))
+            })?;
+            let stdout = join_tesseract_reader(stdout_reader, "stdout")?;
+            let stderr = join_tesseract_reader(stderr_reader, "stderr")?;
+            if let Some(error) = input_error {
+                return Err(TesseractFailure::BeforeOutput(format!(
+                    "invio pagina {page_number} a Tesseract non riuscito: {error}"
+                )));
+            }
+            let output = Output {
+                status,
+                stdout,
+                stderr,
+            };
             if !output.status.success() {
-                return Err(format!(
-                    "Tesseract fallito sulla pagina {page_number} con stato {}",
-                    output.status
-                ));
+                return Err(TesseractFailure::Process {
+                    message: format!(
+                        "Tesseract fallito sulla pagina {page_number} con stato {}",
+                        output.status
+                    ),
+                    output,
+                });
             }
             Ok(output)
         },
-        |result: &Result<std::process::Output, String>| TraceValue::Data(match result {
+        |result: &Result<Output, TesseractFailure>| TraceValue::Data(match result {
             Ok(output) => json!({
                 "status": format!("{}", output.status),
                 "stdout": trace_pdf_bytes(&output.stdout).to_json(),
                 "stderr": trace_pdf_bytes(&output.stderr).to_json(),
             }),
-            Err(error) => json!({"error": trace_sensitive_text(error).to_json()}),
+            Err(TesseractFailure::BeforeOutput(error)) => {
+                json!({"error": trace_sensitive_text(error).to_json()})
+            }
+            Err(TesseractFailure::Process { message, output }) => json!({
+                "error": trace_sensitive_text(message).to_json(),
+                "status": format!("{}", output.status),
+                "stdout": trace_pdf_bytes(&output.stdout).to_json(),
+                "stderr": trace_pdf_bytes(&output.stderr).to_json(),
+            }),
         })
-    )
+    );
+    result.map_err(TesseractFailure::into_message)
+}
+
+enum TesseractFailure {
+    BeforeOutput(String),
+    Process { message: String, output: Output },
+}
+
+/// Converte i dettagli interni dell'errore OCR nel messaggio restituito al chiamante.
+impl TesseractFailure {
+    fn into_message(self) -> String {
+        match self {
+            Self::BeforeOutput(message) | Self::Process { message, .. } => message,
+        }
+    }
+}
+
+fn read_tesseract_pipe(mut pipe: impl Read) -> std::io::Result<Vec<u8>> {
+    let mut bytes = Vec::new();
+    pipe.read_to_end(&mut bytes)?;
+    Ok(bytes)
+}
+
+fn join_tesseract_reader(
+    reader: std::thread::JoinHandle<std::io::Result<Vec<u8>>>,
+    stream: &str,
+) -> Result<Vec<u8>, TesseractFailure> {
+    reader
+        .join()
+        .map_err(|_| {
+            TesseractFailure::BeforeOutput(format!("lettura di {stream} di Tesseract interrotta"))
+        })?
+        .map_err(|error| {
+            TesseractFailure::BeforeOutput(format!(
+                "lettura di {stream} di Tesseract non riuscita: {error}"
+            ))
+        })
 }
 
 fn trace_pdf_bytes(bytes: &[u8]) -> TraceValue {

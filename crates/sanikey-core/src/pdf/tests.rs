@@ -11,6 +11,8 @@ use serde_json::{Value, json};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
+#[cfg(target_os = "linux")]
+use std::time::Duration;
 
 static NEXT_DIRECTORY: AtomicUsize = AtomicUsize::new(0);
 
@@ -279,6 +281,129 @@ fn tesseract_launch_failure_is_reported_without_exposing_stderr() {
             .unwrap_err()
             .contains("avvio di Tesseract non riuscito")
     );
+}
+
+#[cfg(target_os = "linux")]
+fn write_tesseract_fixture(directory: &TestDirectory, name: &str, exit_code: u8) -> PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+
+    let executable = directory.0.join(name);
+    let script = format!(
+        "#!/bin/sh\ni=0\nwhile [ \"$i\" -lt 1200 ]; do\n  printf '%s' '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'\n  printf '%s' 'fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210' >&2\n  i=$((i + 1))\ndone\ncat >/dev/null\nprintf '\\nSYNTHETIC_TESSERACT_STDOUT\\n'\nprintf '\\nSYNTHETIC_TESSERACT_STDERR\\n' >&2\nexit {exit_code}\n"
+    );
+    fs::write(&executable, script).expect("eseguibile Tesseract sintetico");
+    fs::set_permissions(&executable, fs::Permissions::from_mode(0o700))
+        .expect("permessi eseguibile Tesseract sintetico");
+    executable
+}
+
+#[cfg(target_os = "linux")]
+fn run_tesseract_with_timeout(
+    session: &Session,
+    executable: PathBuf,
+    glossary: PathBuf,
+    ppm: Vec<u8>,
+) -> Result<std::process::Output, String> {
+    let session = session.clone();
+    let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+    std::thread::spawn(move || {
+        let result = session.scoped(|| run_tesseract(&executable, &glossary, &ppm, 1));
+        let _ = sender.send(result);
+    });
+    receiver
+        .recv_timeout(Duration::from_secs(5))
+        .expect("Tesseract sintetico deve terminare entro 5 secondi")
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn tesseract_trace_captures_both_streams_on_success_and_failure_without_deadlock() {
+    let directory = TestDirectory::new();
+    let ppm = b"P6\n1 1\n255\n\0\0\0".to_vec();
+    let glossary = directory.0.join("synthetic-glossary");
+    fs::write(&glossary, "synthetic\n").expect("glossario sintetico");
+    let successful = write_tesseract_fixture(&directory, "tesseract-success", 0);
+    let failing = write_tesseract_fixture(&directory, "tesseract-failure", 7);
+    let (trace_session, trace_path) = Session::create_in_directory_with_level(
+        &directory.0.join("trace"),
+        Component::Core,
+        Level::Trace,
+    )
+    .expect("sessione Trace sintetica");
+
+    let output =
+        run_tesseract_with_timeout(&trace_session, successful, glossary.clone(), ppm.clone())
+            .expect("Tesseract sintetico di successo");
+    assert!(output.status.success());
+    assert!(String::from_utf8_lossy(&output.stdout).contains("SYNTHETIC_TESSERACT_STDOUT"));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("SYNTHETIC_TESSERACT_STDERR"));
+
+    let error = run_tesseract_with_timeout(&trace_session, failing, glossary, ppm)
+        .expect_err("Tesseract sintetico deve fallire");
+    assert!(error.contains("Tesseract fallito sulla pagina 1 con stato exit status: 7"));
+    drop(trace_session);
+    let trace_records: Vec<Value> = fs::read_to_string(trace_path)
+        .expect("log Trace sintetico")
+        .lines()
+        .map(|line| serde_json::from_str(line).expect("record Trace JSON valido"))
+        .collect();
+    let entries: Vec<_> = trace_records
+        .iter()
+        .filter(|record| {
+            record["type"] == "function_enter" && record["function"] == "pdf::run_tesseract"
+        })
+        .collect();
+    assert_eq!(entries.len(), 2);
+    for (entry, expected_status) in entries
+        .into_iter()
+        .zip(["exit status: 0", "exit status: 7"])
+    {
+        let call_id = entry["call_id"].as_u64().expect("call_id numerico");
+        assert!(entry.to_string().contains("stderr_capture"));
+        let exit = trace_records
+            .iter()
+            .find(|record| {
+                record["type"] == "function_exit"
+                    && record["function"] == "pdf::run_tesseract"
+                    && record["call_id"] == call_id
+            })
+            .expect("uscita correlata tramite call_id");
+        assert!(exit["duration_ms"].as_u64().is_some());
+        let output = &exit["result"]["value"]["output"]["value"];
+        assert_eq!(output["status"], expected_status);
+        assert!(
+            output["stdout"]["value"]["value"]
+                .as_str()
+                .expect("stdout testuale")
+                .contains("SYNTHETIC_TESSERACT_STDOUT")
+        );
+        assert!(
+            output["stderr"]["value"]["value"]
+                .as_str()
+                .expect("stderr testuale")
+                .contains("SYNTHETIC_TESSERACT_STDERR")
+        );
+    }
+
+    let successful = write_tesseract_fixture(&directory, "tesseract-events", 0);
+    let (events_session, events_path) = Session::create_in_directory_with_level(
+        &directory.0.join("events"),
+        Component::Core,
+        Level::Events,
+    )
+    .expect("sessione Events sintetica");
+    run_tesseract_with_timeout(
+        &events_session,
+        successful,
+        directory.0.join("unused"),
+        b"".to_vec(),
+    )
+    .expect("Tesseract sintetico Events");
+    drop(events_session);
+    let events_log = fs::read_to_string(events_path).expect("log Events sintetico");
+    assert!(!events_log.contains("SYNTHETIC_TESSERACT_STDOUT"));
+    assert!(!events_log.contains("SYNTHETIC_TESSERACT_STDERR"));
+    assert!(!events_log.contains("function_enter"));
 }
 
 #[test]

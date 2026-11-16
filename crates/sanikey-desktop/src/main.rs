@@ -2625,6 +2625,12 @@ impl DesktopApp {
                     ))
                     .clicked()
             {
+                record_ui_action(
+                    self.log_session.as_ref(),
+                    &mut self.log_failure,
+                    Activity::GuiBuildCancelRequested,
+                    DisplayControl::new("cancel_build"),
+                );
                 cancellation.cancel();
                 self.status = "Annullamento richiesto; attendo il punto sicuro.".to_owned();
             }
@@ -3511,6 +3517,44 @@ mod tests {
         )
     }
 
+    fn click_button(
+        app: &mut DesktopApp,
+        context: &egui::Context,
+        frame: &mut eframe::Frame,
+        label: &str,
+    ) {
+        let initial = run_app_frame(app, context, frame, Vec::new());
+        let position = initial
+            .shapes
+            .iter()
+            .find_map(|clipped| match &clipped.shape {
+                egui::epaint::Shape::Text(text) if text.galley.text() == label => {
+                    Some(text.visual_bounding_rect().center())
+                }
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("pulsante sintetico non renderizzato: {label}"));
+        initial.drop_without_applying_deltas();
+
+        for event in [
+            egui::Event::PointerMoved(position),
+            egui::Event::PointerButton {
+                pos: position,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            },
+            egui::Event::PointerButton {
+                pos: position,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ] {
+            run_app_frame(app, context, frame, vec![event]).drop_without_applying_deltas();
+        }
+    }
+
     #[test]
     fn diagnostic_session_captures_changed_status_and_profile_field() {
         use sanikey_core::logging::{Component, Level, Session};
@@ -4221,6 +4265,10 @@ mod tests {
             (Activity::GuiLogLevelSelected, "gui_log_level_selected"),
             (Activity::GuiConsentChanged, "gui_consent_changed"),
             (Activity::GuiLoggingStop, "gui_logging_stop"),
+            (
+                Activity::GuiBuildCancelRequested,
+                "gui_build_cancel_requested",
+            ),
         ];
         let mut failed = false;
         for (activity, _) in activities {
@@ -4239,6 +4287,79 @@ mod tests {
             assert!(log.contains(&format!("\"activity\":\"{activity}\"")));
         }
         assert!(!log.contains("dato privato sintetico"));
+    }
+
+    #[test]
+    fn build_cancel_click_is_logged_separately_from_success_or_cancellation() {
+        use sanikey_core::logging::{Activity, Component, Level, Outcome, Session};
+
+        for (outcome, expected_terminal_event) in [
+            (Outcome::Succeeded, "succeeded"),
+            (Outcome::Cancelled, "cancelled"),
+        ] {
+            let directory = TestDirectory::new();
+            let (session, path) = Session::create_in_directory_with_level(
+                &directory.0,
+                Component::Desktop,
+                Level::Events,
+            )
+            .expect("sessione sintetica");
+            let operation = session
+                .start_operation(Component::Desktop, Activity::Build)
+                .expect("build sintetica avviata");
+            let cancellation = CancellationToken::default();
+            let (_sender, receiver) = std::sync::mpsc::channel::<DesktopEvent>();
+            let mut app = DesktopApp {
+                log_session: Some(session.clone()),
+                receiver: Some(receiver),
+                cancellation: Some(cancellation.clone()),
+                ..DesktopApp::default()
+            };
+            let context = egui::Context::default();
+            let mut frame = eframe::Frame::_new_kittest();
+
+            click_button(
+                &mut app,
+                &context,
+                &mut frame,
+                "Annulla dopo la persona corrente",
+            );
+            assert!(cancellation.is_cancelled());
+            assert_eq!(
+                app.status,
+                "Annullamento richiesto; attendo il punto sicuro."
+            );
+
+            operation.finish(outcome).expect("esito build sintetica");
+            session.finish(Component::Desktop).expect("fine sessione");
+            drop(app);
+
+            let records = fs::read_to_string(path)
+                .expect("log sintetico")
+                .lines()
+                .map(|line| serde_json::from_str::<serde_json::Value>(line).expect("record JSON"))
+                .collect::<Vec<_>>();
+            let cancel_action = records
+                .iter()
+                .filter(|record| {
+                    record["activity"] == "gui_build_cancel_requested"
+                        && record["target"]["name"] == "cancel_build"
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(cancel_action.len(), 2);
+            assert_eq!(cancel_action[0]["event"], "started");
+            assert_eq!(cancel_action[1]["event"], "succeeded");
+
+            let build_events = records
+                .iter()
+                .filter(|record| {
+                    record["activity"] == "build" && record["operation_id"].is_number()
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(build_events.len(), 2);
+            assert_eq!(build_events[0]["event"], "started");
+            assert_eq!(build_events[1]["event"], expected_terminal_event);
+        }
     }
 
     #[test]
