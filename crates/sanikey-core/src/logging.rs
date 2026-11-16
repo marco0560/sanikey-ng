@@ -346,6 +346,8 @@ pub enum Activity {
     GuiAifaReviewRequested,
     /// GUI operator requested import or refresh of observations.
     GuiObservationImportRequested,
+    /// GUI operator requested the selected people to be built.
+    GuiBuildRequested,
     /// GUI operator requested to choose the Linux USB target folder.
     GuiUsbTargetSelectionRequested,
     /// GUI USB confirmation changed.
@@ -405,6 +407,7 @@ impl Activity {
             Self::GuiPreflightRepeatRequested => "gui_preflight_repeat_requested",
             Self::GuiAifaReviewRequested => "gui_aifa_review_requested",
             Self::GuiObservationImportRequested => "gui_observation_import_requested",
+            Self::GuiBuildRequested => "gui_build_requested",
             Self::GuiUsbTargetSelectionRequested => "gui_usb_target_selection_requested",
             Self::GuiUsbConfirmation => "gui_usb_confirmation",
             Self::GuiAifaCandidate => "gui_aifa_candidate",

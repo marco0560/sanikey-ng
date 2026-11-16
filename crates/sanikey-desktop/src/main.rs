@@ -2754,6 +2754,12 @@ impl DesktopApp {
                     )
                     .clicked()
                 {
+                    record_ui_action(
+                        self.log_session.as_ref(),
+                        &mut self.log_failure,
+                        Activity::GuiBuildRequested,
+                        DisplayControl::new("start_build"),
+                    );
                     self.start_build();
                 }
             }
@@ -4504,6 +4510,7 @@ mod tests {
                 Activity::GuiObservationImportRequested,
                 "gui_observation_import_requested",
             ),
+            (Activity::GuiBuildRequested, "gui_build_requested"),
             (
                 Activity::GuiUsbTargetSelectionRequested,
                 "gui_usb_target_selection_requested",
@@ -5964,6 +5971,63 @@ enabled = false
                 .iter()
                 .any(|event| matches!(event, DesktopEvent::Terminal(OperationEvent::Cancelled)))
         );
+    }
+
+    #[test]
+    fn build_button_click_is_recorded_as_a_typed_events_action() {
+        use sanikey_core::logging::{Component, Level, Session};
+
+        let directory = TestDirectory::new();
+        let profile = profile_with_document(&directory);
+        let blocked_output = directory.0.join("output-is-a-file");
+        fs::write(&blocked_output, "fixture sintetica").expect("conflitto output sintetico");
+        let (session, log_path) = Session::create_in_directory_with_level(
+            &directory.0,
+            Component::Desktop,
+            Level::Events,
+        )
+        .expect("sessione Events sintetica");
+        let mut app = DesktopApp {
+            log_session: Some(session.clone()),
+            ..DesktopApp::default()
+        };
+        app.import_profile(profile.source_path());
+        app.selections[0].local_build = blocked_output;
+        app.review = Some(ReviewSummary {
+            selected_people: vec!["Persona A sintetica".to_owned()],
+            ..ReviewSummary::default()
+        });
+
+        let context = egui::Context::default();
+        let mut frame = eframe::Frame::_new_kittest();
+        click_button(&mut app, &context, &mut frame, "Avvia build incrementale");
+        app.worker_handle
+            .take()
+            .expect("worker build avviato dal click")
+            .join()
+            .expect("worker terminato");
+        app.receive_worker_events();
+        assert!(app.status.starts_with("Build fallita"));
+        session.finish(Component::Desktop).expect("fine sessione");
+        drop(app);
+
+        let log = fs::read_to_string(log_path).expect("log Events sintetico");
+        let records = log
+            .lines()
+            .map(|line| serde_json::from_str::<serde_json::Value>(line).expect("record JSON"))
+            .collect::<Vec<_>>();
+        let action = records
+            .iter()
+            .filter(|record| {
+                record["activity"] == "gui_build_requested"
+                    && record["target"]["name"] == "start_build"
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(action.len(), 2);
+        assert_eq!(action[0]["event"], "started");
+        assert_eq!(action[1]["event"], "succeeded");
+        assert!(!log.contains("patient-a"));
+        assert!(!log.contains("output-is-a-file"));
     }
 
     #[test]
