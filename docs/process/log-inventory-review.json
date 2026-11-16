@@ -61,20 +61,20 @@
       "evidence_sha256": "f9a025196ad3726b409e87dd5cfd0e120e206303b5328cc4c5a0579dd4217ed3"
     },
     {
-      "id": "crates/sanikey-core/src/aifa.rs#e79e8207566d2406d10aca11f0fc5420abc3a1b70f17b65eb8e23d1dbce8ae0e:85",
-      "source_sha256": "e79e8207566d2406d10aca11f0fc5420abc3a1b70f17b65eb8e23d1dbce8ae0e",
+      "id": "crates/sanikey-core/src/aifa.rs#52cde4460abea29ec3b6aa48dbfa97a1e63cc2ec15358c3309e53c22f69a9ad8:85",
+      "source_sha256": "52cde4460abea29ec3b6aa48dbfa97a1e63cc2ec15358c3309e53c22f69a9ad8",
       "status": "covered",
       "evidence": "aifa::tests::aifa_client_constructors_have_nested_trace_spans_and_representable_results verifica ingresso, uscita, durata e annidamento di Default::default.",
       "evidence_file": "crates/sanikey-core/src/aifa/tests.rs",
-      "evidence_sha256": "49d2b393ef2071b7465bf63d8038f2dc0781bae685a06498859c9c388cf525da"
+      "evidence_sha256": "3d7dee3dd90ff2f30ce6478caeb5a66efc1f60458fa5353c3539d64a1e92427d"
     },
     {
-      "id": "crates/sanikey-core/src/aifa.rs#e79e8207566d2406d10aca11f0fc5420abc3a1b70f17b65eb8e23d1dbce8ae0e:87",
-      "source_sha256": "e79e8207566d2406d10aca11f0fc5420abc3a1b70f17b65eb8e23d1dbce8ae0e",
+      "id": "crates/sanikey-core/src/aifa.rs#52cde4460abea29ec3b6aa48dbfa97a1e63cc2ec15358c3309e53c22f69a9ad8:87",
+      "source_sha256": "52cde4460abea29ec3b6aa48dbfa97a1e63cc2ec15358c3309e53c22f69a9ad8",
       "status": "covered",
       "evidence": "aifa::tests::aifa_client_constructors_have_nested_trace_spans_and_representable_results verifica ingresso, uscita, durata e risultato rappresentabile di AifaClient::new.",
       "evidence_file": "crates/sanikey-core/src/aifa/tests.rs",
-      "evidence_sha256": "49d2b393ef2071b7465bf63d8038f2dc0781bae685a06498859c9c388cf525da"
+      "evidence_sha256": "3d7dee3dd90ff2f30ce6478caeb5a66efc1f60458fa5353c3539d64a1e92427d"
     },
     {
       "id": "crates/sanikey-core/src/build.rs#0a79b7f35352399b2298c170601565000ab7a193b5c39f444264f390f04202fa:32",
@@ -1136,12 +1136,12 @@
       "evidence_sha256": "9ead94eaf97e98dd3cb1b461c94c806a6d234631d6a49dc3e8872dc27f75f59a"
     },
     {
-      "id": "crates/sanikey-desktop/src/main.rs#1c33297e5ee3c922f750a2e4a3a269818afcc4f4fb9ba30b7cd67586f98465da:90",
-      "source_sha256": "1c33297e5ee3c922f750a2e4a3a269818afcc4f4fb9ba30b7cd67586f98465da",
+      "id": "crates/sanikey-desktop/src/main.rs#f599b11a74adf72e1e5c30550f1e0358012c7af763a53567670f49b3f5c53872:90",
+      "source_sha256": "f599b11a74adf72e1e5c30550f1e0358012c7af763a53567670f49b3f5c53872",
       "status": "covered",
       "evidence": "tests::person_selection_trace_records_inputs_output_duration_and_redacts_secret_paths verifica input e output rappresentabili, call_id, durata e redazione del percorso segreto.",
       "evidence_file": "crates/sanikey-desktop/src/main.rs",
-      "evidence_sha256": "1c33297e5ee3c922f750a2e4a3a269818afcc4f4fb9ba30b7cd67586f98465da"
+      "evidence_sha256": "f599b11a74adf72e1e5c30550f1e0358012c7af763a53567670f49b3f5c53872"
     },
     {
       "id": "crates/sanikey-core/src/metadata/parse/timeline.rs#4b133f26531d918c12f1d25cbb99b2aebac272825ab9cf1e71f5a44a5f908574:0",
@@ -1270,6 +1270,22 @@
       "evidence": "trace_frontend_build::frontend_build_traces_complete_person_paths_and_omits_copied_image_bytes confronta argomenti e risultati nel caso sintetico riuscito, call_id, durata e copia dello sfondo.",
       "evidence_file": "crates/sanikey-core/tests/trace_frontend_build.rs",
       "evidence_sha256": "6030dbf6785c897b9052faba91521f48c40a6247a905771fedc0c094a05ed674"
+    },
+    {
+      "id": "crates/sanikey-core/src/dicom.rs#e3e526588540abbf838a6c361c94a5d848a80b790856abd4b983b28a883d7474:20",
+      "source_sha256": "e3e526588540abbf838a6c361c94a5d848a80b790856abd4b983b28a883d7474",
+      "status": "covered",
+      "evidence": "trace_dicom_media::dicom_media_copy_traces_paths_result_call_ids_duration_and_binary_omission verifica input/output nel caso sintetico riuscito, call_id, durata e omissione.",
+      "evidence_file": "crates/sanikey-core/tests/trace_dicom_media.rs",
+      "evidence_sha256": "d2fc86ad52ce74599fa236662b1164d81f4b176b239dba352112c08fd2dc8c1f"
+    },
+    {
+      "id": "crates/sanikey-core/src/dicom.rs#e3e526588540abbf838a6c361c94a5d848a80b790856abd4b983b28a883d7474:75",
+      "source_sha256": "e3e526588540abbf838a6c361c94a5d848a80b790856abd4b983b28a883d7474",
+      "status": "covered",
+      "evidence": "trace_dicom_media::dicom_media_copy_traces_paths_result_call_ids_duration_and_binary_omission verifica input/output nel caso sintetico riuscito, call_id, durata e omissione.",
+      "evidence_file": "crates/sanikey-core/tests/trace_dicom_media.rs",
+      "evidence_sha256": "d2fc86ad52ce74599fa236662b1164d81f4b176b239dba352112c08fd2dc8c1f"
     }
   ]
 }

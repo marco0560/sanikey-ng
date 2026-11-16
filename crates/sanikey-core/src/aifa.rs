@@ -1296,6 +1296,20 @@ impl AifaClient {
     }
 
     fn get_json(&self, path: &str) -> Option<Value> {
+        self.get_json_with_request(path, |url| {
+            self.agent
+                .get(url)
+                .set("Accept", "application/json")
+                .call()
+                .map_err(Box::new)
+        })
+    }
+
+    fn get_json_with_request(
+        &self,
+        path: &str,
+        request: impl FnOnce(&str) -> Result<ureq::Response, Box<ureq::Error>>,
+    ) -> Option<Value> {
         let url = format!("{}{path}", self.api_root);
         let input_has_secret = request_path_contains_identified_secret(path);
         let trace = trace_current(Component::Core, "aifa::AifaClient::get_json", || {
@@ -1313,17 +1327,12 @@ impl AifaClient {
         let mut failure_stage = None;
         let mut request_error = None;
         let result = (|| {
-            let response = match self
-                .agent
-                .get(&url)
-                .set("Accept", "application/json")
-                .call()
-            {
+            let response = match request(&url) {
                 Ok(response) => response,
                 Err(error) => {
                     failure_stage = Some("request_failed");
                     request_error =
-                        trace_aifa_json_request_error(error, trace.is_some(), input_has_secret);
+                        trace_aifa_json_request_error(*error, trace.is_some(), input_has_secret);
                     return None;
                 }
             };

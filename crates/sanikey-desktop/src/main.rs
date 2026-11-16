@@ -3208,6 +3208,16 @@ impl DesktopApp {
                                     )
                                     .clicked()
                                 {
+                                    record_ui_action(
+                                        self.log_session.as_ref(),
+                                        &mut self.log_failure,
+                                        Activity::GuiAifaNotApplicableRequested,
+                                        DisplayControl::indexed(
+                                            "aifa_confirm_exclusion",
+                                            person_index,
+                                            Some(medication_index),
+                                        ),
+                                    );
                                     action = Some(AifaUiAction::MarkNotApplicable(
                                         person_index,
                                         medication_index,
@@ -4364,6 +4374,10 @@ mod tests {
             ),
             (Activity::GuiUsbConfirmation, "gui_usb_confirmation"),
             (Activity::GuiAifaCandidate, "gui_aifa_candidate"),
+            (
+                Activity::GuiAifaNotApplicableRequested,
+                "gui_aifa_not_applicable_requested",
+            ),
             (
                 Activity::GuiProfileDialogOpened,
                 "gui_profile_dialog_opened",
@@ -6296,6 +6310,108 @@ enabled = false
                 .iter()
                 .any(|label| { label == "Conferma candidato e verifica FI/RCP" })
         );
+    }
+
+    #[test]
+    fn aifa_non_applicable_click_is_logged_separately_from_local_operation() {
+        use sanikey_core::logging::{Component, Level, Session};
+
+        let directory = TestDirectory::new();
+        let metadata_directory = directory.0.join("private-aifa-metadata");
+        fs::create_dir_all(&metadata_directory).expect("metadati sintetici");
+        fs::write(
+            metadata_directory.join("medications.toml"),
+            "[[medication]]\nid='PRIVATE-DRUG-ID'\nname='PRIVATE-DRUG-NAME'\n",
+        )
+        .expect("farmaco sintetico");
+        let metadata = load_curated_metadata(&metadata_directory).expect("metadati caricati");
+        let medication = metadata.medications[0].clone();
+        let (session, path) = Session::create_in_directory_with_level(
+            &directory.0,
+            Component::Desktop,
+            Level::Events,
+        )
+        .expect("sessione Events sintetica");
+        let mut app = DesktopApp {
+            log_session: Some(session.clone()),
+            aifa_people: Some(vec![AifaPersonReview {
+                id: "PRIVATE-PERSON-ID".into(),
+                display_name: "PRIVATE-PERSON-NAME".into(),
+                metadata_directory: metadata_directory.clone(),
+                metadata,
+                medications: vec![AifaMedicationReview {
+                    medication,
+                    query: String::new(),
+                    search: Some(AifaCandidateSearch::default()),
+                    selected_candidate: None,
+                    status: String::new(),
+                }],
+            }]),
+            ..DesktopApp::default()
+        };
+
+        let context = egui::Context::default();
+        let mut frame = eframe::Frame::_new_kittest();
+        click_button(&mut app, &context, &mut frame, "Conferma stato non AIFA");
+        app.worker_handle
+            .take()
+            .expect("operazione locale avviata dal click")
+            .join()
+            .expect("worker terminato");
+        assert!(!app.log_failure);
+        let saved = load_curated_metadata(&metadata_directory).expect("rilettura metadati");
+        assert_eq!(saved.medication_leaflet_exclusions.len(), 1);
+        assert_eq!(saved.medication_leaflet_exclusions[0].reason, "non_aifa");
+        session.finish(Component::Desktop).expect("fine sessione");
+        drop(app);
+
+        let log = fs::read_to_string(path).expect("log Events sintetico");
+        let records = log
+            .lines()
+            .map(|line| serde_json::from_str::<serde_json::Value>(line).expect("record JSON"))
+            .collect::<Vec<_>>();
+        let action = records
+            .iter()
+            .filter(|record| {
+                record["activity"] == "gui_aifa_not_applicable_requested"
+                    && record["target"]["name"] == "aifa_confirm_exclusion"
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(action.len(), 2, "azione GUI avviata e registrata");
+        assert_eq!(action[0]["event"], "started");
+        assert_eq!(action[1]["event"], "succeeded");
+        assert_eq!(action[0]["target"]["index"], 0);
+        assert_eq!(action[0]["target"]["child_index"], 0);
+
+        let operation = records
+            .iter()
+            .filter(|record| record["activity"] == "aifa")
+            .collect::<Vec<_>>();
+        let operation_start = operation
+            .iter()
+            .find(|record| record["event"] == "started")
+            .expect("avvio operazione AIFA");
+        let operation_success = operation
+            .iter()
+            .find(|record| record["event"] == "succeeded")
+            .expect("esito operazione AIFA");
+        assert_eq!(
+            operation_start["operation_id"],
+            operation_success["operation_id"]
+        );
+        assert_ne!(action[0]["operation_id"], operation_start["operation_id"]);
+        for private_value in [
+            "PRIVATE-DRUG-ID",
+            "PRIVATE-DRUG-NAME",
+            "PRIVATE-PERSON-ID",
+            "PRIVATE-PERSON-NAME",
+            "private-aifa-metadata",
+        ] {
+            assert!(
+                !log.contains(private_value),
+                "dato privato nel log: {private_value}"
+            );
+        }
     }
 
     #[test]
